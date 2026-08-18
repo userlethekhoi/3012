@@ -19,6 +19,8 @@
 		A1000000000000000000000B /* BackgroundSessionEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* BackgroundSessionEvents.swift */; };
 		A1000000000000000000000C /* ThreeZeroOneTwoCore in Frameworks */ = {isa = PBXBuildFile; productRef = C30000000000000000000001 /* ThreeZeroOneTwoCore */; };
 		A1000000000000000000000D /* PackageImportViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* PackageImportViewModel.swift */; };
+		A1000000000000000000000E /* ManualPatchManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* ManualPatchManager.swift */; };
+		A1000000000000000000000F /* ManualPatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* ManualPatchView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +38,8 @@
 		A2000000000000000000000C /* BackgroundDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundDownloadManager.swift; sourceTree = "<group>"; };
 		A2000000000000000000000D /* BackgroundSessionEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSessionEvents.swift; sourceTree = "<group>"; };
 		A2000000000000000000000E /* PackageImportViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PackageImportViewModel.swift; sourceTree = "<group>"; };
+		A2000000000000000000000F /* ManualPatchManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualPatchManager.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 /* ManualPatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualPatchView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -48,14 +52,15 @@
 		A40000000000000000000003 /* App */ = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002); path = App; sourceTree = "<group>"; };
 		A40000000000000000000004 /* DesignSystem */ = {isa = PBXGroup; children = (A20000000000000000000003); path = DesignSystem; sourceTree = "<group>"; };
 		A40000000000000000000005 /* Models */ = {isa = PBXGroup; children = (A20000000000000000000004); path = Models; sourceTree = "<group>"; };
-		A40000000000000000000006 /* Features */ = {isa = PBXGroup; children = (A40000000000000000000007, A40000000000000000000008, A40000000000000000000009, A4000000000000000000000C); path = Features; sourceTree = "<group>"; };
+		A40000000000000000000006 /* Features */ = {isa = PBXGroup; children = (A40000000000000000000007, A40000000000000000000008, A40000000000000000000009, A4000000000000000000000C, A4000000000000000000000E /* ManualPatch */); path = Features; sourceTree = "<group>"; };
 		A40000000000000000000007 /* Store */ = {isa = PBXGroup; children = (A20000000000000000000005); path = Store; sourceTree = "<group>"; };
 		A40000000000000000000008 /* Installed */ = {isa = PBXGroup; children = (A20000000000000000000006); path = Installed; sourceTree = "<group>"; };
 		A40000000000000000000009 /* Downloads */ = {isa = PBXGroup; children = (A20000000000000000000007); path = Downloads; sourceTree = "<group>"; };
 		A4000000000000000000000A /* Resources */ = {isa = PBXGroup; children = (A20000000000000000000009, A2000000000000000000000A); path = Resources; sourceTree = "<group>"; };
 		A4000000000000000000000B /* Products */ = {isa = PBXGroup; children = (A2000000000000000000000B); name = Products; sourceTree = "<group>"; };
 		A4000000000000000000000C /* Settings */ = {isa = PBXGroup; children = (A20000000000000000000008); path = Settings; sourceTree = "<group>"; };
-		A4000000000000000000000D /* Services */ = {isa = PBXGroup; children = (A2000000000000000000000C, A2000000000000000000000D, A2000000000000000000000E); path = Services; sourceTree = "<group>"; };
+		A4000000000000000000000D /* Services */ = {isa = PBXGroup; children = (A2000000000000000000000C, A2000000000000000000000D, A2000000000000000000000E, A2000000000000000000000F); path = Services; sourceTree = "<group>"; };
+		A4000000000000000000000E /* ManualPatch */ = {isa = PBXGroup; children = (A20000000000000000000010); path = ManualPatch; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -71,7 +76,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A70000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000008, A1000000000000000000000A, A1000000000000000000000B, A1000000000000000000000D); runOnlyForDeploymentPostprocessing = 0; };
+		A70000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000008, A1000000000000000000000A, A1000000000000000000000B, A1000000000000000000000D, A1000000000000000000000E, A1000000000000000000000F); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

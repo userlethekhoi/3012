@@ -124,6 +124,41 @@ final class PackageTransactionEngineTests: XCTestCase {
         XCTAssertEqual(try engine.loadJournal(at: journalURL).status, .rolledBack)
     }
 
+    func testRestoreRefusesToOverwriteFileChangedAfterPatch() throws {
+        let workspace = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let target = workspace.appendingPathComponent("target", isDirectory: true)
+        let backups = workspace.appendingPathComponent("transactions", isDirectory: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+        let file = target.appendingPathComponent("existing.txt")
+        try Data("original".utf8).write(to: file)
+        let fixture = try makePackage(entries: [
+            ("replace", "existing.txt", .replaceFile, Data("patched".utf8))
+        ])
+        let reader = PackageReader(trustedPublicKeys: ["test-key": fixture.publicKey])
+        let package = try reader.inspect(fileURL: fixture.url)
+        let engine = PackageTransactionEngine(packageReader: reader)
+        let result = try engine.apply(
+            package: package,
+            targetRoots: ["com.example.target": target],
+            backupRoot: backups
+        )
+        try Data("new-user-data".utf8).write(to: file, options: .atomic)
+
+        XCTAssertThrowsError(try engine.restore(
+            journalURL: result.journalURL,
+            targetRoots: ["com.example.target": target]
+        )) { error in
+            XCTAssertEqual(
+                error as? PackageTransactionError,
+                .patchedTargetChanged("existing.txt")
+            )
+        }
+        XCTAssertEqual(try String(contentsOf: file), "new-user-data")
+        XCTAssertEqual(try engine.loadJournal(at: result.journalURL).status, .completed)
+    }
+
     func testUnsafeEntryIdentifierIsRejected() throws {
         let fixture = try makePackage(entries: [
             ("../escape", "file.txt", .createFile, Data("data".utf8))

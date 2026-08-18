@@ -66,7 +66,7 @@ public struct PackageEntry: Codable, Equatable, Hashable, Identifiable, Sendable
     }
 }
 
-public enum PackageOperation: String, Codable, Sendable {
+public enum PackageOperation: String, Codable, CaseIterable, Hashable, Sendable {
     case replaceFile
     case createFile
 }

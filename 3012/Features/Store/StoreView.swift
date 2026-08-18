@@ -22,6 +22,7 @@ struct StoreView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AppTheme.sectionSpacing) {
                     hero
+                    manualPatchEntry
                     categoryPicker
                     patchSection
                 }
@@ -35,6 +36,38 @@ struct StoreView: View {
                 try? await Task.sleep(nanoseconds: 350_000_000)
             }
         }
+    }
+
+    private var manualPatchEntry: some View {
+        NavigationLink {
+            ManualPatchView()
+        } label: {
+            PremiumCard {
+                HStack(spacing: 14) {
+                    Image(systemName: "externaldrive.badge.plus")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(AppTheme.accent)
+                        .frame(width: 50, height: 50)
+                        .background(
+                            AppTheme.accent.opacity(0.12),
+                            in: RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        )
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Patch thủ công")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        Text("Dùng file lớn từ Files, không cần đưa lên server.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var hero: some View {

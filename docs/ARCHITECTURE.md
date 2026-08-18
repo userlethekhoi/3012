@@ -44,7 +44,7 @@ Contains value types used by domain behavior. Remote DTOs should be decoded and 
 
 The trust and package primitives live in `Packages/ThreeZeroOneTwoCore`, a Foundation/CryptoKit Swift Package with its own unit tests. Keeping this layer independent from SwiftUI allows CI to test security-sensitive parsing and verification before the app target is built.
 
-### Infrastructure (planned)
+### Infrastructure
 
 - Catalog client and cache.
 - Background download coordinator.
@@ -53,9 +53,11 @@ The trust and package primitives live in `Packages/ThreeZeroOneTwoCore`, a Found
 - Package archive reader.
 - Local metadata and package storage.
 
-### Transaction boundary (planned)
+### Transaction boundary
 
 All target mutations must pass through one transaction service. It is responsible for validation, preflight disk checks, backup, journal persistence, ordered writes, rollback, and restore.
+
+Manual patches use the same boundary as online packages. The user grants a target folder and source-file access through the system Files picker. A local `.3012pkg` is assembled and hashed from file streams, signed with an ephemeral local Ed25519 key, verified, applied transactionally, and deleted after use. No sandbox bypass or legacy exploit code is part of this route.
 
 ## Trust model
 

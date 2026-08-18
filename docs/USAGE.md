@@ -2,7 +2,7 @@
 
 ## Trạng thái hiện tại
 
-Phiên bản `0.1.0-dev` là UI preview dành cho phát triển. Nó chưa tải hoặc apply package thật.
+Phiên bản `0.1.0-dev` đã có transaction, backup/restore, tải nền và patch thủ công từ Files. Catalog production vẫn cần được cấu hình public key và storage trước khi bật kho online thật.
 
 ## Cài và mở bản phát triển
 
@@ -23,9 +23,9 @@ Artifact GitHub Actions hiện là unsigned nên không thể cài trực tiếp
 
 ## Các tab
 
-- **Kho:** mock catalog để kiểm tra layout, search và category filter.
-- **Đã cài:** empty state cho thư viện package tương lai.
-- **Tải xuống:** empty state cho background download manager tương lai.
+- **Kho:** mock catalog và lối vào Patch thủ công.
+- **Đã cài:** lịch sử patch thủ công, backup và nút khôi phục.
+- **Tải xuống:** background download, pause/resume/retry và import `.3012pkg`.
 - **Cài đặt:** theme System/Light/Dark, channel Stable/Beta và thông tin repository.
 
 ## Khi catalog online được phát hành
@@ -40,4 +40,14 @@ Luồng dự kiến:
 6. App tạo backup và receipt trước khi thay đổi.
 7. Người dùng có thể restore từ tab Đã cài.
 
-Tài liệu sẽ được cập nhật cùng lúc với tính năng; không làm theo luồng dự kiến trên một bản chưa hỗ trợ.
+## Patch thủ công cho file lớn
+
+1. Vào **Kho → Patch thủ công**.
+2. Đặt tên patch và chọn thư mục đích bằng Files.
+3. Chọn một hoặc nhiều file thay thế. File có thể lớn; 3012 đọc theo chunk thay vì nạp toàn bộ vào RAM.
+4. Với mỗi file, nhập relative path tính từ thư mục đích và chọn **Thay file có sẵn** hoặc **Tạo file mới**.
+5. Kiểm tra lại dung lượng, đường dẫn rồi chọn **Kiểm tra và patch**.
+6. 3012 tạo package cục bộ ký tạm thời, xác minh SHA-256, tạo backup/journal và mới bắt đầu ghi file.
+7. Khôi phục từ tab **Đã cài**. App từ chối restore nếu file đã patch bị thay đổi tiếp, để không ghi đè dữ liệu mới.
+
+Chỉ chọn thư mục và file mà bạn có quyền sửa. Patch thủ công không dùng server và không cung cấp khả năng vượt sandbox; quyền truy cập đến từ Files picker của iOS.

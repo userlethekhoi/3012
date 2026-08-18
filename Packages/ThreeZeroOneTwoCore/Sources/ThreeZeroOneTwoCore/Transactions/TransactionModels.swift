@@ -22,6 +22,9 @@ public struct TransactionEntryReceipt: Codable, Equatable, Sendable {
     public let operation: PackageOperation
     public let originalExisted: Bool
     public let backupRelativePath: String?
+    public let originalSHA256: String?
+    public let replacementSHA256: String?
+    public let targetRootFingerprint: String?
     public var createdDirectories: [String]
     public var status: TransactionEntryStatus
 }
@@ -54,4 +57,6 @@ public enum PackageTransactionError: Error, Equatable {
     case createTargetAlreadyExists(String)
     case invalidJournal
     case transactionNotRestorable
+    case patchedTargetChanged(String)
+    case targetRootChanged(String)
 }

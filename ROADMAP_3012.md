@@ -47,6 +47,7 @@ This file is the public progress tracker. Mark an item complete only after the r
 - [~] Implement file-based inspect, verify, import, and remove: inspect/verify complete; library import/remove remains.
 - [x] Reject traversal, absolute paths, symlinks, duplicate targets, and unsupported versions.
 - [~] Add Files import and package preview: bounded unverified preview added; trusted import remains blocked on production public-key provisioning.
+- [x] Add local manual patch creation for large files selected through Files.
 
 ## M5 — Transaction and restore
 
@@ -91,3 +92,4 @@ This file is the public progress tracker. Mark an item complete only after the r
 - Added a persisted background `URLSession` download manager with pause/resume/retry, streaming integrity verification, and download-state UI.
 - Verified GitHub Actions run `32118654663`; core tests, app integration, IPA packaging, and rolling release publishing passed.
 - Added content-addressed S3/R2 package upload and protected Ed25519 catalog publishing workflows for large online packages.
+- Added manual large-file patching through Files with streaming local package creation, preflight storage checks, transaction backup/rollback, installed history, and guarded restore.

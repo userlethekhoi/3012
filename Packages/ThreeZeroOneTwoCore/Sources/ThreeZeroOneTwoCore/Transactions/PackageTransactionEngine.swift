@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public struct PackageTransactionEngine {
@@ -62,7 +63,13 @@ public struct PackageTransactionEngine {
             try persist(journal, at: journalURL)
             return TransactionResult(transactionID: transactionID, journalURL: journalURL)
         } catch {
-            try? rollback(&journal, targetRoots: targetRoots, transactionDirectory: transactionDirectory, journalURL: journalURL)
+            try? rollback(
+                &journal,
+                targetRoots: targetRoots,
+                transactionDirectory: transactionDirectory,
+                journalURL: journalURL,
+                verifyAppliedState: false
+            )
             throw error
         }
     }
@@ -77,7 +84,8 @@ public struct PackageTransactionEngine {
             &journal,
             targetRoots: targetRoots,
             transactionDirectory: transactionDirectory,
-            journalURL: journalURL
+            journalURL: journalURL,
+            verifyAppliedState: true
         )
     }
 
@@ -118,6 +126,9 @@ public struct PackageTransactionEngine {
                 break
             }
             let backupPath = exists ? "backups/\(entry.id)" : nil
+            let originalSHA256 = exists
+                ? try StreamingSHA256.digest(of: destination).hex
+                : nil
             receipts.append(TransactionEntryReceipt(
                 entryID: entry.id,
                 bundleID: entry.bundleID,
@@ -125,6 +136,9 @@ public struct PackageTransactionEngine {
                 operation: entry.operation,
                 originalExisted: exists,
                 backupRelativePath: backupPath,
+                originalSHA256: originalSHA256,
+                replacementSHA256: entry.sha256.lowercased(),
+                targetRootFingerprint: rootFingerprint(root),
                 createdDirectories: [],
                 status: .pending
             ))
@@ -221,8 +235,15 @@ public struct PackageTransactionEngine {
         _ journal: inout TransactionJournal,
         targetRoots: [String: URL],
         transactionDirectory: URL,
-        journalURL: URL
+        journalURL: URL,
+        verifyAppliedState: Bool
     ) throws {
+        try preflightRollback(
+            journal: journal,
+            targetRoots: targetRoots,
+            transactionDirectory: transactionDirectory,
+            verifyAppliedState: verifyAppliedState
+        )
         journal.status = .rollingBack
         try persist(journal, at: journalURL)
         for index in journal.entries.indices.reversed() {
@@ -261,6 +282,48 @@ public struct PackageTransactionEngine {
         }
         journal.status = .rolledBack
         try persist(journal, at: journalURL)
+    }
+
+    private func preflightRollback(
+        journal: TransactionJournal,
+        targetRoots: [String: URL],
+        transactionDirectory: URL,
+        verifyAppliedState: Bool
+    ) throws {
+        for receipt in journal.entries where receipt.status == .applying || receipt.status == .applied {
+            guard let root = targetRoots[receipt.bundleID] else {
+                throw PackageTransactionError.missingTargetRoot(receipt.bundleID)
+            }
+            if verifyAppliedState,
+               let expectedRoot = receipt.targetRootFingerprint,
+               expectedRoot != rootFingerprint(root) {
+                throw PackageTransactionError.targetRootChanged(receipt.relativePath)
+            }
+            let destination = try safeDestination(root: root, relativePath: receipt.relativePath)
+            if verifyAppliedState, let expectedDigest = receipt.replacementSHA256 {
+                guard fileManager.fileExists(atPath: destination.path),
+                      (try? StreamingSHA256.digest(of: destination).hex) == expectedDigest else {
+                    throw PackageTransactionError.patchedTargetChanged(receipt.relativePath)
+                }
+            }
+            if receipt.originalExisted {
+                guard let backupPath = receipt.backupRelativePath else {
+                    throw PackageTransactionError.invalidJournal
+                }
+                let backup = try PackagePathValidator.destination(
+                    root: transactionDirectory,
+                    relativePath: backupPath
+                )
+                guard fileManager.fileExists(atPath: backup.path) else {
+                    throw PackageTransactionError.invalidJournal
+                }
+                if let originalDigest = receipt.originalSHA256 {
+                    guard (try? StreamingSHA256.digest(of: backup).hex) == originalDigest else {
+                        throw PackageTransactionError.invalidJournal
+                    }
+                }
+            }
+        }
     }
 
     private func validateDirectory(_ url: URL) throws {
@@ -323,5 +386,11 @@ public struct PackageTransactionEngine {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(journal).write(to: url, options: .atomic)
+    }
+
+    private func rootFingerprint(_ root: URL) -> String {
+        SHA256.hash(data: Data(root.standardizedFileURL.resolvingSymlinksInPath().path.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 }
