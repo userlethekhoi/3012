@@ -43,7 +43,7 @@ The maintainer reports direct permission from the relevant maintainers to remake
 - Use in 3012: the fail-closed compatibility policy, MobileHouseArrest identity checks, bounded path-scoped grant logic, installed-app metadata lookup, and multi-source read-only discovery design are integrated behind 3012 provider contracts.
 - License: GNU GPL v3. 3012 is also distributed under GNU GPL v3.
 - 3012 files: `3012/Access/PathAccessBridge.h`, `PathAccessBridge.m`, `InstalledAppBridge.h`, `InstalledAppBridge.m`, and the provider/discovery integration in `3012/Services/DeviceAccessCoordinator.swift`.
-- Modifications: access paths are allowlisted and bounded, discovery is read-only, handles are retained only for the active browser session, and all 3105 product names, `.3105` package behavior, payloads, UI, write operations, cleaner, wallpaper, and patch-workspace code are excluded from this milestone.
+- Modifications: access paths and inode fallback are allowlisted and bounded, discovery is read-only, handles are retained only for the active browser session, and all 3105 product names, `.3105` package behavior, payloads, UI, write operations, cleaner, wallpaper, and patch-workspace code are excluded from this milestone.
 
 ### FilzaJailedDS
 

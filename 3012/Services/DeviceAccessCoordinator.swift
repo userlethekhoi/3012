@@ -90,6 +90,7 @@ private struct NativeAccessSnapshot: Sendable {
     let rootHandle: Int64
     let mcmError: String?
     let pathError: String?
+    let inodeError: String?
 
     var foreignMCMIdentifiers: [String] {
         let host = Bundle.main.bundleIdentifier
@@ -105,16 +106,23 @@ private func nativeAccessSnapshot(identifierLimit: Int, rootLimit: Int) -> Nativ
     for (key, value) in rawInfo { installedInfo[key] = value }
     var rootError: NSString?
     var rootHandle: Int64 = -1
-    let rootNames = PA3012DirectoryNames(
+    var rootNames = PA3012DirectoryNames(
         applicationRootForReading(), UInt(rootLimit), &rootHandle, &rootError
     )
+    var inodeError: NSString?
+    if rootNames.isEmpty {
+        rootNames = PA3012DirectoryNamesByInode(
+            applicationRootForReading(), 2_000_000, UInt(rootLimit), &inodeError
+        )
+    }
     return NativeAccessSnapshot(
         mcmIdentifiers: identifiers,
         installedInfo: installedInfo,
         rootNames: rootNames,
         rootHandle: rootHandle,
         mcmError: mcmError.map(String.init),
-        pathError: rootError.map(String.init)
+        pathError: rootError.map(String.init),
+        inodeError: inodeError.map(String.init)
     )
 }
 
@@ -144,15 +152,27 @@ struct MobileHouseArrestAccessProvider: DeviceAccessProvider {
                 break
             }
         }
-        let traversalWorked = snapshot.rootHandle >= 0 && !uuidRoots.isEmpty
-        let available = activationWorked || traversalWorked
+        var filesystemWorked = snapshot.rootHandle >= 0 && !uuidRoots.isEmpty
+        if !filesystemWorked, let firstUUID = uuidRoots.first {
+            let candidate = (applicationRootForReading() as NSString)
+                .appendingPathComponent(firstUUID)
+            let candidateHandle = PA3012GrantPath(candidate)
+            if candidateHandle >= 0 {
+                filesystemWorked = (try? FileManager.default.contentsOfDirectory(
+                    atPath: candidate
+                )) != nil
+                PA3012ReleaseGrant(candidateHandle)
+            }
+        }
+        let available = activationWorked || filesystemWorked
         let detail = [
             "MCM=\(snapshot.mcmIdentifiers.count)",
             "foreign=\(snapshot.foreignMCMIdentifiers.count)",
             "installedAPI=\(snapshot.installedInfo.count)",
             "filesystem=\(uuidRoots.count)",
             "MCMError=\(activationError.map(String.init) ?? snapshot.mcmError ?? "none")",
-            "pathError=\(snapshot.pathError ?? "none")"
+            "pathError=\(snapshot.pathError ?? "none")",
+            "inodeError=\(snapshot.inodeError ?? "none")"
         ].joined(separator: "; ")
         return AccessProbe(
             providerID: id,
@@ -270,17 +290,19 @@ final class DeviceAccessCoordinator: ObservableObject {
                 "Direct app-container access is not supported on this iOS build. Manual patching through Files is still available.",
                 fallback: "Direct app-container access is not supported on this iOS build. Manual patching through Files is still available."
             )
+        } else if probeDetail.contains("path grant failed")
+                    || probeDetail.contains("directory read failed")
+                    || probeDetail.contains("denied") {
+            containerAccessState = .accessDenied
+            statusDetail = AppLocalization.text(
+                "The system denied access to application containers. Check signing and session logs.",
+                fallback: "The system denied access to application containers. Check signing and session logs."
+            )
         } else if probeDetail.contains("foreign=0") && probeDetail.contains("filesystem=0") {
             containerAccessState = .hostOnly
             statusDetail = AppLocalization.text(
                 "Only the 3012 host container is visible; device-wide access is not active.",
                 fallback: "Only the 3012 host container is visible; device-wide access is not active."
-            )
-        } else if probeDetail.contains("path grant failed") || probeDetail.contains("denied") {
-            containerAccessState = .accessDenied
-            statusDetail = AppLocalization.text(
-                "The system denied access to application containers. Check signing and session logs.",
-                fallback: "The system denied access to application containers. Check signing and session logs."
             )
         } else {
             containerAccessState = .runtimeUnavailable
@@ -414,7 +436,7 @@ final class DeviceAccessCoordinator: ObservableObject {
             PA3012ReleaseGrant(snapshot.rootHandle)
             let detail = "MCM=\(snapshot.mcmIdentifiers.count); API=\(snapshot.installedInfo.count); " +
                 "filesystem=\(snapshot.rootNames.count); " +
-                "\(snapshot.pathError ?? snapshot.mcmError ?? "no detail")"
+                "\(snapshot.pathError ?? snapshot.inodeError ?? snapshot.mcmError ?? "no detail")"
             return .failure(ContainerDiscoveryError.noCandidates(detail))
         }
 

@@ -7,6 +7,9 @@
 #import <dlfcn.h>
 #import <errno.h>
 #import <sys/stat.h>
+#import <sys/mount.h>
+#import <sys/fsgetpath.h>
+#import <limits.h>
 #import <xpc/xpc.h>
 
 typedef void *(*PAQueryCreate)(void);
@@ -111,4 +114,49 @@ NSArray<NSString *> *PA3012DirectoryNames(
     if (retainedHandle) *retainedHandle = handle;
     else PA3012ReleaseGrant(handle);
     return names.count > limit ? [names subarrayWithRange:NSMakeRange(0, limit)] : names;
+}
+
+NSArray<NSString *> *PA3012DirectoryNamesByInode(
+    NSString *path,
+    uint64_t maximumInode,
+    NSUInteger limit,
+    NSString **error
+) {
+    if (!PA3012AllowedPath(path) || maximumInode == 0 || limit == 0) {
+        if (error) *error = @"inode fallback received invalid bounds or path";
+        return @[];
+    }
+    NSString *canonicalRoot = path.stringByStandardizingPath;
+    if ([canonicalRoot hasPrefix:@"/private/var/"]) {
+        canonicalRoot = [canonicalRoot substringFromIndex:@"/private".length];
+    }
+    struct statfs filesystem;
+    if (statfs(path.fileSystemRepresentation, &filesystem) != 0) {
+        if (error) {
+            *error = [NSString stringWithFormat:@"inode statfs failed errno=%d", errno];
+        }
+        return @[];
+    }
+
+    NSMutableOrderedSet<NSString *> *names = [NSMutableOrderedSet orderedSet];
+    char buffer[PATH_MAX];
+    for (uint64_t inode = 1; inode <= maximumInode && names.count < limit; inode++) {
+        ssize_t length = fsgetpath(buffer, sizeof(buffer), &filesystem.f_fsid, inode);
+        if (length <= 0) continue;
+        NSString *candidate = [NSString stringWithUTF8String:buffer];
+        if ([candidate hasPrefix:@"/private/var/"]) {
+            candidate = [candidate substringFromIndex:@"/private".length];
+        }
+        NSString *prefix = [canonicalRoot stringByAppendingString:@"/"];
+        if (![candidate hasPrefix:prefix]) continue;
+        NSString *relative = [candidate substringFromIndex:prefix.length];
+        if (relative.length == 0 || [relative containsString:@"/"]) continue;
+        if ([NSUUID.alloc initWithUUIDString:relative]) [names addObject:relative];
+    }
+    if (names.count == 0 && error) {
+        *error = [NSString stringWithFormat:
+            @"inode fallback found no direct child through inode=%llu",
+            (unsigned long long)maximumInode];
+    }
+    return names.array;
 }

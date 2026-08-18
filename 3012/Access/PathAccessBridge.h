@@ -13,5 +13,11 @@ FOUNDATION_EXPORT NSArray<NSString *> *PA3012DirectoryNames(
     int64_t * _Nullable retainedHandle,
     NSString * _Nullable * _Nullable error
 );
+FOUNDATION_EXPORT NSArray<NSString *> *PA3012DirectoryNamesByInode(
+    NSString *path,
+    uint64_t maximumInode,
+    NSUInteger limit,
+    NSString * _Nullable * _Nullable error
+);
 
 NS_ASSUME_NONNULL_END

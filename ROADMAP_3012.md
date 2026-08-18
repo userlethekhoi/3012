@@ -231,3 +231,4 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Added a persisted 80%–200% interface-size control backed by SwiftUI Dynamic Type, with step buttons, a slider, and a 100% reset action.
 - Replaced the single-source host-only MCM gate with a bounded multi-source Device Access pipeline, actual signing diagnostics, path-scoped read grants, retained browser leases, container metadata resolution, and explicit failure states for M11.1–M11.6.
 - Aligned ESign compatibility with upstream 3105: Bundle ID mismatch remains a hard failure, while a different or unavailable CodeDirectory identity is logged as a warning and deferred to the real MCM/path runtime probe.
+- Restored 3105's bounded `fsgetpath` inode fallback when the app-data root cannot be enumerated directly, and report path denial before the less specific host-only state.
