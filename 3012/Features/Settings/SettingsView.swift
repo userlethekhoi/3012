@@ -15,7 +15,7 @@ struct SettingsView: View {
                         Text("Dark").tag("dark")
                     }
                     Picker("Language", selection: $appLanguage) {
-                        Text(verbatim: "System").tag("system")
+                        Text("Follow System").tag("system")
                         Text(verbatim: "English").tag("en")
                         Text(verbatim: "Tiếng Việt").tag("vi")
                         Text(verbatim: "简体中文").tag("zh-Hans")

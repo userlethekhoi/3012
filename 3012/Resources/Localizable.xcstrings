@@ -311,7 +311,10 @@
     "Scan App Containers" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Quét container ứng dụng" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "扫描应用容器" } } } },
     "Scanning Containers…" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đang quét container…" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在扫描容器…" } } } },
     "error.containerDiscoveryFailed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "App containers could not be discovered. Check the build identity and session log." } }, "vi" : { "stringUnit" : { "state" : "translated", "value" : "Không thể tìm container ứng dụng. Hãy kiểm tra build identity và nhật ký phiên." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法发现应用容器。请检查构建身份和会话日志。" } } } },
-    "error.pathOutsideLease" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The requested path is outside the active container lease." } }, "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đường dẫn yêu cầu nằm ngoài container lease đang hoạt động." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请求的路径位于活动容器租约之外。" } } } }
+    "error.pathOutsideLease" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The requested path is outside the active container lease." } }, "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đường dẫn yêu cầu nằm ngoài container lease đang hoạt động." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请求的路径位于活动容器租约之外。" } } } },
+    "files" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "file" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "个文件" } } } },
+    "Follow System" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Theo hệ thống" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "跟随系统" } } } },
+    "3012" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "3012" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "3012" } } } }
   },
   "version" : "1.0"
 }

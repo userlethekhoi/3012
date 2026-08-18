@@ -26,9 +26,13 @@ struct InstalledView: View {
                                 Spacer()
                                 StatusBadge(title: "BACKED UP", color: .green)
                             }
-                            Text("\(receipt.fileCount) file · \(ByteCountFormatter.string(fromByteCount: receipt.payloadBytes, countStyle: .file))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HStack(spacing: 4) {
+                                Text(verbatim: "\(receipt.fileCount)")
+                                Text("files")
+                                Text(verbatim: "· \(ByteCountFormatter.string(fromByteCount: receipt.payloadBytes, countStyle: .file))")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                             Button("Restore Original Files") {
                                 restoreCandidate = receipt
                             }

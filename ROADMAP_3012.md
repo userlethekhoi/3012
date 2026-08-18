@@ -6,10 +6,10 @@ This file is the public progress tracker. Mark an item complete only after the r
 
 ## Current checkpoint
 
-- Status: **M8 in progress — device/support foundation is running; localization and tests remain**
+- Status: **M10 in progress — M9 architecture is built; read-only Device Access awaits real-device validation**
 - Current release: `0.1.0-dev`
-- Last verified build: GitHub Actions `32125959014` (`5426855`), including Core policy/diagnostic tests, the device dashboard, IPA packaging, and Latest release publishing.
-- Next engineering task: finish view localization, add policy/log tests, then begin the access-provider contracts in M9.
+- Last verified build: GitHub Actions `32129027407` (`0a7703a`), including Core access-router tests, both app targets, two IPA packages, and Latest release publishing.
+- Next engineering task: sign Device Access without changing its MobileHouseArrest identity, validate read-only discovery on real devices, and record exact device/build results before enabling writes or DarkSword.
 - Known limitation: this environment cannot run Xcode; the GitHub Actions build is the first macOS compile gate.
 
 ## Decisions locked for the next session
@@ -147,13 +147,13 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 
 ## M9 — Access-provider architecture
 
-- [~] Define `DeviceAccessProvider`, `AccessProbe`, `AccessLease`, capability, and failure-stage contracts; implementation awaits CI validation.
-- [~] Add `AccessProviderRouter` with exact build/device/signing checks and fail-closed behavior; implementation awaits CI validation.
-- [~] Wrap the existing Files picker route as `StandardFilesProvider`; implementation awaits CI validation.
-- [~] Create separate `3012 Standard` and `3012 Device Access` targets/schemes; implementation awaits CI validation.
+- [x] Define `DeviceAccessProvider`, `AccessProbe`, `AccessLease`, capability, and failure-stage contracts.
+- [x] Add `AccessProviderRouter` with exact build/device/signing checks and fail-closed behavior.
+- [x] Wrap the existing Files picker route as `StandardFilesProvider`.
+- [x] Create separate `3012 Standard` and `3012 Device Access` targets/schemes.
 - [~] Configure Device Access Bundle ID and CodeDirectory identity as `com.apple.mobile.MobileHouseArrest`; unsigned build identity is configured, signer preservation remains a distribution requirement.
 - [x] Keep all SwiftUI features independent from `/var/...`, MCM, kernel, and exploit calls through the coordinator/provider boundary.
-- [~] Add read-only provider mocks and router tests before importing privileged source; tests are added and await CI validation.
+- [x] Add read-only provider mocks and router tests before importing privileged source.
 
 ## M10 — Device Access providers and compatibility matrix
 
@@ -212,3 +212,6 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Replaced preview/mock Store content with a real Home dashboard, Files/Patches navigation, actual device/build/provider status, and terminal-style redacted rotating session logs.
 - Added the English/Vietnamese/Simplified Chinese String Catalog foundation and verified Xcode/IPA/release workflow run `32125571050` for commit `a0bed0d`.
 - Moved log redaction/rotation and Standard Files support policy into the testable Core package; all Core tests, device build, IPA packaging, and Latest release publishing passed in run `32125959014` for commit `5426855`.
+- Completed the M9 provider contracts, fail-closed support matrix/router, separate Standard and Device Access targets, and router tests.
+- Added a provenance-pinned MobileHouseArrest bridge and bounded read-only app-container browser for Device Access; no write or DarkSword path is enabled.
+- Verified both app targets and published `3012-unsigned.ipa` plus `3012-DeviceAccess-unsigned.ipa` in run `32129027407` for commit `0a7703a`.

@@ -28,6 +28,9 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      - name: Validate localizations
+        run: python3 scripts/validate_localizations.py
+
       - name: Test core package
         run: swift test --package-path Packages/ThreeZeroOneTwoCore --parallel
 
