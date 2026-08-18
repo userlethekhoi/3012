@@ -203,6 +203,19 @@ static BOOL MCMSafeIdentifier(NSString *identifier) {
     return lease;
 }
 
+typedef int64_t (*SandboxExtensionConsumeFunc)(const char *extension);
+
+static SandboxExtensionConsumeFunc MCMSandboxExtensionConsume(void) {
+    static SandboxExtensionConsumeFunc consumeFunc;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        void *handle = dlopen("/usr/lib/system/libsystem_sandbox.dylib", RTLD_NOW | RTLD_LOCAL);
+        void *symbolHandle = handle != NULL ? handle : RTLD_DEFAULT;
+        consumeFunc = (SandboxExtensionConsumeFunc)dlsym(symbolHandle, "sandbox_extension_consume");
+    });
+    return consumeFunc;
+}
+
 - (BOOL)activate:(NSString **)error {
     if (self.activated) return YES;
     MCMAPI *api = MCMSharedAPI();
@@ -210,11 +223,20 @@ static BOOL MCMSafeIdentifier(NSString *identifier) {
     _activation = object ? api->objectCopy(object) : NULL;
     char *token = _activation ? api->objectCopyToken(_activation) : NULL;
     BOOL tokenPresent = token && token[0] != '\0';
-    free(token);
-    self.activated = tokenPresent && api->objectActivate(_activation, false);
+    BOOL tokenConsumed = NO;
+    if (tokenPresent) {
+        SandboxExtensionConsumeFunc consume = MCMSandboxExtensionConsume();
+        if (consume) {
+            int64_t handle = consume(token);
+            tokenConsumed = (handle >= 0);
+        }
+        free(token);
+    }
+    BOOL objectActivated = _activation && api->objectActivate ? api->objectActivate(_activation, false) : NO;
+    self.activated = tokenConsumed || objectActivated;
     if (!self.activated && error) {
         *error = tokenPresent
-            ? @"sandbox extension activation failed"
+            ? @"sandbox extension consume and activation failed"
             : @"MCM object contained no sandbox token";
     }
     return self.activated;

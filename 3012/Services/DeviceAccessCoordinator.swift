@@ -62,9 +62,7 @@ struct MobileHouseArrestAccessProvider: DeviceAccessProvider {
         var available = false
         for identifier in foreignIdentifiers {
             let rootPath = MCMActivateContainerPath(2, identifier, false, &bridgeError)
-            if rootPath?.hasPrefix(
-                "/private/var/mobile/Containers/Data/Application/"
-            ) == true {
+            if Self.isValidContainerPath(rootPath) {
                 available = true
                 break
             }
@@ -79,6 +77,12 @@ struct MobileHouseArrestAccessProvider: DeviceAccessProvider {
                 : bridgeError.map { String($0) }
                     ?? "No foreign application container root could be activated"
         )
+    }
+
+    private static func isValidContainerPath(_ path: String?) -> Bool {
+        guard let path else { return false }
+        return path.hasPrefix("/private/var/mobile/Containers/Data/Application/")
+            || path.hasPrefix("/var/mobile/Containers/Data/Application/")
     }
 }
 #endif
@@ -206,7 +210,7 @@ final class DeviceAccessCoordinator: ObservableObject {
             autoreleasepool {
                 var activationError: NSString?
                 guard let path = MCMActivateContainerPath(2, identifier, false, &activationError),
-                      path.hasPrefix("/private/var/mobile/Containers/Data/Application/") else {
+                      Self.isValidContainerPath(path) else {
                     if firstActivationError == nil {
                         firstActivationError = activationError.map { String($0) }
                             ?? "Container root activation returned an invalid path"
