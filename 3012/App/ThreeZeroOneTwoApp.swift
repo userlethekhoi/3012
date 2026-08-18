@@ -7,6 +7,7 @@ struct ThreeZeroOneTwoApp: App {
     @StateObject private var manualPatches = ManualPatchManager()
     @StateObject private var sessionLogger = SessionLogger()
     @StateObject private var deviceProfile = DeviceProfileService()
+    @StateObject private var deviceAccess = DeviceAccessCoordinator()
 
     var body: some Scene {
         WindowGroup {
@@ -15,6 +16,7 @@ struct ThreeZeroOneTwoApp: App {
                 .environmentObject(manualPatches)
                 .environmentObject(sessionLogger)
                 .environmentObject(deviceProfile)
+                .environmentObject(deviceAccess)
         }
     }
 }

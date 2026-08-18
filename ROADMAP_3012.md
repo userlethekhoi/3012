@@ -140,26 +140,26 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - [~] Add `DeviceProfileService` for machine identifier, iOS version/build, architecture, app version, and Bundle ID; authoritative signing-identity reporting remains for the Device Access flavor.
 - [x] Add Compatibility Center models and UI; initially report Standard Files capability only.
 - [x] Add a bounded, privacy-filtered, rotating `SessionLogger` and terminal-style `SessionLogView` with copy/export.
-- [~] Add English, Vietnamese, and Simplified Chinese localization using String Catalogs: catalog/language selection and new M8 surfaces are wired; remaining legacy views still need conversion.
+- [x] Add English, Vietnamese, and Simplified Chinese localization using String Catalogs; all visible legacy views and service-owned operation messages now use the selected app language.
 - [x] Refresh README/USAGE text that still describes the app as an empty UI preview.
 - [x] Add unit tests for Standard Files support policy and log redaction/rotation.
 - [x] Pass core tests, Xcode device build, IPA packaging, and Latest release update for the first M8 batch (`32125571050`).
 
 ## M9 — Access-provider architecture
 
-- [ ] Define `DeviceAccessProvider`, `AccessProbe`, `AccessLease`, capability, and failure-stage contracts.
-- [ ] Add `AccessProviderRouter` with exact build/device/signing checks and fail-closed behavior.
-- [ ] Wrap the existing Files picker route as `StandardFilesProvider`.
-- [ ] Create separate `3012 Standard` and `3012 Device Access` targets/schemes.
-- [ ] Configure Device Access Bundle ID and CodeDirectory identity as `com.apple.mobile.MobileHouseArrest`.
-- [ ] Keep all SwiftUI features independent from `/var/...`, MCM, kernel, and exploit calls.
-- [ ] Add read-only provider mocks and router tests before importing privileged source.
+- [~] Define `DeviceAccessProvider`, `AccessProbe`, `AccessLease`, capability, and failure-stage contracts; implementation awaits CI validation.
+- [~] Add `AccessProviderRouter` with exact build/device/signing checks and fail-closed behavior; implementation awaits CI validation.
+- [~] Wrap the existing Files picker route as `StandardFilesProvider`; implementation awaits CI validation.
+- [~] Create separate `3012 Standard` and `3012 Device Access` targets/schemes; implementation awaits CI validation.
+- [~] Configure Device Access Bundle ID and CodeDirectory identity as `com.apple.mobile.MobileHouseArrest`; unsigned build identity is configured, signer preservation remains a distribution requirement.
+- [x] Keep all SwiftUI features independent from `/var/...`, MCM, kernel, and exploit calls through the coordinator/provider boundary.
+- [~] Add read-only provider mocks and router tests before importing privileged source; tests are added and await CI validation.
 
 ## M10 — Device Access providers and compatibility matrix
 
-- [ ] Record approved upstream commits/files and attribution before porting.
-- [ ] Port the MobileHouseArrest/MCM bridge behind `MobileHouseArrestProvider`.
-- [ ] Implement read-only app discovery and bundle-ID-to-container resolution first.
+- [x] Record approved upstream commits/files and attribution before publishing the port.
+- [~] Port the MobileHouseArrest/MCM bridge behind `MobileHouseArrestProvider`; source is isolated to Device Access and awaits CI/device validation.
+- [~] Implement read-only app discovery and bundle-ID-to-container resolution first; UI and bounded discovery are implemented, real-device validation remains.
 - [ ] Add runtime read/write probes without destructive test writes outside a dedicated safe probe location.
 - [ ] Connect verified container roots to the existing transaction engine only after read-only browsing is stable.
 - [ ] Port the approved DarkSword path as an isolated provider for exact verified iOS 17/18/build/device combinations.

@@ -10,21 +10,26 @@ struct ManualPatchView: View {
 
     var body: some View {
         Form {
-            Section("Thông tin") {
-                TextField("Tên patch", text: $manager.patchName)
-                LabeledContent("Chế độ", value: "Cục bộ · Không tải server")
+            Section("Information") {
+                TextField("Patch Name", text: $manager.patchName)
+                LabeledContent("Mode") { Text("Local · No Server Upload") }
             }
 
-            Section("Thư mục đích") {
+            Section("Target Folder") {
                 Button {
                     showsTargetPicker = true
                 } label: {
-                    Label(
-                        manager.targetURL?.lastPathComponent ?? "Chọn thư mục được phép patch",
-                        systemImage: "folder.badge.gearshape"
-                    )
+                    if let targetURL = manager.targetURL {
+                        Label {
+                            Text(verbatim: targetURL.lastPathComponent)
+                        } icon: {
+                            Image(systemName: "folder.badge.gearshape")
+                        }
+                    } else {
+                        Label("Choose a Folder to Patch", systemImage: "folder.badge.gearshape")
+                    }
                 }
-                Text("3012 chỉ ghi bên trong thư mục bạn chọn qua Files. Hãy chọn đúng thư mục gốc để relative path bên dưới khớp chính xác.")
+                Text("3012 writes only inside the folder selected through Files. Choose the correct root folder so the relative paths below match exactly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -33,7 +38,7 @@ struct ManualPatchView: View {
                 Button {
                     showsFilePicker = true
                 } label: {
-                    Label("Thêm file thay thế", systemImage: "doc.badge.plus")
+                    Label("Add Replacement Files", systemImage: "doc.badge.plus")
                 }
                 ForEach(manager.items) { item in
                     VStack(alignment: .leading, spacing: 10) {
@@ -52,7 +57,7 @@ struct ManualPatchView: View {
                             .foregroundStyle(.secondary)
                         }
                         TextField(
-                            "Relative path, ví dụ Documents/file.bin",
+                            "Relative path, for example Documents/file.bin",
                             text: Binding(
                                 get: { item.relativePath },
                                 set: { manager.updatePath(id: item.id, path: $0) }
@@ -63,18 +68,18 @@ struct ManualPatchView: View {
                         .font(.caption.monospaced())
 
                         Picker(
-                            "Thao tác",
+                            "Operation",
                             selection: Binding(
                                 get: { item.operation },
                                 set: { manager.updateOperation(id: item.id, operation: $0) }
                             )
                         ) {
-                            Text("Thay file có sẵn").tag(PackageOperation.replaceFile)
-                            Text("Tạo file mới").tag(PackageOperation.createFile)
+                            Text("Replace Existing File").tag(PackageOperation.replaceFile)
+                            Text("Create New File").tag(PackageOperation.createFile)
                         }
                         .pickerStyle(.segmented)
 
-                        Button("Bỏ file", role: .destructive) {
+                        Button("Remove File", role: .destructive) {
                             manager.removeItem(id: item.id)
                         }
                         .font(.caption.weight(.semibold))
@@ -82,9 +87,12 @@ struct ManualPatchView: View {
                     .padding(.vertical, 4)
                 }
             } header: {
-                Text("File patch (\(manager.items.count))")
+                HStack(spacing: 4) {
+                    Text("Patch Files")
+                    Text(verbatim: "(\(manager.items.count))")
+                }
             } footer: {
-                Text("File lớn được đọc theo từng khối. App tạo package tạm, xác minh SHA-256, backup file gốc và xóa package tạm sau khi hoàn tất.")
+                Text("Large files are streamed in chunks. The app creates a temporary package, verifies SHA-256, backs up originals, and removes the temporary package when finished.")
             }
 
             Section {
@@ -93,16 +101,20 @@ struct ManualPatchView: View {
                 } label: {
                     HStack {
                         if manager.isWorking { ProgressView() }
-                        Text(manager.isWorking ? "Đang patch…" : "Kiểm tra và patch")
+                        if manager.isWorking {
+                            Text("Patching…")
+                        } else {
+                            Text("Verify and Patch")
+                        }
                             .frame(maxWidth: .infinity)
                     }
                 }
                 .disabled(manager.isWorking || manager.items.isEmpty || manager.targetURL == nil)
             } footer: {
-                Text("Không đóng app hoặc ngắt kết nối Files khi đang patch. Nếu một bước thất bại, transaction sẽ rollback những file đã thay đổi.")
+                Text("Do not close the app or disconnect Files while patching. If a step fails, the transaction rolls back files already changed.")
             }
         }
-        .navigationTitle("Patch thủ công")
+        .navigationTitle("Manual Patch")
         .navigationBarTitleDisplayMode(.inline)
         .fileImporter(
             isPresented: $showsTargetPicker,
@@ -123,23 +135,23 @@ struct ManualPatchView: View {
             }
         }
         .confirmationDialog(
-            "Xác nhận patch thủ công",
+            "Confirm Manual Patch",
             isPresented: $showsConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Tạo backup và patch") { manager.apply() }
-            Button("Hủy", role: .cancel) {}
+            Button("Back Up and Patch") { manager.apply() }
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("3012 sẽ xác minh toàn bộ file, tạo journal và backup trước khi thay đổi thư mục đích.")
+            Text("3012 verifies every file and creates a journal and backup before changing the target folder.")
         }
         .alert(
-            manager.lastOperationSucceeded ? "Hoàn tất" : "3012",
+            manager.lastOperationSucceeded ? "Completed" : "3012",
             isPresented: Binding(
                 get: { manager.message != nil && !manager.isWorking },
                 set: { if !$0 { manager.message = nil } }
             )
         ) {
-            Button("Đóng") { manager.message = nil }
+            Button("Close") { manager.message = nil }
         } message: {
             Text(manager.message ?? "")
         }

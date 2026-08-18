@@ -43,14 +43,28 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedDataStandard" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean build
+
+      - name: Build unsigned Device Access app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project 3012.xcodeproj \
+            -scheme '3012 Device Access' \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedDataDeviceAccess" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             clean build
 
       - name: Package unsigned IPA
         run: |
-          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/3012.app"
+          APP_PATH="$RUNNER_TEMP/DerivedDataStandard/Build/Products/Release-iphoneos/3012.app"
           test -d "$APP_PATH"
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           ditto "$APP_PATH" "$RUNNER_TEMP/ipa/Payload/3012.app"
@@ -58,11 +72,23 @@ jobs:
           /usr/bin/zip -qry "$GITHUB_WORKSPACE/3012-unsigned.ipa" Payload
           test -s "$GITHUB_WORKSPACE/3012-unsigned.ipa"
 
+      - name: Package unsigned Device Access IPA
+        run: |
+          APP_PATH="$RUNNER_TEMP/DerivedDataDeviceAccess/Build/Products/Release-iphoneos/3012-DeviceAccess.app"
+          test -d "$APP_PATH"
+          mkdir -p "$RUNNER_TEMP/ipa-device-access/Payload"
+          ditto "$APP_PATH" "$RUNNER_TEMP/ipa-device-access/Payload/3012.app"
+          cd "$RUNNER_TEMP/ipa-device-access"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/3012-DeviceAccess-unsigned.ipa" Payload
+          test -s "$GITHUB_WORKSPACE/3012-DeviceAccess-unsigned.ipa"
+
       - name: Upload IPA
         uses: actions/upload-artifact@v7
         with:
           name: 3012-unsigned-${{ github.sha }}
-          path: 3012-unsigned.ipa
+          path: |
+            3012-unsigned.ipa
+            3012-DeviceAccess-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
 
@@ -77,16 +103,16 @@ jobs:
           git tag --force dev-latest "$GITHUB_SHA"
           git push origin --force refs/tags/dev-latest
 
-          NOTES="Automated unsigned development build from commit ${GITHUB_SHA}. This IPA must be signed with an authorized certificate and provisioning profile before installation."
+          NOTES="Automated unsigned development builds from commit ${GITHUB_SHA}. Standard uses normal Files access. Device Access must preserve both CFBundleIdentifier and CodeDirectory identifier as com.apple.mobile.MobileHouseArrest when signed; automatic bundle-ID rewriting disables container access."
           if gh release view dev-latest >/dev/null 2>&1; then
-            gh release upload dev-latest 3012-unsigned.ipa --clobber
+            gh release upload dev-latest 3012-unsigned.ipa 3012-DeviceAccess-unsigned.ipa --clobber
             gh release edit dev-latest \
               --title "3012 Development Build" \
               --notes "$NOTES" \
               --prerelease=false \
               --latest
           else
-            gh release create dev-latest 3012-unsigned.ipa \
+            gh release create dev-latest 3012-unsigned.ipa 3012-DeviceAccess-unsigned.ipa \
               --verify-tag \
               --title "3012 Development Build" \
               --notes "$NOTES" \
@@ -103,7 +129,7 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
             EXTRA_FLAGS+=(--prerelease)
           fi
-          gh release create "$GITHUB_REF_NAME" 3012-unsigned.ipa \
+          gh release create "$GITHUB_REF_NAME" 3012-unsigned.ipa 3012-DeviceAccess-unsigned.ipa \
             --verify-tag \
             --generate-notes \
             --title "3012 $GITHUB_REF_NAME" \

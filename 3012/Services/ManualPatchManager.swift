@@ -32,13 +32,23 @@ enum ManualPatchError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .targetNotSelected: return "Bạn chưa chọn thư mục đích."
-        case .noFiles: return "Bạn chưa chọn file thay thế."
-        case .bookmarkUnavailable: return "Không thể lưu quyền truy cập file hoặc thư mục."
-        case .staleBookmark: return "Quyền truy cập đã hết hạn. Hãy chọn lại file hoặc thư mục."
-        case .invalidRelativePath(let path): return "Đường dẫn không hợp lệ: \(path)"
+        case .targetNotSelected:
+            return AppLocalization.text("error.targetNotSelected", fallback: "No target folder is selected.")
+        case .noFiles:
+            return AppLocalization.text("error.noFiles", fallback: "No replacement files are selected.")
+        case .bookmarkUnavailable:
+            return AppLocalization.text("error.bookmarkUnavailable", fallback: "File or folder access could not be saved.")
+        case .staleBookmark:
+            return AppLocalization.text("error.staleBookmark", fallback: "Access has expired. Select the file or folder again.")
+        case .invalidRelativePath(let path):
+            return AppLocalization.format("error.invalidRelativePath", fallback: "Invalid path: %@", path)
         case .insufficientStorage(let required, let available):
-            return "Không đủ dung lượng trống. Cần khoảng \(ByteCountFormatter.string(fromByteCount: required, countStyle: .file)), hiện có \(ByteCountFormatter.string(fromByteCount: available, countStyle: .file))."
+            return AppLocalization.format(
+                "error.insufficientStorage",
+                fallback: "Not enough free space. About %@ is required; %@ is available.",
+                ByteCountFormatter.string(fromByteCount: required, countStyle: .file),
+                ByteCountFormatter.string(fromByteCount: available, countStyle: .file)
+            )
         }
     }
 }
@@ -47,7 +57,7 @@ enum ManualPatchError: LocalizedError {
 final class ManualPatchManager: ObservableObject {
     nonisolated static let manualBundleID = "manual.selected-folder"
 
-    @Published var patchName = "Patch thủ công"
+    @Published var patchName = ""
     @Published var targetURL: URL?
     @Published var targetBookmark: Data?
     @Published var items: [ManualPatchItem] = []
@@ -149,13 +159,13 @@ final class ManualPatchManager: ObservableObject {
         }
         let snapshot = items
         let name = patchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Patch thủ công"
+            ? AppLocalization.text("Manual Patch", fallback: "Manual Patch")
             : patchName.trimmingCharacters(in: .whitespacesAndNewlines)
         let packageURL = packagesDirectory.appendingPathComponent("\(UUID().uuidString).3012pkg")
         let transactionsDirectory = transactionsDirectory
         isWorking = true
         lastOperationSucceeded = false
-        message = "Đang xác minh và tạo backup…"
+        message = AppLocalization.text("status.verifyingBackup", fallback: "Verifying and creating a backup…")
 
         Task {
             let result = await Task.detached(priority: .userInitiated) {
@@ -176,7 +186,7 @@ final class ManualPatchManager: ObservableObject {
                 saveReceipts()
                 items.removeAll()
                 lastOperationSucceeded = true
-                message = "Patch hoàn tất. Backup đã được lưu để khôi phục."
+                message = AppLocalization.text("status.patchCompleted", fallback: "Patch completed. A backup was saved for restore.")
             case .failure(let error):
                 message = error.localizedDescription
             }
@@ -186,7 +196,7 @@ final class ManualPatchManager: ObservableObject {
     func restore(_ receipt: InstalledManualPatch) {
         guard !isWorking else { return }
         isWorking = true
-        message = "Đang kiểm tra và khôi phục backup…"
+        message = AppLocalization.text("status.restoringBackup", fallback: "Checking and restoring the backup…")
         Task {
             let result = await Task.detached(priority: .userInitiated) {
                 Result {
@@ -213,7 +223,7 @@ final class ManualPatchManager: ObservableObject {
                 installed.removeAll { $0.id == receipt.id }
                 saveReceipts()
                 lastOperationSucceeded = true
-                message = "Đã khôi phục các file gốc."
+                message = AppLocalization.text("status.restoreCompleted", fallback: "Original files were restored.")
             case .failure(let error):
                 message = error.localizedDescription
             }
@@ -342,7 +352,11 @@ final class ManualPatchManager: ObservableObject {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(installed).write(to: receiptsURL, options: .atomic)
         } catch {
-            message = "Patch đã chạy nhưng không thể lưu lịch sử: \(error.localizedDescription)"
+            message = AppLocalization.format(
+                "error.historySaveFailed",
+                fallback: "The patch completed, but its history could not be saved: %@",
+                error.localizedDescription
+            )
         }
     }
 }

@@ -15,10 +15,10 @@ struct SettingsView: View {
                         Text("Dark").tag("dark")
                     }
                     Picker("Language", selection: $appLanguage) {
-                        Text("System").tag("system")
-                        Text("English").tag("en")
-                        Text("Tiếng Việt").tag("vi")
-                        Text("简体中文").tag("zh-Hans")
+                        Text(verbatim: "System").tag("system")
+                        Text(verbatim: "English").tag("en")
+                        Text(verbatim: "Tiếng Việt").tag("vi")
+                        Text(verbatim: "简体中文").tag("zh-Hans")
                     }
                 }
 
@@ -27,8 +27,8 @@ struct SettingsView: View {
                         Text("Stable").tag("stable")
                         Text("Beta").tag("beta")
                     }
-                    LabeledContent("Catalog Trust", value: "Not Configured")
-                    LabeledContent("Background Downloads", value: "Available")
+                    LabeledContent("Catalog Trust") { Text("Not Configured") }
+                    LabeledContent("Background Downloads") { Text("Available") }
                 }
 
                 Section("3012") {
@@ -36,8 +36,11 @@ struct SettingsView: View {
                         "Version",
                         value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
                     )
-                    if let repositoryURL = URL(string: "https://github.com/userlethekhoi/3012") {
-                        Link("Source Code", destination: repositoryURL)
+                    LabeledContent("Author") { Text(verbatim: "Le The Khoi") }
+                    if let telegramURL = URL(string: "https://t.me/coder_009") {
+                        Link(destination: telegramURL) {
+                            LabeledContent("Telegram", value: "@coder_009")
+                        }
                     }
                     Text("3012 does not include advertising, telemetry, or an AI runtime.")
                         .font(.footnote)

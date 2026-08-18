@@ -17,7 +17,10 @@ final class PackageImportViewModel: ObservableObject {
             errorMessage = nil
         } catch {
             preview = nil
-            errorMessage = "Không thể đọc package này. File có thể sai định dạng hoặc vượt giới hạn an toàn."
+            errorMessage = AppLocalization.text(
+                "error.packageUnreadable",
+                fallback: "This package could not be read. It may be malformed or exceed a safety limit."
+            )
         }
     }
 

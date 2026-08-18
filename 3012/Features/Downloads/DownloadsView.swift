@@ -13,8 +13,8 @@ struct DownloadsView: View {
                 if manager.records.isEmpty {
                     EmptyStateView(
                         icon: "arrow.down.circle.fill",
-                        title: "Không có lượt tải",
-                        message: "Các package đang tải, tạm dừng hoặc chờ xác minh sẽ được quản lý tại đây."
+                        title: "No Downloads",
+                        message: "Packages being downloaded, paused, or verified will be managed here."
                     )
                 } else {
                     ScrollView {
@@ -28,13 +28,13 @@ struct DownloadsView: View {
                 }
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("Tải xuống")
+            .navigationTitle("Downloads")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         showsImporter = true
                     } label: {
-                        Label("Nhập package", systemImage: "square.and.arrow.down")
+                        Label("Import Package", systemImage: "square.and.arrow.down")
                     }
                 }
             }
@@ -54,12 +54,12 @@ struct DownloadsView: View {
                 if let preview = packageImport.preview {
                     NavigationStack {
                         List {
-                            LabeledContent("Tên", value: preview.name)
-                            LabeledContent("Phiên bản", value: preview.version)
-                            LabeledContent("Nhà phát hành", value: preview.publisherKeyID)
-                            LabeledContent("Số file", value: "\(preview.entryCount)")
+                            LabeledContent("Name", value: preview.name)
+                            LabeledContent("Version", value: preview.version)
+                            LabeledContent("Publisher", value: preview.publisherKeyID)
+                            LabeledContent("File Count", value: "\(preview.entryCount)")
                             LabeledContent(
-                                "Dung lượng payload",
+                                "Payload Size",
                                 value: ByteCountFormatter.string(
                                     fromByteCount: preview.payloadBytes,
                                     countStyle: .file
@@ -67,29 +67,29 @@ struct DownloadsView: View {
                             )
                             Section {
                                 Label(
-                                    "Preview chưa xác minh chữ ký. Package chỉ được phép áp dụng sau khi public key production được cấu hình và toàn bộ SHA-256 hợp lệ.",
+                                    "This preview is not signature verification. A package can be applied only after a production public key is configured and every SHA-256 digest is valid.",
                                     systemImage: "exclamationmark.shield.fill"
                                 )
                                 .foregroundStyle(.orange)
                             }
                         }
-                        .navigationTitle("Xem trước package")
+                        .navigationTitle("Package Preview")
                         .toolbar {
-                            Button("Đóng") { packageImport.clear() }
+                            Button("Close") { packageImport.clear() }
                         }
                     }
                 }
             }
             .alert(
-                "Không thể nhập package",
+                "Package Import Failed",
                 isPresented: Binding(
                     get: { packageImport.errorMessage != nil },
                     set: { if !$0 { packageImport.clear() } }
                 )
             ) {
-                Button("Đóng") { packageImport.clear() }
+                Button("Close") { packageImport.clear() }
             } message: {
-                Text(packageImport.errorMessage ?? "Lỗi không xác định")
+                Text(packageImport.errorMessage ?? "Unknown Error")
             }
         }
     }
@@ -124,17 +124,17 @@ struct DownloadsView: View {
                 HStack {
                     switch record.status {
                     case .downloading:
-                        Button("Tạm dừng") { manager.pause(record) }
+                        Button("Pause") { manager.pause(record) }
                     case .paused:
-                        Button("Tiếp tục") { manager.resume(record) }
+                        Button("Resume") { manager.resume(record) }
                     case .failed:
-                        Button("Thử lại") { manager.retry(record) }
+                        Button("Retry") { manager.retry(record) }
                     default:
                         EmptyView()
                     }
                     Spacer()
                     if record.status != .downloading && record.status != .verifying {
-                        Button("Xóa", role: .destructive) { manager.remove(record) }
+                        Button("Delete", role: .destructive) { manager.remove(record) }
                     }
                 }
                 .buttonStyle(.bordered)
@@ -150,14 +150,14 @@ struct DownloadsView: View {
         return "\(received) / \(total)"
     }
 
-    private func statusTitle(_ status: DownloadStatus) -> String {
+    private func statusTitle(_ status: DownloadStatus) -> LocalizedStringKey {
         switch status {
-        case .queued: return "Đang chờ"
-        case .downloading: return "Đang tải"
-        case .paused: return "Tạm dừng"
-        case .verifying: return "Đang xác minh"
-        case .completed: return "Hoàn tất"
-        case .failed: return "Lỗi"
+        case .queued: return "Queued"
+        case .downloading: return "Downloading"
+        case .paused: return "Paused"
+        case .verifying: return "Verifying"
+        case .completed: return "Completed"
+        case .failed: return "Failed"
         }
     }
 

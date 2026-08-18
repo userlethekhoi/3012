@@ -120,7 +120,10 @@ final class BackgroundDownloadManager: NSObject, ObservableObject {
                     for index in self.records.indices where self.records[index].status == .downloading {
                         if !activeIDs.contains(self.records[index].id) {
                             self.records[index].status = .failed
-                            self.records[index].failureReason = "Tác vụ nền không còn tồn tại."
+                            self.records[index].failureReason = AppLocalization.text(
+                                "error.backgroundTaskMissing",
+                                fallback: "The background task no longer exists."
+                            )
                         }
                     }
                     self.persist()

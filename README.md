@@ -14,6 +14,7 @@
 - Giao diện theo ngôn ngữ thiết kế hệ thống iOS, hạn chế hiệu ứng nặng.
 - Dashboard dùng dữ liệu thiết bị thật, hiển thị iOS build, kiến trúc, Bundle ID và provider hiện hành.
 - Nhật ký phiên dùng SF Mono, tự giới hạn/luân phiên và che token, secret, UUID trước khi lưu.
+- Hai build flavor: Standard dùng Files picker; Device Access dùng MobileHouseArrest identity và chỉ mở duyệt container read-only sau khi support matrix cùng runtime probe đều đạt.
 - Tách theo feature/module để dễ review và kiểm thử.
 - Hướng tới catalog online có chữ ký và package bất biến theo version.
 - Hướng tới background download, pause/resume và streaming verification cho file lớn.
@@ -92,6 +93,11 @@ Workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) chạy khi
 4. Khi job hoàn thành, tải artifact có tên `3012-unsigned-<commit>`.
 
 Mỗi build thành công trên `main` cũng cập nhật prerelease cố định `dev-latest` và thay thế file `3012-unsigned.ipa`. Tag dạng `v*` tạo một GitHub Release riêng; tag có dấu gạch nối như `v0.2.0-beta.1` được đánh dấu prerelease.
+
+Release chứa hai artifact:
+
+- `3012-unsigned.ipa`: bản Standard, Bundle ID bình thường, chỉ truy cập thư mục người dùng chọn qua Files.
+- `3012-DeviceAccess-unsigned.ipa`: bản Device Access read-only. Công cụ ký phải giữ cả `CFBundleIdentifier` và CodeDirectory identifier là `com.apple.mobile.MobileHouseArrest`; tự động đổi Bundle ID sẽ làm provider MCM không hoạt động.
 
 IPA trong artifact và Release đều là unsigned. Việc ký và phân phối phải tuân theo điều khoản Apple và chứng chỉ thuộc quyền sử dụng của người phát hành. Workflow dùng `GITHUB_TOKEN` tự cấp; không cần và không được commit Personal Access Token.
 

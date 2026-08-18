@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var deviceService: DeviceProfileService
     @EnvironmentObject private var logger: SessionLogger
+    @EnvironmentObject private var access: DeviceAccessCoordinator
     @State private var showsLogs = false
 
     var body: some View {
@@ -24,12 +25,19 @@ struct HomeView: View {
                 }
 
                 Section("Access") {
-                    technicalRow("Provider", deviceService.compatibility.providerName)
+                    technicalRow("Provider", access.selectedProvider.rawValue)
                     technicalRow("Bundle ID", deviceService.profile.bundleIdentifier)
-                    Label(
-                        "3012 currently writes only inside folders explicitly selected through Files.",
-                        systemImage: "hand.raised.fill"
-                    )
+                    if access.directContainerAccessAvailable {
+                        Label(
+                            "Container browsing is read-only in this milestone.",
+                            systemImage: "eye.fill"
+                        )
+                    } else {
+                        Label(
+                            "3012 currently writes only inside folders explicitly selected through Files.",
+                            systemImage: "hand.raised.fill"
+                        )
+                    }
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 }
@@ -47,35 +55,47 @@ struct HomeView: View {
             }
             .refreshable {
                 deviceService.refresh(logger: logger)
+                await access.refresh(profile: deviceService.profile, logger: logger)
             }
             .sheet(isPresented: $showsLogs) {
                 SessionLogView()
             }
             .task {
                 deviceService.refresh(logger: logger)
+                await access.refresh(profile: deviceService.profile, logger: logger)
             }
         }
     }
 
     private var supportRow: some View {
         HStack(spacing: 14) {
-            Image(systemName: deviceService.compatibility.level.symbol)
+            Image(systemName: supportLevel.symbol)
                 .font(.title2.weight(.semibold))
-                .foregroundStyle(deviceService.compatibility.level.color)
+                .foregroundStyle(supportLevel.color)
                 .frame(width: 42, height: 42)
                 .background(
-                    deviceService.compatibility.level.color.opacity(0.12),
+                    supportLevel.color.opacity(0.12),
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                 )
             VStack(alignment: .leading, spacing: 3) {
-                Text(deviceService.compatibility.level.title)
+                Text(supportLevel.title)
                     .font(.headline)
-                Text(deviceService.compatibility.detail)
+                Text(supportDetail)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var supportLevel: SupportLevel {
+        access.capabilities.isEmpty ? .unavailable : .supported
+    }
+
+    private var supportDetail: LocalizedStringKey {
+        access.directContainerAccessAvailable
+            ? "Read-only app-container access is available."
+            : "Manual patching through Files is available. Direct app-container access is not enabled in this build."
     }
 
     private func technicalRow(_ title: LocalizedStringKey, _ value: String) -> some View {

@@ -10,8 +10,8 @@ struct InstalledView: View {
                 if manager.installed.isEmpty {
                     EmptyStateView(
                         icon: "checkmark.seal.fill",
-                        title: "Chưa có patch đã cài",
-                        message: "Patch đã xác minh và cài đặt sẽ xuất hiện tại đây cùng trạng thái backup và khôi phục."
+                        title: "No Installed Patches",
+                        message: "Verified installed patches will appear here with backup and restore status."
                     )
                 } else {
                     List(manager.installed) { receipt in
@@ -24,12 +24,12 @@ struct InstalledView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                StatusBadge(title: "ĐÃ BACKUP", color: .green)
+                                StatusBadge(title: "BACKED UP", color: .green)
                             }
                             Text("\(receipt.fileCount) file · \(ByteCountFormatter.string(fromByteCount: receipt.payloadBytes, countStyle: .file))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Button("Khôi phục file gốc") {
+                            Button("Restore Original Files") {
                                 restoreCandidate = receipt
                             }
                             .buttonStyle(.bordered)
@@ -41,9 +41,9 @@ struct InstalledView: View {
                 }
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("Đã cài")
+            .navigationTitle("Installed & Restore")
             .confirmationDialog(
-                "Khôi phục file gốc?",
+                "Restore Original Files?",
                 isPresented: Binding(
                     get: { restoreCandidate != nil },
                     set: { if !$0 { restoreCandidate = nil } }
@@ -51,23 +51,23 @@ struct InstalledView: View {
                 titleVisibility: .visible
             ) {
                 if let receipt = restoreCandidate {
-                    Button("Khôi phục", role: .destructive) {
+                    Button("Restore", role: .destructive) {
                         restoreCandidate = nil
                         manager.restore(receipt)
                     }
                 }
-                Button("Hủy", role: .cancel) { restoreCandidate = nil }
+                Button("Cancel", role: .cancel) { restoreCandidate = nil }
             } message: {
-                Text("3012 chỉ khôi phục nếu file hiện tại vẫn đúng với bản đã patch, tránh ghi đè thay đổi mới của bạn.")
+                Text("3012 restores only when the current file still matches the patched version, preventing newer changes from being overwritten.")
             }
             .alert(
-                manager.lastOperationSucceeded ? "Hoàn tất" : "Không thể khôi phục",
+                manager.lastOperationSucceeded ? "Completed" : "Restore Failed",
                 isPresented: Binding(
                     get: { manager.message != nil && !manager.isWorking },
                     set: { if !$0 { manager.message = nil } }
                 )
             ) {
-                Button("Đóng") { manager.message = nil }
+                Button("Close") { manager.message = nil }
             } message: {
                 Text(manager.message ?? "")
             }

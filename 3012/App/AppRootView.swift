@@ -26,6 +26,7 @@ struct AppRootView: View {
         .tint(AppTheme.accent)
         .preferredColorScheme(preferredColorScheme)
         .environment(\.locale, selectedLocale)
+        .id(appLanguage)
     }
 
     private var preferredColorScheme: ColorScheme? {

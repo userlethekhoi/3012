@@ -21,3 +21,33 @@ Apple, iOS, iPadOS, Xcode, SwiftUI, SF Symbols, and related names are trademarks
 ## No bundled third-party package content
 
 The public baseline intentionally contains no third-party patch catalog or package payload. Catalog maintainers are responsible for verifying rights to every item they publish.
+
+## Reviewed access-provider sources
+
+The maintainer reports direct permission from the relevant maintainers to remake and integrate the access logic, subject to removing legacy product identity and retaining acknowledgement. The following source was reviewed and pinned on 2026-08-18:
+
+### FilzaSlop
+
+- Repository: `https://github.com/0xjohnnydev/FilzaSlop`
+- Commit: `ec490ade64b7755544833248d915e4adfc6f80d6`
+- Source used: `MCMBridge.h`, `MCMBridge.m`
+- 3012 files: `3012/Access/MCMBridge.h`, `3012/Access/MCMBridge.m`
+- Modifications: renamed the retained lease, removed Filza integration, limited the public interface to runtime availability, bounded identifier enumeration, and read-only container-root activation; added strict host Bundle ID and path validation.
+- Permission basis: maintainer-reported direct approval plus public source availability. The pinned repository contains no standalone root license file; this notice records the permission basis instead of assuming a license from repository visibility alone.
+
+### 3105
+
+- Repository: `https://github.com/YangJiiii/3105`
+- Commit: `90ab4dd35823d58de10e6b8b78236e0e7e1ad32b`
+- Files reviewed: `ThreeOneOSFive/exploit/mcm_bridge.h`, `ThreeOneOSFive/exploit/mcm_bridge.m`, `ThreeOneOSFive/helpers/SupportPolicy.swift`, and read-only discovery portions of `ThreeOneOSFive/helpers/ContainerStore.swift`.
+- Use in 3012: the fail-closed iOS 26 range, exact iOS 27 build allowlist, MobileHouseArrest identity checks, and the read-only discovery design were independently integrated behind 3012 provider contracts.
+- License: GNU GPL v3. 3012 is also distributed under GNU GPL v3.
+- Modifications: all 3105 product names, `.3105` package behavior, payloads, UI, write operations, cleaner, wallpaper, and patch-workspace code are excluded from this milestone.
+
+### FilzaJailedDS
+
+- Repository: `https://github.com/34306/FilzaJailedDS`
+- Commit: `b0802234110b581b9d185f22fbc907d7341384a3`
+- Files reviewed: `README.md`, `Makefile`, and the high-level DarkSword source layout.
+- Use in 3012: no kernel, sandbox-escape, XPF, vnode, offset, or injected Filza source is included yet. `DarkSwordProvider` remains disabled in the compiled support matrix until exact build/hardware rules, licensing provenance, safe lifecycle isolation, and real-device tests are complete.
+- Permission basis: maintainer-reported direct approval plus public source availability. The pinned repository contains no standalone license file.
