@@ -31,6 +31,11 @@ struct HomeView: View {
                         deviceService.profile.bundleIdentifier,
                         compact: true
                     )
+                    technicalRow(
+                        "Signing ID",
+                        deviceService.profile.signingIdentifier,
+                        compact: true
+                    )
                     Group {
                         if access.directContainerAccessAvailable {
                             Label(
@@ -86,7 +91,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(supportLevel.title)
                     .font(.headline)
-                Text(supportDetail)
+                Text(verbatim: access.statusDetail)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -100,23 +105,9 @@ struct HomeView: View {
             return .supported
         case .checking:
             return .limited
-        case .unsupportedSystem, .notCompiled, .runtimeUnavailable:
+        case .unsupportedSystem, .notCompiled, .signingMismatch, .hostOnly,
+             .accessDenied, .runtimeUnavailable:
             return .unavailable
-        }
-    }
-
-    private var supportDetail: LocalizedStringKey {
-        switch access.containerAccessState {
-        case .checking:
-            return "Checking direct app-container access."
-        case .available:
-            return "Read-only app-container access is available."
-        case .unsupportedSystem:
-            return "Direct app-container access is not supported on this iOS build. Manual patching through Files is still available."
-        case .notCompiled:
-            return "This build does not include direct app-container access. Use the Device Access IPA."
-        case .runtimeUnavailable:
-            return "Compatibility checks passed, but the container provider could not be activated. Check the signing identity and session log."
         }
     }
 

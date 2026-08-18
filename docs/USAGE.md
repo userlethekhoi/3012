@@ -37,9 +37,11 @@ Device Access hiện chỉ được router cân nhắc trên iOS 26.0–26.6.1 v
 - **Patches:** gom patch thủ công, catalog online, tải xuống, lịch sử cài và khôi phục.
 - **Settings:** theme System/Light/Dark, ngôn ngữ, channel Stable/Beta và thông tin repository.
 
-Trạng thái **Supported** trên Home chỉ xuất hiện khi Device Access vượt qua support matrix, MCM enumeration và kích hoạt thử một container root thành công. Files picker không còn được dùng để tuyên bố container là được hỗ trợ. Trên iOS 16.7.14, Home phải hiện container không khả dụng; patch thủ công qua Files vẫn hoạt động độc lập.
+Trạng thái **Supported** trên Home chỉ xuất hiện khi Device Access vượt qua support matrix và ít nhất một đường truy cập đọc thực tế hoạt động: MCM activation hoặc path-scoped traversal. Files picker không được dùng để tuyên bố container là được hỗ trợ. Trên iOS 16.7.14, Home phải hiện container không khả dụng; patch thủ công qua Files vẫn hoạt động độc lập.
 
-Nếu MCM chỉ trả về `com.apple.mobile.MobileHouseArrest`, ứng dụng mới chỉ nhìn thấy container của chính nó và chưa có quyền all-app. Trường hợp này bị coi là runtime unavailable, không phải Device Access thành công.
+Nếu MCM chỉ trả về `com.apple.mobile.MobileHouseArrest`, 3012 tiếp tục thử Installed App API và filesystem UUID traversal. Chỉ khi các nguồn còn lại cũng không tìm hoặc không mở được container, ứng dụng mới báo host-only/access denied. Home và nhật ký phiên hiển thị riêng lỗi sai CodeDirectory identity, bản Standard, iOS ngoài ma trận và runtime denial.
+
+Trong Files, mỗi kết quả hiển thị app name, Bundle ID, UUID và nguồn phát hiện. Access handle được giữ trong suốt phiên duyệt để các thư mục như `Documents`, `Library` và `tmp` không mất quyền khi chuyển màn hình. Đây vẫn là chế độ chỉ đọc; chưa kết nối write/patch trực tiếp vào container.
 
 ## Khi catalog online được phát hành
 

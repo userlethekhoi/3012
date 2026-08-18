@@ -118,7 +118,7 @@ IPA trong artifact và Release đều là unsigned. Việc ký và phân phối 
 4. Vào **Patches → Installed & Restore** để xem receipt và khôi phục file gốc an toàn.
 5. **Settings** cho phép đổi System/Light/Dark, ngôn ngữ nền tảng và kênh catalog.
 
-Bản Standard chỉ có quyền với thư mục người dùng tự chọn qua Files. Bản Device Access chỉ duyệt container khi support matrix và runtime activation đều thành công. Xem [hướng dẫn sử dụng](docs/USAGE.md) để biết giới hạn hiện tại.
+Bản Standard chỉ có quyền với thư mục người dùng tự chọn qua Files. Bản Device Access đối chiếu signing identity thật, sau đó hợp nhất MCM, installed-app API, filesystem UUID và container metadata; quyền đọc được giữ theo phiên duyệt. Xem [hướng dẫn sử dụng](docs/USAGE.md) để biết giới hạn và cách đọc lỗi cụ thể.
 
 ## Nguyên tắc catalog/package tương lai
 
@@ -143,4 +143,4 @@ Lỗ hổng bảo mật phải được báo cáo theo [SECURITY.md](SECURITY.md
 
 ### English summary
 
-3012 is an independent SwiftUI rewrite inspired by the product experience and architecture of the original 3105 project. The current `0.1.0-dev` build includes a real device dashboard, manual Files-based patching, transactional backup/restore, background downloads, signed package foundations, and unsigned IPA automation. Production catalogs and direct app-container access remain disabled. Created and maintained by [Le The Khoi](https://github.com/userlethekhoi).
+3012 is an independent SwiftUI rewrite inspired by the product experience and architecture of the original 3105 project. The current `0.1.0-dev` build includes a real device dashboard, manual Files-based patching, transactional backup/restore, background downloads, signed package foundations, unsigned IPA automation, and an isolated read-only Device Access flavor awaiting signed real-device validation. Created and maintained by [Le The Khoi](https://github.com/userlethekhoi).

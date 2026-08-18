@@ -9,6 +9,7 @@
 #import <stdlib.h>
 #import <unistd.h>
 #import <xpc/xpc.h>
+#import <sys/types.h>
 
 typedef void *(*MCMQueryCreate)(void);
 typedef void (*MCMQuerySetU64)(void *, uint64_t);
@@ -300,4 +301,51 @@ NSString *MCMActivateContainerPath(
         leases[key] = lease;
         return lease.rootPath;
     }
+}
+
+NSDictionary<NSString *, NSString *> *MCMCodeSigningDiagnostics(void) {
+    NSMutableDictionary<NSString *, NSString *> *result = [NSMutableDictionary dictionary];
+    result[@"bundleIdentifier"] = NSBundle.mainBundle.bundleIdentifier ?: @"—";
+
+    typedef int (*CSOpsFunc)(pid_t, unsigned int, void *, size_t);
+    CSOpsFunc csopsFunc = (CSOpsFunc)dlsym(RTLD_DEFAULT, "csops");
+    char identity[512] = {0};
+    if (csopsFunc && csopsFunc(getpid(), 11, identity, sizeof(identity)) == 0 && identity[0]) {
+        result[@"signingIdentifier"] = [NSString stringWithUTF8String:identity];
+    } else {
+        result[@"signingIdentifier"] = @"—";
+    }
+
+    typedef CFTypeRef (*SecTaskCreateFromSelfFunc)(CFAllocatorRef);
+    typedef CFTypeRef (*SecTaskCopyValueForEntitlementFunc)(CFTypeRef, CFStringRef, CFErrorRef *);
+    void *security = dlopen(
+        "/System/Library/Frameworks/Security.framework/Security",
+        RTLD_NOW | RTLD_LOCAL
+    );
+    void *symbols = security ?: RTLD_DEFAULT;
+    SecTaskCreateFromSelfFunc createTask = (SecTaskCreateFromSelfFunc)dlsym(
+        symbols, "SecTaskCreateFromSelf"
+    );
+    SecTaskCopyValueForEntitlementFunc copyEntitlement =
+        (SecTaskCopyValueForEntitlementFunc)dlsym(symbols, "SecTaskCopyValueForEntitlement");
+    if (createTask && copyEntitlement) {
+        CFTypeRef task = createTask(kCFAllocatorDefault);
+        if (task) {
+            NSArray<NSString *> *keys = @[
+                @"application-identifier",
+                @"com.apple.developer.team-identifier",
+                @"get-task-allow"
+            ];
+            for (NSString *key in keys) {
+                CFTypeRef value = copyEntitlement(task, (__bridge CFStringRef)key, NULL);
+                if (value) {
+                    result[key] = [(__bridge id)value description];
+                    CFRelease(value);
+                }
+            }
+            CFRelease(task);
+        }
+    }
+    if (security) dlclose(security);
+    return result;
 }

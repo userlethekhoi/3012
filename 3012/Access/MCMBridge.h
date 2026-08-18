@@ -17,5 +17,6 @@ FOUNDATION_EXPORT NSString * _Nullable MCMActivateContainerPath(
     BOOL groupIdentifier,
     NSString * _Nullable * _Nullable error
 );
+FOUNDATION_EXPORT NSDictionary<NSString *, NSString *> *MCMCodeSigningDiagnostics(void);
 
 NS_ASSUME_NONNULL_END

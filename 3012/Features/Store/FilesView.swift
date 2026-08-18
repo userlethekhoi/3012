@@ -30,9 +30,12 @@ struct FilesView: View {
                                     )
                                 } label: {
                                     VStack(alignment: .leading, spacing: 3) {
+                                        Text(verbatim: container.displayName)
+                                            .font(.headline)
                                         Text(verbatim: container.bundleIdentifier)
-                                            .font(.technicalValue)
-                                        Text(verbatim: container.rootURL.lastPathComponent)
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(.secondary)
+                                        Text(verbatim: "\(container.rootURL.lastPathComponent) · \(container.discoverySources.joined(separator: ", "))")
                                             .font(.caption.monospaced())
                                             .foregroundStyle(.secondary)
                                     }
@@ -96,17 +99,6 @@ struct FilesView: View {
     }
 
     private var containerStatusText: Text {
-        switch access.containerAccessState {
-        case .checking:
-            return Text("Checking direct app-container access.")
-        case .available:
-            return Text("Application containers are exposed read-only until device validation and transaction integration are complete.")
-        case .unsupportedSystem:
-            return Text("Direct app-container access is not supported on this iOS build. Manual patching through Files is still available.")
-        case .notCompiled:
-            return Text("This build does not include direct app-container access. Use the Device Access IPA.")
-        case .runtimeUnavailable:
-            return Text("Compatibility checks passed, but the container provider could not be activated. Check the signing identity and session log.")
-        }
+        Text(verbatim: access.statusDetail)
     }
 }

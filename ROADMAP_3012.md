@@ -6,7 +6,7 @@ This file is the public progress tracker. Mark an item complete only after the r
 
 ## Current checkpoint
 
-- Status: **M10 in progress — M9 architecture is built; read-only Device Access awaits real-device validation**
+- Status: **M11 access recovery implemented — CI and signed real-device validation remain**
 - Current release: `0.1.0-dev`
 - Last verified build: GitHub Actions `32129414693` (`19e8bfa`), including localization validation, Core access-router tests, both app targets, two IPA packages, and Latest release publishing.
 - Next engineering task: sign Device Access without changing its MobileHouseArrest identity, validate read-only discovery on real devices, and record exact device/build results before enabling writes or DarkSword.
@@ -170,6 +170,15 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 
 ## M11 — 3105 feature parity with 3012 identity
 
+### M11.1–M11.6 — Device Access recovery
+
+- [x] M11.1: report Standard/Device Access flavor, actual CodeDirectory identity, application identifier, team identifier, provider stages, candidate counts, and native failure details.
+- [x] M11.2: add a bounded path-scoped grant bridge only to the Device Access target; retain and release access handles for the active browser session.
+- [x] M11.3: merge installed-app API, MCM class-2, filesystem UUID, and container metadata discovery instead of failing on host-only MCM enumeration.
+- [x] M11.4: preserve active leases while browsing and display app name, bundle identity, container UUID, and discovery sources.
+- [x] M11.5: distinguish Standard build, unsupported OS, signing mismatch, host-only visibility, access denial, and runtime failure; add English, Vietnamese, and Simplified Chinese UI strings.
+- [~] M11.6: localization validation and iOS 26.0.1 / `iPhone13,2` matrix tests are added; macOS CI and a correctly signed real-device run must pass before declaring device access verified.
+
 - [ ] App Data Browser: stable bundle identity, search, preview, multi-tab navigation, copy/move/rename/import/export, and safe conflict handling.
 - [ ] Patch workspace: Online, Manual, Installed, import/export, folder/file rules, compatibility preview, transaction history, and restore.
 - [ ] Limited Cleaner: only explicitly scoped cache/tmp locations, size preview, selection, confirmation, and logs.
@@ -220,3 +229,4 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Separated Standard Files availability from direct-container support, added an iOS 16 regression test, required end-to-end MCM root activation before showing Supported, enabled automatic read-only discovery, and compacted the Home Bundle ID row.
 - Rejected the host-only MCM result as a false positive; all-app support now requires enumeration and activation of at least one foreign application container.
 - Added a persisted 80%–200% interface-size control backed by SwiftUI Dynamic Type, with step buttons, a slider, and a 100% reset action.
+- Replaced the single-source host-only MCM gate with a bounded multi-source Device Access pipeline, actual signing diagnostics, path-scoped read grants, retained browser leases, container metadata resolution, and explicit failure states for M11.1–M11.6.

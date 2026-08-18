@@ -368,7 +368,12 @@
     "error.pathOutsideLease" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The requested path is outside the active container lease." } }, "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đường dẫn yêu cầu nằm ngoài container lease đang hoạt động." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请求的路径位于活动容器租约之外。" } } } },
     "files" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "file" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "个文件" } } } },
     "Follow System" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Theo hệ thống" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "跟随系统" } } } },
-    "3012" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "3012" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "3012" } } } }
+    "3012" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "3012" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "3012" } } } },
+    "Signing ID" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "ID chữ ký" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "签名 ID" } } } },
+    "The Device Access IPA was re-signed with an incompatible identity." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "IPA Device Access đã được ký lại bằng identity không tương thích." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Device Access IPA 使用了不兼容的身份重新签名。" } } } },
+    "Only the 3012 host container is visible; device-wide access is not active." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chỉ thấy container host của 3012; quyền truy cập toàn thiết bị chưa hoạt động." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "目前只能看到 3012 的宿主容器；全设备访问尚未生效。" } } } },
+    "The system denied access to application containers. Check signing and session logs." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Hệ thống đã từ chối truy cập container ứng dụng. Hãy kiểm tra chữ ký và nhật ký phiên." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "系统拒绝访问应用容器。请检查签名和会话日志。" } } } },
+    "Found %lld readable app containers." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đã tìm thấy %lld container ứng dụng có thể đọc." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "找到 %lld 个可读取的应用容器。" } } } }
   },
   "version" : "1.0"
 }

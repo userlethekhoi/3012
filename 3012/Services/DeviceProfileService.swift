@@ -12,6 +12,9 @@ struct DeviceProfile: Equatable {
     let buildNumber: String
     let appVersion: String
     let bundleIdentifier: String
+    let signingIdentifier: String
+    let applicationIdentifier: String
+    let teamIdentifier: String
 }
 
 enum SupportLevel {
@@ -85,6 +88,16 @@ final class DeviceProfileService: ObservableObject {
     private static func readProfile() -> DeviceProfile {
         let bundle = Bundle.main
         let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+#if DEVICE_ACCESS_BUILD
+        let signing = MCMCodeSigningDiagnostics()
+        let signingIdentifier = signing["signingIdentifier"] ?? "—"
+        let applicationIdentifier = signing["application-identifier"] ?? "—"
+        let teamIdentifier = signing["com.apple.developer.team-identifier"] ?? "—"
+#else
+        let signingIdentifier = bundle.bundleIdentifier ?? "—"
+        let applicationIdentifier = "Standard build"
+        let teamIdentifier = "—"
+#endif
         return DeviceProfile(
             deviceName: UIDevice.current.name,
             machineIdentifier: sysctlString("hw.machine"),
@@ -92,7 +105,10 @@ final class DeviceProfileService: ObservableObject {
             systemVersion: UIDevice.current.systemVersion,
             buildNumber: sysctlString("kern.osversion"),
             appVersion: version,
-            bundleIdentifier: bundle.bundleIdentifier ?? "—"
+            bundleIdentifier: bundle.bundleIdentifier ?? "—",
+            signingIdentifier: signingIdentifier,
+            applicationIdentifier: applicationIdentifier,
+            teamIdentifier: teamIdentifier
         )
     }
 

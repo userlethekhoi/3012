@@ -15,6 +15,7 @@ final class AccessProviderRouterTests: XCTestCase {
         minor: Int = 1,
         patch: Int = 0,
         build: String = "23B1",
+        machineIdentifier: String = "iPhone17,1",
         bundleID: String = AccessSupportMatrix.mobileHouseArrestBundleID,
         signingID: String = AccessSupportMatrix.mobileHouseArrestBundleID
     ) -> DeviceAccessContext {
@@ -23,7 +24,7 @@ final class AccessProviderRouterTests: XCTestCase {
             operatingSystemMinor: minor,
             operatingSystemPatch: patch,
             systemBuild: build,
-            machineIdentifier: "iPhone17,1",
+            machineIdentifier: machineIdentifier,
             architecture: "arm64",
             bundleIdentifier: bundleID,
             signingIdentifier: signingID,
@@ -35,6 +36,28 @@ final class AccessProviderRouterTests: XCTestCase {
         XCTAssertFalse(AccessSupportMatrix().allows(
             .mobileHouseArrest,
             context: context(signingID: "com.example.resigned")
+        ))
+    }
+
+    func testIPhone13_2OnIOS26_0_1IsInsideVerifiedMatrix() {
+        let device = context(
+            major: 26,
+            minor: 0,
+            patch: 1,
+            build: "23A355",
+            machineIdentifier: "iPhone13,2"
+        )
+        XCTAssertTrue(AccessSupportMatrix().allows(.mobileHouseArrest, context: device))
+    }
+
+    func testIOS26BoundaryIsFailClosed() {
+        XCTAssertTrue(AccessSupportMatrix().allows(
+            .mobileHouseArrest,
+            context: context(major: 26, minor: 6, patch: 1)
+        ))
+        XCTAssertFalse(AccessSupportMatrix().allows(
+            .mobileHouseArrest,
+            context: context(major: 26, minor: 6, patch: 2)
         ))
     }
 
