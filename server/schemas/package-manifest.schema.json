@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/userlethekhoi/3012/server/schemas/package-manifest.schema.json",
+  "title": "3012 package signed manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["signed", "signature"],
+  "properties": {
+    "signed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "packageID", "name", "version", "publisherKeyID", "createdAt", "minAppVersion", "entries"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "packageID": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "publisherKeyID": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "minAppVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "entries": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": { "$ref": "#/$defs/entry" }
+        }
+      }
+    },
+    "signature": { "type": "string", "contentEncoding": "base64" }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "bundleID", "relativePath", "operation", "length", "sha256"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bundleID": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "relativePath": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "operation": { "enum": ["replaceFile", "createFile"] },
+        "length": { "type": "integer", "minimum": 0, "maximum": 2147483648 },
+        "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+      }
+    }
+  }
+}

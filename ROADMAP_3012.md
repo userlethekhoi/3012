@@ -42,10 +42,10 @@ This file is the public progress tracker. Mark an item complete only after the r
 
 ## M4 — `.3012pkg`
 
-- [ ] Finalize package extension, magic, UTI, and MIME type.
-- [ ] Define manifest schema and per-file digests.
-- [ ] Implement file-based inspect, verify, import, and remove.
-- [ ] Reject traversal, absolute paths, symlinks, duplicate targets, and unsupported versions.
+- [~] Finalize package extension, magic, UTI, and MIME type: extension and magic complete; UTI/MIME app registration remains.
+- [x] Define manifest schema and per-file digests.
+- [~] Implement file-based inspect, verify, import, and remove: inspect/verify complete; library import/remove remains.
+- [x] Reject traversal, absolute paths, symlinks, duplicate targets, and unsupported versions.
 - [ ] Add Files import and package preview.
 
 ## M5 — Transaction and restore
