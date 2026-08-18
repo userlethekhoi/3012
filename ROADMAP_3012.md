@@ -217,3 +217,4 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Added a provenance-pinned MobileHouseArrest bridge and bounded read-only app-container browser for Device Access; no write or DarkSword path is enabled.
 - Fixed mixed in-app languages across every tab, added a CI localization completeness validator, and replaced the source-code setting with author and Telegram contact details.
 - Verified both app targets and published `3012-unsigned.ipa` plus `3012-DeviceAccess-unsigned.ipa` in run `32129414693` for commit `19e8bfa`.
+- Separated Standard Files availability from direct-container support, added an iOS 16 regression test, required end-to-end MCM root activation before showing Supported, enabled automatic read-only discovery, and compacted the Home Bundle ID row.

@@ -8,6 +8,14 @@ struct AppContainerRecord: Identifiable, Hashable, Sendable {
     var id: String { bundleIdentifier }
 }
 
+enum ContainerAccessState: Equatable {
+    case checking
+    case available
+    case unsupportedSystem
+    case notCompiled
+    case runtimeUnavailable
+}
+
 struct StandardFilesAccessProvider: DeviceAccessProvider {
     let id: AccessProviderID = .standardFiles
     let capabilities: AccessCapability = [.userSelectedFiles]
@@ -39,15 +47,26 @@ struct MobileHouseArrestAccessProvider: DeviceAccessProvider {
         }
         var bridgeError: NSString?
         let identifiers = MCMEnumerateIdentifiersForClass(2, 1, &bridgeError)
-        let available = !identifiers.isEmpty
+        guard let identifier = identifiers.first else {
+            return AccessProbe(
+                providerID: id,
+                outcome: .failed,
+                stage: .runtimeProbe,
+                detail: bridgeError.map { String($0) } ?? "No application containers returned"
+            )
+        }
+        let rootPath = MCMActivateContainerPath(2, identifier, false, &bridgeError)
+        let available = rootPath?.hasPrefix(
+            "/private/var/mobile/Containers/Data/Application/"
+        ) == true
         return AccessProbe(
             providerID: id,
             outcome: available ? .available : .failed,
             stage: .runtimeProbe,
             capabilities: available ? capabilities : [],
             detail: available
-                ? "Read-only class-2 enumeration available"
-                : bridgeError.map { String($0) } ?? "No application containers returned"
+                ? "Read-only class-2 enumeration and root activation available"
+                : bridgeError.map { String($0) } ?? "Application container root activation failed"
         )
     }
 }
@@ -58,6 +77,7 @@ final class DeviceAccessCoordinator: ObservableObject {
     @Published private(set) var selectedProvider = AccessProviderID.standardFiles
     @Published private(set) var capabilities: AccessCapability = [.userSelectedFiles]
     @Published private(set) var containers: [AppContainerRecord] = []
+    @Published private(set) var containerAccessState: ContainerAccessState = .checking
     @Published private(set) var isScanning = false
     @Published var errorMessage: String?
 
@@ -75,6 +95,8 @@ final class DeviceAccessCoordinator: ObservableObject {
 
     func refresh(profile: DeviceProfile, logger: SessionLogger) async {
         let context = Self.context(profile: profile)
+        containerAccessState = .checking
+        errorMessage = nil
         let providers: [any DeviceAccessProvider]
 #if DEVICE_ACCESS_BUILD
         providers = [MobileHouseArrestAccessProvider(), StandardFilesAccessProvider()]
@@ -93,6 +115,28 @@ final class DeviceAccessCoordinator: ObservableObject {
             errorMessage = detail
             logger.warning("Access router selected no provider: \(detail)")
         }
+
+#if DEVICE_ACCESS_BUILD
+        let matrixAllowsContainerAccess = AccessSupportMatrix().allows(
+            .mobileHouseArrest,
+            context: context
+        )
+        if selectedProvider == .mobileHouseArrest,
+           capabilities.contains(.listAppContainers) {
+            containerAccessState = .available
+        } else if !matrixAllowsContainerAccess {
+            containerAccessState = .unsupportedSystem
+        } else {
+            containerAccessState = .runtimeUnavailable
+        }
+#else
+        containerAccessState = .notCompiled
+#endif
+
+        if !directContainerAccessAvailable {
+            containers = []
+        }
+        logger.info("Container access state: \(String(describing: containerAccessState)).")
     }
 
     func scanContainers(logger: SessionLogger) {
@@ -134,11 +178,16 @@ final class DeviceAccessCoordinator: ObservableObject {
         }
 
         var records: [AppContainerRecord] = []
+        var firstActivationError: String?
         for identifier in identifiers.prefix(1_024) {
             autoreleasepool {
                 var activationError: NSString?
                 guard let path = MCMActivateContainerPath(2, identifier, false, &activationError),
                       path.hasPrefix("/private/var/mobile/Containers/Data/Application/") else {
+                    if firstActivationError == nil {
+                        firstActivationError = activationError.map { String($0) }
+                            ?? "Container root activation returned an invalid path"
+                    }
                     return
                 }
                 records.append(AppContainerRecord(
@@ -146,6 +195,16 @@ final class DeviceAccessCoordinator: ObservableObject {
                     rootURL: URL(fileURLWithPath: path, isDirectory: true)
                 ))
             }
+        }
+        if records.isEmpty, !identifiers.isEmpty {
+            return .failure(NSError(
+                domain: "app.3012.access.mcm",
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey: firstActivationError
+                        ?? "No enumerated application container could be activated."
+                ]
+            ))
         }
         records.sort {
             $0.bundleIdentifier.localizedCaseInsensitiveCompare($1.bundleIdentifier) == .orderedAscending

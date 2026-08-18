@@ -37,7 +37,7 @@ Device Access hiện chỉ được router cân nhắc trên iOS 26.0–26.6.1 v
 - **Patches:** gom patch thủ công, catalog online, tải xuống, lịch sử cài và khôi phục.
 - **Settings:** theme System/Light/Dark, ngôn ngữ, channel Stable/Beta và thông tin repository.
 
-Trạng thái **Supported** trên Home hiện chỉ xác nhận `StandardFilesProvider`: chọn thư mục thủ công qua Files hoạt động. Nó không có nghĩa bản Standard đã truy cập được container của ứng dụng khác.
+Trạng thái **Supported** trên Home chỉ xuất hiện khi Device Access vượt qua support matrix, MCM enumeration và kích hoạt thử một container root thành công. Files picker không còn được dùng để tuyên bố container là được hỗ trợ. Trên iOS 16.7.14, Home phải hiện container không khả dụng; patch thủ công qua Files vẫn hoạt động độc lập.
 
 ## Khi catalog online được phát hành
 

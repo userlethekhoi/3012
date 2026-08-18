@@ -26,7 +26,11 @@ struct HomeView: View {
 
                 Section("Access") {
                     technicalRow("Provider", access.selectedProvider.rawValue)
-                    technicalRow("Bundle ID", deviceService.profile.bundleIdentifier)
+                    technicalRow(
+                        "Bundle ID",
+                        deviceService.profile.bundleIdentifier,
+                        compact: true
+                    )
                     Group {
                         if access.directContainerAccessAvailable {
                             Label(
@@ -91,20 +95,45 @@ struct HomeView: View {
     }
 
     private var supportLevel: SupportLevel {
-        access.capabilities.isEmpty ? .unavailable : .supported
+        switch access.containerAccessState {
+        case .available:
+            return .supported
+        case .checking:
+            return .limited
+        case .unsupportedSystem, .notCompiled, .runtimeUnavailable:
+            return .unavailable
+        }
     }
 
     private var supportDetail: LocalizedStringKey {
-        access.directContainerAccessAvailable
-            ? "Read-only app-container access is available."
-            : "Manual patching through Files is available. Direct app-container access is not enabled in this build."
+        switch access.containerAccessState {
+        case .checking:
+            return "Checking direct app-container access."
+        case .available:
+            return "Read-only app-container access is available."
+        case .unsupportedSystem:
+            return "Direct app-container access is not supported on this iOS build. Manual patching through Files is still available."
+        case .notCompiled:
+            return "This build does not include direct app-container access. Use the Device Access IPA."
+        case .runtimeUnavailable:
+            return "Compatibility checks passed, but the container provider could not be activated. Check the signing identity and session log."
+        }
     }
 
-    private func technicalRow(_ title: LocalizedStringKey, _ value: String) -> some View {
+    private func technicalRow(
+        _ title: LocalizedStringKey,
+        _ value: String,
+        compact: Bool = false
+    ) -> some View {
         LabeledContent {
             Text(value)
-                .font(.technicalValue)
+                .font(compact
+                    ? .system(size: 12, weight: .medium, design: .monospaced)
+                    : .technicalValue)
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(compact ? 0.68 : 0.85)
+                .allowsTightening(true)
                 .textSelection(.enabled)
         } label: {
             Text(title)

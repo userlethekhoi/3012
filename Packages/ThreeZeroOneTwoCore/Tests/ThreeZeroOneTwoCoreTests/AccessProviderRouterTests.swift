@@ -49,6 +49,19 @@ final class AccessProviderRouterTests: XCTestCase {
         ))
     }
 
+    func testIOS16DoesNotClaimMobileHouseArrestSupport() {
+        let ios16 = context(
+            major: 16,
+            minor: 7,
+            patch: 14,
+            build: "20H370",
+            bundleID: AccessSupportMatrix.mobileHouseArrestBundleID,
+            signingID: AccessSupportMatrix.mobileHouseArrestBundleID
+        )
+        XCTAssertFalse(AccessSupportMatrix().allows(.mobileHouseArrest, context: ios16))
+        XCTAssertTrue(AccessSupportMatrix().allows(.standardFiles, context: ios16))
+    }
+
     func testPrivilegedFailureRequiresFreshSessionAndStopsFallback() async {
         let privileged = ProbeProvider(
             id: .mobileHouseArrest,

@@ -57,7 +57,7 @@ struct FilesView: View {
                     if access.directContainerAccessAvailable {
                         Text("Application containers are exposed read-only until device validation and transaction integration are complete.")
                     } else {
-                        Text("Select a folder through the iOS Files picker to grant 3012 access. Direct app-container browsing will appear only when a verified provider is available.")
+                        containerStatusText
                     }
                 }
                 .font(.subheadline)
@@ -74,6 +74,9 @@ struct FilesView: View {
             .navigationTitle("Files")
             .task {
                 await access.refresh(profile: deviceService.profile, logger: logger)
+                if access.directContainerAccessAvailable && access.containers.isEmpty {
+                    access.scanContainers(logger: logger)
+                }
             }
             .refreshable {
                 await access.refresh(profile: deviceService.profile, logger: logger)
@@ -89,6 +92,21 @@ struct FilesView: View {
             } message: {
                 Text(access.errorMessage ?? "")
             }
+        }
+    }
+
+    private var containerStatusText: Text {
+        switch access.containerAccessState {
+        case .checking:
+            return Text("Checking direct app-container access.")
+        case .available:
+            return Text("Application containers are exposed read-only until device validation and transaction integration are complete.")
+        case .unsupportedSystem:
+            return Text("Direct app-container access is not supported on this iOS build. Manual patching through Files is still available.")
+        case .notCompiled:
+            return Text("This build does not include direct app-container access. Use the Device Access IPA.")
+        case .runtimeUnavailable:
+            return Text("Compatibility checks passed, but the container provider could not be activated. Check the signing identity and session log.")
         }
     }
 }

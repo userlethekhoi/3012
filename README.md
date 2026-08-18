@@ -6,7 +6,7 @@
 
 3012 là dự án iOS mã nguồn mở đang được viết lại theo hướng native, tối giản và dễ kiểm tra. Mục tiêu của dự án là cung cấp một giao diện quản lý catalog/package hiện đại, cho phép nội dung được cập nhật từ server mà không phải đóng gói lại IPA sau mỗi lần thay đổi catalog.
 
-> **Trạng thái:** bản `0.1.0-dev` đã có dashboard thông tin thiết bị, patch thủ công qua Files, transaction backup/rollback/restore, tải nền và nền tảng package `.3012pkg`. Catalog production và quyền truy cập trực tiếp app container chưa được bật.
+> **Trạng thái:** bản `0.1.0-dev` đã có dashboard thông tin thiết bị, patch thủ công qua Files, transaction backup/rollback/restore, tải nền và nền tảng package `.3012pkg`. Device Access có trình duyệt app container chỉ đọc trên đúng các build đã xác minh; catalog production và ghi trực tiếp vào container chưa được bật.
 
 ## Điểm chính
 
@@ -117,7 +117,7 @@ IPA trong artifact và Release đều là unsigned. Việc ký và phân phối 
 4. Vào **Patches → Installed & Restore** để xem receipt và khôi phục file gốc an toàn.
 5. **Settings** cho phép đổi System/Light/Dark, ngôn ngữ nền tảng và kênh catalog.
 
-Bản Standard chỉ có quyền với thư mục người dùng tự chọn qua Files; app chưa duyệt trực tiếp container của ứng dụng khác. Xem [hướng dẫn sử dụng](docs/USAGE.md) để biết giới hạn hiện tại.
+Bản Standard chỉ có quyền với thư mục người dùng tự chọn qua Files. Bản Device Access chỉ duyệt container khi support matrix và runtime activation đều thành công. Xem [hướng dẫn sử dụng](docs/USAGE.md) để biết giới hạn hiện tại.
 
 ## Nguyên tắc catalog/package tương lai
 

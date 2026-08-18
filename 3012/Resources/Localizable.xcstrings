@@ -31,6 +31,18 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "构建版本" } }
       }
     },
+    "Checking direct app-container access." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đang kiểm tra quyền truy cập trực tiếp container ứng dụng." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在检查应用容器直接访问权限。" } }
+      }
+    },
+    "Compatibility checks passed, but the container provider could not be activated. Check the signing identity and session log." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Kiểm tra tương thích đã đạt nhưng không thể kích hoạt provider container. Hãy kiểm tra định danh chữ ký và nhật ký phiên." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "兼容性检查已通过，但无法激活容器提供程序。请检查签名标识和会话日志。" } }
+      }
+    },
     "Bundle ID" : {
       "localizations" : {
         "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bundle ID" } },
@@ -53,6 +65,12 @@
       "localizations" : {
         "vi" : { "stringUnit" : { "state" : "translated", "value" : "Duyệt trực tiếp container ứng dụng chỉ xuất hiện khi có provider đã được xác minh." } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "仅在经过验证的提供程序可用时，才会显示直接浏览应用容器的功能。" } }
+      }
+    },
+    "Direct app-container access is not supported on this iOS build. Manual patching through Files is still available." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bản dựng iOS này không hỗ trợ truy cập trực tiếp container ứng dụng. Patch thủ công qua Files vẫn khả dụng." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此 iOS 构建不支持直接访问应用容器。仍可通过“文件”手动修补。" } }
       }
     },
     "Done" : {
@@ -203,6 +221,12 @@
       "localizations" : {
         "vi" : { "stringUnit" : { "state" : "translated", "value" : "Hệ thống" } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "系统" } }
+      }
+    },
+    "This build does not include direct app-container access. Use the Device Access IPA." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bản dựng này không gồm quyền truy cập trực tiếp container ứng dụng. Hãy dùng IPA Device Access." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此构建不包含应用容器直接访问功能。请使用 Device Access IPA。" } }
       }
     },
     "Unavailable" : {
