@@ -1,0 +1,222 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "3012 currently writes only inside folders explicitly selected through Files." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "3012 hiện chỉ ghi bên trong thư mục được người dùng chọn rõ ràng qua Files." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "3012 目前仅写入用户通过“文件”明确选择的文件夹。" } }
+      }
+    },
+    "Access" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Quyền truy cập" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "访问" } }
+      }
+    },
+    "Architecture" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Kiến trúc" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "架构" } }
+      }
+    },
+    "Available Now" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Hiện có" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前可用" } }
+      }
+    },
+    "Build" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bản dựng" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "构建版本" } }
+      }
+    },
+    "Bundle ID" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bundle ID" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Bundle ID" } }
+      }
+    },
+    "Copy" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Sao chép" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "复制" } }
+      }
+    },
+    "Device" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thiết bị" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "设备" } }
+      }
+    },
+    "Direct app-container browsing will appear only when a verified provider is available." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Duyệt trực tiếp container ứng dụng chỉ xuất hiện khi có provider đã được xác minh." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "仅在经过验证的提供程序可用时，才会显示直接浏览应用容器的功能。" } }
+      }
+    },
+    "Done" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xong" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "完成" } }
+      }
+    },
+    "Downloads" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tải xuống" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "下载" } }
+      }
+    },
+    "Export" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xuất" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导出" } }
+      }
+    },
+    "Files" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tệp" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件" } }
+      }
+    },
+    "Home" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Trang chủ" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "主页" } }
+      }
+    },
+    "Installed & Restore" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đã cài & Khôi phục" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已安装与恢复" } }
+      }
+    },
+    "Limited Access" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Quyền truy cập hạn chế" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "受限访问" } }
+      }
+    },
+    "Manual Patch" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Patch thủ công" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "手动补丁" } }
+      }
+    },
+    "Manual patching through Files is available. Direct app-container access is not enabled in this build." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Có thể patch thủ công qua Files. Bản dựng này chưa bật quyền truy cập trực tiếp container ứng dụng." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "可通过“文件”进行手动补丁。本构建尚未启用直接访问应用容器。" } }
+      }
+    },
+    "Model" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mã thiết bị" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "设备型号" } }
+      }
+    },
+    "Name" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tên" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "名称" } }
+      }
+    },
+    "No production catalog is configured yet." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chưa cấu hình catalog production." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "尚未配置生产目录。" } }
+      }
+    },
+    "No Session Logs" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chưa có nhật ký phiên" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "暂无会话日志" } }
+      }
+    },
+    "Online Catalog" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Catalog online" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在线目录" } }
+      }
+    },
+    "Open Manual Patch" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mở patch thủ công" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开手动补丁" } }
+      }
+    },
+    "Patch Sources" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Nguồn patch" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "补丁来源" } }
+      }
+    },
+    "Patches" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bản vá" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "补丁" } }
+      }
+    },
+    "Provider" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Provider" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "提供程序" } }
+      }
+    },
+    "Runtime diagnostics will appear here. Sensitive values are redacted before storage." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chẩn đoán runtime sẽ xuất hiện tại đây. Giá trị nhạy cảm được che trước khi lưu." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "运行时诊断将显示在此处。敏感值会在存储前被遮盖。" } }
+      }
+    },
+    "Select a folder through the iOS Files picker to grant 3012 access. Direct app-container browsing will appear only when a verified provider is available." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chọn một thư mục qua trình chọn Files của iOS để cấp quyền cho 3012. Duyệt trực tiếp container ứng dụng chỉ xuất hiện khi có provider đã xác minh." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "通过 iOS“文件”选择器选择文件夹以授予 3012 访问权限。仅在经过验证的提供程序可用时，才会显示直接浏览应用容器的功能。" } }
+      }
+    },
+    "Session Logs" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Nhật ký phiên" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "会话日志" } }
+      }
+    },
+    "Settings" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Cài đặt" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "设置" } }
+      }
+    },
+    "Standard Files Access" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Quyền Files tiêu chuẩn" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "标准文件访问" } }
+      }
+    },
+    "Supported" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Được hỗ trợ" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "受支持" } }
+      }
+    },
+    "System" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Hệ thống" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "系统" } }
+      }
+    },
+    "Unavailable" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Không khả dụng" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "不可用" } }
+      }
+    },
+    "Use large local files without uploading them to a server." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Dùng file lớn trên máy mà không cần tải lên server." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用大型本地文件，无需上传到服务器。" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

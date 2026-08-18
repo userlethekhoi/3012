@@ -1,29 +1,31 @@
 import SwiftUI
 
 struct AppRootView: View {
-    @State private var selectedTab: AppTab = .store
+    @State private var selectedTab: AppTab = .home
     @AppStorage("appearance.mode") private var appearanceMode = "system"
+    @AppStorage("app.language") private var appLanguage = "system"
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            StoreView()
-                .tag(AppTab.store)
-                .tabItem { Label("Kho", systemImage: "square.grid.2x2.fill") }
+            HomeView()
+                .tag(AppTab.home)
+                .tabItem { Label("Home", systemImage: "house.fill") }
 
-            InstalledView()
-                .tag(AppTab.installed)
-                .tabItem { Label("Đã cài", systemImage: "checkmark.seal.fill") }
+            FilesView()
+                .tag(AppTab.files)
+                .tabItem { Label("Files", systemImage: "folder.fill") }
 
-            DownloadsView()
-                .tag(AppTab.downloads)
-                .tabItem { Label("Tải xuống", systemImage: "arrow.down.circle.fill") }
+            PatchesView()
+                .tag(AppTab.patches)
+                .tabItem { Label("Patches", systemImage: "shippingbox.fill") }
 
             SettingsView()
                 .tag(AppTab.settings)
-                .tabItem { Label("Cài đặt", systemImage: "gearshape.fill") }
+                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
         .tint(AppTheme.accent)
         .preferredColorScheme(preferredColorScheme)
+        .environment(\.locale, selectedLocale)
     }
 
     private var preferredColorScheme: ColorScheme? {
@@ -33,11 +35,15 @@ struct AppRootView: View {
         default: return nil
         }
     }
+
+    private var selectedLocale: Locale {
+        appLanguage == "system" ? .autoupdatingCurrent : Locale(identifier: appLanguage)
+    }
 }
 
 private enum AppTab: Hashable {
-    case store
-    case installed
-    case downloads
+    case home
+    case files
+    case patches
     case settings
 }

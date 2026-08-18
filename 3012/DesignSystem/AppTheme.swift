@@ -2,11 +2,19 @@ import SwiftUI
 import UIKit
 
 enum AppTheme {
-    static let accent = Color(red: 0.204, green: 0.471, blue: 0.965)
-    static let cardRadius: CGFloat = 18
-    static let sectionSpacing: CGFloat = 22
+    static let accent = Color(uiColor: .systemBlue)
+    static let success = Color(uiColor: .systemGreen)
+    static let warning = Color(uiColor: .systemOrange)
+    static let failure = Color(uiColor: .systemRed)
+    static let cardRadius: CGFloat = 16
+    static let sectionSpacing: CGFloat = 18
     static let pagePadding: CGFloat = 16
     static let controlHeight: CGFloat = 48
+}
+
+extension Font {
+    static let technicalValue = Font.system(.footnote, design: .monospaced).weight(.medium)
+    static let sessionLog = Font.system(.caption, design: .monospaced)
 }
 
 struct PremiumCard<Content: View>: View {
