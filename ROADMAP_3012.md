@@ -35,14 +35,14 @@ This file is the public progress tracker. Mark an item complete only after the r
 - [~] Pin catalog publisher public keys: trust API complete; production key provisioning remains.
 - [x] Verify Ed25519 catalog signatures.
 - [x] Add ETag/cache behavior.
-- [ ] Add background download tasks with pause/resume/retry.
-- [ ] Persist task state across relaunch.
+- [~] Add background download tasks with pause/resume/retry: app integration added; CI and device interruption tests remain.
+- [~] Persist task state across relaunch: atomic state store and background session reconnection added; device test remains.
 - [x] Verify SHA-256 by streaming from disk.
 - [x] Test a package of at least 200 MB without loading it fully into memory.
 
 ## M4 — `.3012pkg`
 
-- [~] Finalize package extension, magic, UTI, and MIME type: extension and magic complete; UTI/MIME app registration remains.
+- [x] Finalize package extension, magic, UTI, and MIME type.
 - [x] Define manifest schema and per-file digests.
 - [~] Implement file-based inspect, verify, import, and remove: inspect/verify complete; library import/remove remains.
 - [x] Reject traversal, absolute paths, symlinks, duplicate targets, and unsupported versions.
@@ -50,10 +50,10 @@ This file is the public progress tracker. Mark an item complete only after the r
 
 ## M5 — Transaction and restore
 
-- [~] Implement backup and transaction journal: implementation added; CI verification pending.
-- [~] Apply changes deterministically: implementation added; CI verification pending.
-- [~] Roll back partial failures: implementation added; CI verification pending.
-- [~] Restore original files and remove only files created by the transaction: implementation added; CI verification pending.
+- [x] Implement backup and transaction journal.
+- [x] Apply changes deterministically.
+- [x] Roll back partial failures.
+- [x] Restore original files and remove only files created by the transaction.
 - [ ] Integrate an access adapter only after its license and platform requirements are documented.
 
 ## M6 — Publishing
@@ -87,3 +87,5 @@ This file is the public progress tracker. Mark an item complete only after the r
 - Added the signed, sequential `.3012pkg` reader, package schema, streaming payload verification, and adversarial path/length tests.
 - Verified GitHub Actions run `32117550487` after the package-format milestone.
 - Added a target-root-scoped transaction engine with preflight validation, backups, an atomic journal, deterministic apply, rollback, and restore tests.
+- Verified GitHub Actions run `32117922769` after the transaction/restore milestone.
+- Added a persisted background `URLSession` download manager with pause/resume/retry, streaming integrity verification, and download-state UI.
