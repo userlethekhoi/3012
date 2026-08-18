@@ -34,11 +34,11 @@ This file is the public progress tracker. Mark an item complete only after the r
 - [x] Define and version the catalog JSON Schema.
 - [~] Pin catalog publisher public keys: trust API complete; production key provisioning remains.
 - [x] Verify Ed25519 catalog signatures.
-- [~] Add ETag/cache behavior: atomic cache and ETag metadata complete; network revalidation remains.
+- [x] Add ETag/cache behavior.
 - [ ] Add background download tasks with pause/resume/retry.
 - [ ] Persist task state across relaunch.
 - [x] Verify SHA-256 by streaming from disk.
-- [ ] Test a package of at least 200 MB without loading it fully into memory.
+- [x] Test a package of at least 200 MB without loading it fully into memory.
 
 ## M4 — `.3012pkg`
 

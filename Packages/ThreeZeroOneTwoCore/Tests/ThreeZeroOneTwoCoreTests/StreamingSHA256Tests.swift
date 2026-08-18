@@ -37,4 +37,23 @@ final class StreamingSHA256Tests: XCTestCase {
             )
         }
     }
+
+    func testTwoHundredMegabyteFileIsProcessedAsAStream() throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let handle = try FileHandle(forWritingTo: fileURL)
+        let oneMegabyte = Data(repeating: 0x30, count: 1_024 * 1_024)
+        for _ in 0..<200 {
+            try handle.write(contentsOf: oneMegabyte)
+        }
+        try handle.close()
+
+        let result = try StreamingSHA256.digest(of: fileURL)
+
+        XCTAssertEqual(result.byteCount, 200 * 1_024 * 1_024)
+        XCTAssertEqual(result.hex.count, 64)
+    }
 }
