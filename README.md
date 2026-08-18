@@ -92,7 +92,7 @@ Workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) chạy khi
 3. Chọn **Run workflow**.
 4. Khi job hoàn thành, tải artifact có tên `3012-unsigned-<commit>`.
 
-Mỗi build thành công trên `main` cũng cập nhật prerelease cố định `dev-latest` và thay thế file `3012-unsigned.ipa`. Tag dạng `v*` tạo một GitHub Release riêng; tag có dấu gạch nối như `v0.2.0-beta.1` được đánh dấu prerelease.
+Mỗi build thành công trên `main` tạo một Release lịch sử riêng theo dạng `build-v<app-version>.<run-number>` và gắn hai IPA có tên chứa số build. Release này được giữ lại để có thể xem quá trình phát triển hoặc tải bản cũ. Cùng lúc, `dev-latest` vẫn được cập nhật để luôn trỏ tới build thành công mới nhất. Tag dạng `v*` tạo Release phát hành chính thức riêng; tag có dấu gạch nối như `v0.2.0-beta.1` được đánh dấu prerelease.
 
 Release chứa hai artifact:
 
@@ -100,6 +100,12 @@ Release chứa hai artifact:
 - `3012-DeviceAccess-unsigned.ipa`: bản Device Access read-only. Công cụ ký phải giữ cả `CFBundleIdentifier` và CodeDirectory identifier là `com.apple.mobile.MobileHouseArrest`; tự động đổi định danh sẽ làm provider MCM không hoạt động.
 
 Hai flavor có cùng Bundle ID nên không thể cài song song; bản cài sau sẽ thay thế bản đang có.
+
+Các loại Release:
+
+- `build-v0.1.0.<run-number>`: bản phát triển bất biến theo từng build, dùng để quay lại phiên bản cũ.
+- `dev-latest`: đường dẫn luôn cập nhật tới bản phát triển mới nhất.
+- `v*`: phiên bản phát hành được tạo chủ động, ví dụ `v1.0.0` hoặc `v1.0.0-beta.1`.
 
 IPA trong artifact và Release đều là unsigned. Việc ký và phân phối phải tuân theo điều khoản Apple và chứng chỉ thuộc quyền sử dụng của người phát hành. Workflow dùng `GITHUB_TOKEN` tự cấp; không cần và không được commit Personal Access Token.
 

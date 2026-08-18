@@ -65,4 +65,10 @@ Until the project moves to filesystem-synchronized groups, a new Swift file must
 
 ## Release workflow
 
-The checked-in workflow only produces an unsigned IPA. A future signed release job must use a temporary keychain, tag/manual triggers, protected environments, and secrets unavailable to fork pull requests.
+The main build workflow publishes unsigned IPAs through three channels:
+
+- An immutable `build-v<app-version>.<run-number>` prerelease for every successful `main` build.
+- The rolling `dev-latest` release for the newest successful `main` build.
+- Explicit `v*` releases for tagged versions.
+
+The separate signed-release workflow must use a temporary keychain, tag/manual triggers, protected environments, and secrets unavailable to fork pull requests.

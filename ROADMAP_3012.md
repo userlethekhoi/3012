@@ -197,7 +197,7 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Fixed the first CI compile failure caused by an extra closing brace in `SettingsView.swift`.
 - Verified GitHub Actions run `32113488367`: Release build, unsigned IPA packaging, and artifact upload succeeded.
 - Added the final 3012 app icon and aligned the UI palette to blue, black, white, and system green states.
-- Added rolling `dev-latest` prerelease publishing on every successful `main` build and versioned releases for `v*` tags.
+- Added rolling `dev-latest` publishing, immutable `build-v<app-version>.<run-number>` history for every successful `main` build, and versioned releases for explicit `v*` tags.
 - Verified run `32115618138` and prerelease `dev-latest`; the rolling release contains `3012-unsigned.ipa`.
 - Added `ThreeZeroOneTwoCore` with unit-tested Ed25519 catalog verification, canonical JSON, atomic catalog cache, streaming SHA-256, and the catalog JSON Schema.
 - Added the signed, sequential `.3012pkg` reader, package schema, streaming payload verification, and adversarial path/length tests.

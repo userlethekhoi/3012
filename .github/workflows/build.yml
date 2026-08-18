@@ -95,6 +95,38 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Publish immutable development release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DerivedDataStandard/Build/Products/Release-iphoneos/3012.app"
+          APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILD_TAG="build-v${APP_VERSION}.${GITHUB_RUN_NUMBER}"
+          STANDARD_ASSET="3012-v${APP_VERSION}-build.${GITHUB_RUN_NUMBER}-unsigned.ipa"
+          DEVICE_ASSET="3012-v${APP_VERSION}-build.${GITHUB_RUN_NUMBER}-DeviceAccess-unsigned.ipa"
+          CHANGE=$(git log -1 --pretty=%s "$GITHUB_SHA")
+          NOTES="Build ${GITHUB_RUN_NUMBER} from commit ${GITHUB_SHA}: ${CHANGE}. Both flavors use CFBundleIdentifier com.apple.mobile.MobileHouseArrest. Device Access must preserve the matching CodeDirectory identifier when signed. This release is retained so older builds remain downloadable."
+
+          cp 3012-unsigned.ipa "$STANDARD_ASSET"
+          cp 3012-DeviceAccess-unsigned.ipa "$DEVICE_ASSET"
+
+          if gh release view "$BUILD_TAG" >/dev/null 2>&1; then
+            gh release upload "$BUILD_TAG" "$STANDARD_ASSET" "$DEVICE_ASSET" --clobber
+            gh release edit "$BUILD_TAG" \
+              --title "3012 v${APP_VERSION} · Build ${GITHUB_RUN_NUMBER} (${SHORT_SHA})" \
+              --notes "$NOTES" \
+              --prerelease
+          else
+            gh release create "$BUILD_TAG" "$STANDARD_ASSET" "$DEVICE_ASSET" \
+              --target "$GITHUB_SHA" \
+              --title "3012 v${APP_VERSION} · Build ${GITHUB_RUN_NUMBER} (${SHORT_SHA})" \
+              --notes "$NOTES" \
+              --prerelease
+          fi
+
       - name: Publish rolling development release
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
@@ -106,7 +138,7 @@ jobs:
           git tag --force dev-latest "$GITHUB_SHA"
           git push origin --force refs/tags/dev-latest
 
-          NOTES="Automated unsigned development builds from commit ${GITHUB_SHA}. Both flavors use CFBundleIdentifier com.apple.mobile.MobileHouseArrest. Device Access must also preserve the matching CodeDirectory identifier when signed; automatic identifier rewriting disables container access."
+          NOTES="Automated unsigned development builds from commit ${GITHUB_SHA}. This rolling release always points to the newest successful main build; immutable build-v* releases retain older IPAs. Both flavors use CFBundleIdentifier com.apple.mobile.MobileHouseArrest. Device Access must also preserve the matching CodeDirectory identifier when signed; automatic identifier rewriting disables container access."
           if gh release view dev-latest >/dev/null 2>&1; then
             gh release upload dev-latest 3012-unsigned.ipa 3012-DeviceAccess-unsigned.ipa --clobber
             gh release edit dev-latest \
