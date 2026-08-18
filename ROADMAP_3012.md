@@ -25,7 +25,7 @@ This file is the public progress tracker. Mark an item complete only after the r
 - [x] Add semantic colors and reusable cards/status/empty states.
 - [x] Add mock data without legacy payloads.
 - [ ] Add a real app icon and visual QA screenshots.
-- [ ] Pass the first macOS/Xcode CI build.
+- [x] Pass the first macOS/Xcode CI build.
 - [ ] Add unit and UI test targets.
 
 ## M3 — Signed online catalog and large downloads
@@ -78,3 +78,4 @@ This file is the public progress tracker. Mark an item complete only after the r
 - Added the first unsigned IPA GitHub Actions workflow.
 - Did not migrate legacy patch payloads or access/exploit source.
 - Fixed the first CI compile failure caused by an extra closing brace in `SettingsView.swift`.
+- Verified GitHub Actions run `32113488367`: Release build, unsigned IPA packaging, and artifact upload succeeded.
