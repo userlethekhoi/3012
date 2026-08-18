@@ -1,0 +1,51 @@
+# macOS
+.DS_Store
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+
+# Build products
+build/
+DerivedData/
+*.ipa
+*.xcarchive
+*.dSYM
+*.dSYM.zip
+*.app
+
+# Patch packages are release content, not source
+*.3105
+*.3012pkg
+
+# Local build/release output
+/dist/
+
+# Local migration snapshots (never publish)
+/.migration-backup/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Signing material and local configuration
+*.cer
+*.p12
+*.pem
+*.key
+*.mobileprovision
+.env
+.env.*
+!.env.example
+/pass.txt
+
+# Local QA artifacts and internal working notes
+/*.png
+/tasks/
+
+# Temporary files
+*.tmp
+*.swp
+*~
