@@ -99,14 +99,14 @@ private struct NativeAccessSnapshot: Sendable {
 
 private func nativeAccessSnapshot(identifierLimit: Int, rootLimit: Int) -> NativeAccessSnapshot {
     var mcmError: NSString?
-    let identifiers = MCMEnumerateIdentifiersForClass(2, identifierLimit, &mcmError)
+    let identifiers = MCMEnumerateIdentifiersForClass(2, UInt(identifierLimit), &mcmError)
     let rawInfo = PA3012InstalledAppInfo()
     var installedInfo: [String: [String: String]] = [:]
     for (key, value) in rawInfo { installedInfo[key] = value }
     var rootError: NSString?
     var rootHandle: Int64 = -1
     let rootNames = PA3012DirectoryNames(
-        applicationRootForReading(), rootLimit, &rootHandle, &rootError
+        applicationRootForReading(), UInt(rootLimit), &rootHandle, &rootError
     )
     return NativeAccessSnapshot(
         mcmIdentifiers: identifiers,
