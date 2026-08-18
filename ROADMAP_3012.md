@@ -8,7 +8,7 @@ This file is the public progress tracker. Mark an item complete only after the r
 
 - Status: **M8 in progress — device/support foundation is running; localization and tests remain**
 - Current release: `0.1.0-dev`
-- Last verified build: GitHub Actions `32125571050` (`a0bed0d`), including the real device dashboard and session-log foundation.
+- Last verified build: GitHub Actions `32125959014` (`5426855`), including Core policy/diagnostic tests, the device dashboard, IPA packaging, and Latest release publishing.
 - Next engineering task: finish view localization, add policy/log tests, then begin the access-provider contracts in M9.
 - Known limitation: this environment cannot run Xcode; the GitHub Actions build is the first macOS compile gate.
 
@@ -211,3 +211,4 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Agreed next-session direction: remove preview/mock UI, adopt white/system-blue native styling and SF Pro/SF Mono typography, add device/log/language/support foundations, then implement capability-routed Device Access providers behind separate build flavors.
 - Replaced preview/mock Store content with a real Home dashboard, Files/Patches navigation, actual device/build/provider status, and terminal-style redacted rotating session logs.
 - Added the English/Vietnamese/Simplified Chinese String Catalog foundation and verified Xcode/IPA/release workflow run `32125571050` for commit `a0bed0d`.
+- Moved log redaction/rotation and Standard Files support policy into the testable Core package; all Core tests, device build, IPA packaging, and Latest release publishing passed in run `32125959014` for commit `5426855`.
