@@ -3,6 +3,7 @@ import SwiftUI
 struct AppRootView: View {
     @State private var selectedTab: AppTab = .home
     @AppStorage("appearance.mode") private var appearanceMode = "system"
+    @AppStorage("appearance.interfaceScale") private var interfaceScaleRawValue = AppInterfaceScale.standard.rawValue
     @AppStorage("app.language") private var appLanguage = "system"
 
     var body: some View {
@@ -25,6 +26,7 @@ struct AppRootView: View {
         }
         .tint(AppTheme.accent)
         .preferredColorScheme(preferredColorScheme)
+        .dynamicTypeSize(interfaceScale.dynamicTypeSize)
         .environment(\.locale, selectedLocale)
         .id(appLanguage)
     }
@@ -39,6 +41,10 @@ struct AppRootView: View {
 
     private var selectedLocale: Locale {
         appLanguage == "system" ? .autoupdatingCurrent : Locale(identifier: appLanguage)
+    }
+
+    private var interfaceScale: AppInterfaceScale {
+        AppInterfaceScale(rawValue: interfaceScaleRawValue) ?? .standard
     }
 }
 

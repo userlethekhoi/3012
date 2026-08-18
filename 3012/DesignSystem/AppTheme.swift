@@ -12,6 +12,55 @@ enum AppTheme {
     static let controlHeight: CGFloat = 48
 }
 
+enum AppInterfaceScale: Int, CaseIterable, Identifiable {
+    case eighty = 0
+    case ninety
+    case ninetyFive
+    case oneHundred
+    case oneFifteen
+    case oneThirty
+    case oneFortyFive
+    case oneSixtyFive
+    case oneEightyFive
+    case twoHundred
+
+    static let minimum = AppInterfaceScale.eighty
+    static let standard = AppInterfaceScale.oneHundred
+    static let maximum = AppInterfaceScale.twoHundred
+
+    var id: Int { rawValue }
+
+    var percentage: Int {
+        switch self {
+        case .eighty: return 80
+        case .ninety: return 90
+        case .ninetyFive: return 95
+        case .oneHundred: return 100
+        case .oneFifteen: return 115
+        case .oneThirty: return 130
+        case .oneFortyFive: return 145
+        case .oneSixtyFive: return 165
+        case .oneEightyFive: return 185
+        case .twoHundred: return 200
+        }
+    }
+
+    var dynamicTypeSize: DynamicTypeSize {
+        switch self {
+        case .eighty: return .xSmall
+        case .ninety: return .small
+        case .ninetyFive: return .medium
+        case .oneHundred: return .large
+        case .oneFifteen: return .xLarge
+        case .oneThirty: return .xxLarge
+        case .oneFortyFive: return .xxxLarge
+        case .oneSixtyFive: return .accessibility1
+        case .oneEightyFive: return .accessibility2
+        case .twoHundred: return .accessibility3
+        }
+    }
+}
+
 extension Font {
     static let technicalValue = Font.system(.footnote, design: .monospaced).weight(.medium)
     static let sessionLog = Font.system(.caption, design: .monospaced)

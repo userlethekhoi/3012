@@ -128,7 +128,7 @@ struct HomeView: View {
         LabeledContent {
             Text(value)
                 .font(compact
-                    ? .system(size: 12, weight: .medium, design: .monospaced)
+                    ? .system(.caption2, design: .monospaced).weight(.medium)
                     : .technicalValue)
                 .foregroundStyle(.primary)
                 .lineLimit(1)

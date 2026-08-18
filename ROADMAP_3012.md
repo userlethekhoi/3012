@@ -219,3 +219,4 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Verified both app targets and published `3012-unsigned.ipa` plus `3012-DeviceAccess-unsigned.ipa` in run `32129414693` for commit `19e8bfa`.
 - Separated Standard Files availability from direct-container support, added an iOS 16 regression test, required end-to-end MCM root activation before showing Supported, enabled automatic read-only discovery, and compacted the Home Bundle ID row.
 - Rejected the host-only MCM result as a false positive; all-app support now requires enumeration and activation of at least one foreign application container.
+- Added a persisted 80%–200% interface-size control backed by SwiftUI Dynamic Type, with step buttons, a slider, and a 100% reset action.

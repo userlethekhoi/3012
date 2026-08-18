@@ -13,6 +13,12 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "访问" } }
       }
     },
+    "Adjust text and controls across 3012." : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Điều chỉnh chữ và control trên toàn bộ 3012." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "调整整个 3012 中的文字和控件大小。" } }
+      }
+    },
     "Architecture" : {
       "localizations" : {
         "vi" : { "stringUnit" : { "state" : "translated", "value" : "Kiến trúc" } },
@@ -109,6 +115,18 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已安装与恢复" } }
       }
     },
+    "Interface Size" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Kích thước giao diện" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "界面大小" } }
+      }
+    },
+    "Larger" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Lớn hơn" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "放大" } }
+      }
+    },
     "Limited Access" : {
       "localizations" : {
         "vi" : { "stringUnit" : { "state" : "translated", "value" : "Quyền truy cập hạn chế" } },
@@ -187,6 +205,12 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "运行时诊断将显示在此处。敏感值会在存储前被遮盖。" } }
       }
     },
+    "Reset to 100%" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đặt lại 100%" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重置为 100%" } }
+      }
+    },
     "Select a folder through the iOS Files picker to grant 3012 access. Direct app-container browsing will appear only when a verified provider is available." : {
       "localizations" : {
         "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chọn một thư mục qua trình chọn Files của iOS để cấp quyền cho 3012. Duyệt trực tiếp container ứng dụng chỉ xuất hiện khi có provider đã xác minh." } },
@@ -197,6 +221,12 @@
       "localizations" : {
         "vi" : { "stringUnit" : { "state" : "translated", "value" : "Nhật ký phiên" } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "会话日志" } }
+      }
+    },
+    "Smaller" : {
+      "localizations" : {
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Nhỏ hơn" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "缩小" } }
       }
     },
     "Settings" : {

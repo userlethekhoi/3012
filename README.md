@@ -11,6 +11,7 @@
 ## Điểm chính
 
 - SwiftUI thuần, hỗ trợ iPhone/iPad, Light/Dark Mode và Dynamic Type.
+- Kích thước giao diện có thể chỉnh từ 80% đến 200% trong Settings và được lưu cho các lần mở sau.
 - Giao diện theo ngôn ngữ thiết kế hệ thống iOS, hạn chế hiệu ứng nặng.
 - Dashboard dùng dữ liệu thiết bị thật, hiển thị iOS build, kiến trúc, Bundle ID và provider hiện hành.
 - Nhật ký phiên dùng SF Mono, tự giới hạn/luân phiên và che token, secret, UUID trước khi lưu.
