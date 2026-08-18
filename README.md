@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="3012/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="144" alt="3012 app icon">
+</p>
+
 # 3012
 
 3012 là dự án iOS mã nguồn mở đang được viết lại theo hướng native, tối giản và dễ kiểm tra. Mục tiêu của dự án là cung cấp một giao diện quản lý catalog/package hiện đại, cho phép nội dung được cập nhật từ server mà không phải đóng gói lại IPA sau mỗi lần thay đổi catalog.
