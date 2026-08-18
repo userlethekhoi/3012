@@ -194,6 +194,7 @@ final class DeviceAccessCoordinator: ObservableObject {
     @Published private(set) var containerAccessState: ContainerAccessState = .checking
     @Published private(set) var statusDetail = "Checking direct app-container access."
     @Published private(set) var isScanning = false
+    @Published private(set) var isRefreshing = false
     @Published var errorMessage: String?
 
 #if DEVICE_ACCESS_BUILD
@@ -219,9 +220,27 @@ final class DeviceAccessCoordinator: ObservableObject {
     }
 
     func refresh(profile: DeviceProfile, logger: SessionLogger) async {
+        guard !isRefreshing else {
+            logger.info("Access refresh coalesced with an in-flight probe.")
+            return
+        }
+        isRefreshing = true
+        defer { isRefreshing = false }
         let context = Self.context(profile: profile)
-        containerAccessState = .checking
-        statusDetail = "Checking direct app-container access."
+#if DEVICE_ACCESS_BUILD
+        let preserveVerifiedSession = containerAccessState == .available
+            && !containers.isEmpty
+            && AccessSupportMatrix().allows(.mobileHouseArrest, context: context)
+#else
+        let preserveVerifiedSession = false
+#endif
+        if containerAccessState != .available {
+            containerAccessState = .checking
+            statusDetail = AppLocalization.text(
+                "Checking direct app-container access.",
+                fallback: "Checking direct app-container access."
+            )
+        }
         errorMessage = nil
         logger.info(
             "Access preflight build=\(deviceAccessBuild ? "DeviceAccess" : "Standard") " +
@@ -270,6 +289,13 @@ final class DeviceAccessCoordinator: ObservableObject {
             selectedProvider = probe.providerID
             capabilities = probe.capabilities
             probeDetail = probe.detail
+        } else if preserveVerifiedSession {
+            selectedProvider = .mobileHouseArrest
+            capabilities = [.listAppContainers, .readAppContainers]
+            probeDetail = route.probes.last?.detail ?? "Transient runtime revalidation failure."
+            logger.warning(
+                "Runtime revalidation failed transiently; keeping the last verified container session."
+            )
         } else {
             selectedProvider = .standardFiles
             capabilities = []
@@ -323,6 +349,10 @@ final class DeviceAccessCoordinator: ObservableObject {
         logger.info(
             "Container access state: \(String(describing: containerAccessState)); detail=\(statusDetail)"
         )
+        if directContainerAccessAvailable && containers.isEmpty && !isScanning {
+            logger.info("Starting automatic app-container discovery after a successful probe.")
+            scanContainers(logger: logger)
+        }
     }
 
     func scanContainers(logger: SessionLogger) {
@@ -351,11 +381,16 @@ final class DeviceAccessCoordinator: ObservableObject {
                 )
                 logger.info("Container discovery completed: \(discovery.diagnostics)")
             case .failure(let error):
-                containerAccessState = .accessDenied
-                statusDetail = AppLocalization.text(
-                    "error.containerDiscoveryFailed",
-                    fallback: "App containers could not be discovered. Check the build identity and session log."
-                )
+                if containers.isEmpty {
+                    containerAccessState = .accessDenied
+                    statusDetail = AppLocalization.text(
+                        "error.containerDiscoveryFailed",
+                        fallback: "App containers could not be discovered. Check the build identity and session log."
+                    )
+                } else {
+                    containerAccessState = .available
+                    logger.warning("Keeping the last readable container snapshot after a refresh failure.")
+                }
                 errorMessage = error.localizedDescription
                 logger.error("Container discovery failed: \(error.localizedDescription)")
             }

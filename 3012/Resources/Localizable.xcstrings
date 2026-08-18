@@ -373,7 +373,9 @@
     "The Device Access IPA has an incompatible Bundle ID." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "IPA Device Access có Bundle ID không tương thích." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Device Access IPA 的 Bundle ID 不兼容。" } } } },
     "Only the 3012 host container is visible; device-wide access is not active." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chỉ thấy container host của 3012; quyền truy cập toàn thiết bị chưa hoạt động." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "目前只能看到 3012 的宿主容器；全设备访问尚未生效。" } } } },
     "The system denied access to application containers. Check signing and session logs." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Hệ thống đã từ chối truy cập container ứng dụng. Hãy kiểm tra chữ ký và nhật ký phiên." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "系统拒绝访问应用容器。请检查签名和会话日志。" } } } },
-    "Found %lld readable app containers." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đã tìm thấy %lld container ứng dụng có thể đọc." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "找到 %lld 个可读取的应用容器。" } } } }
+    "Found %lld readable app containers." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đã tìm thấy %lld container ứng dụng có thể đọc." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "找到 %lld 个可读取的应用容器。" } } } },
+    "No matching app containers." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Không có container ứng dụng phù hợp." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有匹配的应用容器。" } } } },
+    "Search apps, Bundle IDs, or UUIDs" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tìm app, Bundle ID hoặc UUID" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索应用、Bundle ID 或 UUID" } } } }
   },
   "version" : "1.0"
 }

@@ -4,6 +4,7 @@ struct FilesView: View {
     @EnvironmentObject private var deviceService: DeviceProfileService
     @EnvironmentObject private var access: DeviceAccessCoordinator
     @EnvironmentObject private var logger: SessionLogger
+    @State private var searchText = ""
 
     var body: some View {
         NavigationStack {
@@ -22,7 +23,7 @@ struct FilesView: View {
                                 Label("Scan App Containers", systemImage: "arrow.clockwise")
                             }
                         } else {
-                            ForEach(access.containers) { container in
+                            ForEach(filteredContainers) { container in
                                 NavigationLink {
                                     ContainerDirectoryView(
                                         rootURL: container.rootURL,
@@ -40,6 +41,11 @@ struct FilesView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                 }
+                            }
+                            if filteredContainers.isEmpty && !searchText.isEmpty {
+                                Text("No matching app containers.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -75,11 +81,13 @@ struct FilesView: View {
                 }
             }
             .navigationTitle("Files")
+            .searchable(
+                text: $searchText,
+                placement: .navigationBarDrawer(displayMode: .automatic),
+                prompt: Text("Search apps, Bundle IDs, or UUIDs")
+            )
             .task {
                 await access.refresh(profile: deviceService.profile, logger: logger)
-                if access.directContainerAccessAvailable && access.containers.isEmpty {
-                    access.scanContainers(logger: logger)
-                }
             }
             .refreshable {
                 await access.refresh(profile: deviceService.profile, logger: logger)
@@ -95,6 +103,19 @@ struct FilesView: View {
             } message: {
                 Text(access.errorMessage ?? "")
             }
+        }
+    }
+
+    private var filteredContainers: [AppContainerRecord] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return access.containers }
+        return access.containers.filter { container in
+            container.displayName.localizedCaseInsensitiveContains(query)
+                || container.bundleIdentifier.localizedCaseInsensitiveContains(query)
+                || container.rootURL.lastPathComponent.localizedCaseInsensitiveContains(query)
+                || container.discoverySources.contains {
+                    $0.localizedCaseInsensitiveContains(query)
+                }
         }
     }
 

@@ -232,3 +232,4 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Replaced the single-source host-only MCM gate with a bounded multi-source Device Access pipeline, actual signing diagnostics, path-scoped read grants, retained browser leases, container metadata resolution, and explicit failure states for M11.1–M11.6.
 - Aligned ESign compatibility with upstream 3105: Bundle ID mismatch remains a hard failure, while a different or unavailable CodeDirectory identity is logged as a warning and deferred to the real MCM/path runtime probe.
 - Restored 3105's bounded `fsgetpath` inode fallback when the app-data root cannot be enumerated directly, and report path denial before the less specific host-only state.
+- Added automatic discovery after the first successful probe, coalesced overlapping tab refreshes, preserved a verified green state during background revalidation, and added app/Bundle ID/UUID search.
