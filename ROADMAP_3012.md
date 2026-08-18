@@ -8,7 +8,7 @@ This file is the public progress tracker. Mark an item complete only after the r
 
 - Status: **M10 in progress — M9 architecture is built; read-only Device Access awaits real-device validation**
 - Current release: `0.1.0-dev`
-- Last verified build: GitHub Actions `32129027407` (`0a7703a`), including Core access-router tests, both app targets, two IPA packages, and Latest release publishing.
+- Last verified build: GitHub Actions `32129414693` (`19e8bfa`), including localization validation, Core access-router tests, both app targets, two IPA packages, and Latest release publishing.
 - Next engineering task: sign Device Access without changing its MobileHouseArrest identity, validate read-only discovery on real devices, and record exact device/build results before enabling writes or DarkSword.
 - Known limitation: this environment cannot run Xcode; the GitHub Actions build is the first macOS compile gate.
 
@@ -214,4 +214,5 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Moved log redaction/rotation and Standard Files support policy into the testable Core package; all Core tests, device build, IPA packaging, and Latest release publishing passed in run `32125959014` for commit `5426855`.
 - Completed the M9 provider contracts, fail-closed support matrix/router, separate Standard and Device Access targets, and router tests.
 - Added a provenance-pinned MobileHouseArrest bridge and bounded read-only app-container browser for Device Access; no write or DarkSword path is enabled.
-- Verified both app targets and published `3012-unsigned.ipa` plus `3012-DeviceAccess-unsigned.ipa` in run `32129027407` for commit `0a7703a`.
+- Fixed mixed in-app languages across every tab, added a CI localization completeness validator, and replaced the source-code setting with author and Telegram contact details.
+- Verified both app targets and published `3012-unsigned.ipa` plus `3012-DeviceAccess-unsigned.ipa` in run `32129414693` for commit `19e8bfa`.
