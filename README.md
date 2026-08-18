@@ -98,7 +98,7 @@ Mỗi build thành công trên `main` tạo một Release lịch sử riêng the
 Release chứa hai artifact:
 
 - `3012-unsigned.ipa`: bản Standard dùng Files và Bundle ID gốc `com.apple.mobile.MobileHouseArrest`, nhưng không biên dịch provider MCM.
-- `3012-DeviceAccess-unsigned.ipa`: bản Device Access read-only. Công cụ ký phải giữ cả `CFBundleIdentifier` và CodeDirectory identifier là `com.apple.mobile.MobileHouseArrest`; tự động đổi định danh sẽ làm provider MCM không hoạt động.
+- `3012-DeviceAccess-unsigned.ipa`: bản Device Access read-only. Công cụ ký phải giữ `CFBundleIdentifier` là `com.apple.mobile.MobileHouseArrest`. CodeDirectory identity được ghi để chẩn đoán nhưng không chặn runtime probe trước khi thử quyền MCM/path thực tế.
 
 Hai flavor có cùng Bundle ID nên không thể cài song song; bản cài sau sẽ thay thế bản đang có.
 
@@ -118,7 +118,7 @@ IPA trong artifact và Release đều là unsigned. Việc ký và phân phối 
 4. Vào **Patches → Installed & Restore** để xem receipt và khôi phục file gốc an toàn.
 5. **Settings** cho phép đổi System/Light/Dark, ngôn ngữ nền tảng và kênh catalog.
 
-Bản Standard chỉ có quyền với thư mục người dùng tự chọn qua Files. Bản Device Access đối chiếu signing identity thật, sau đó hợp nhất MCM, installed-app API, filesystem UUID và container metadata; quyền đọc được giữ theo phiên duyệt. Xem [hướng dẫn sử dụng](docs/USAGE.md) để biết giới hạn và cách đọc lỗi cụ thể.
+Bản Standard chỉ có quyền với thư mục người dùng tự chọn qua Files. Bản Device Access kiểm tra Bundle ID, ghi signing identity để chẩn đoán, sau đó hợp nhất MCM, installed-app API, filesystem UUID và container metadata; quyền đọc được giữ theo phiên duyệt. Xem [hướng dẫn sử dụng](docs/USAGE.md) để biết giới hạn và cách đọc lỗi cụ thể.
 
 ## Nguyên tắc catalog/package tương lai
 

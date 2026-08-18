@@ -29,7 +29,7 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 
 - Maintain one shared SwiftUI/product codebase with two build flavors:
   - `3012 Standard`: `com.apple.mobile.MobileHouseArrest` Bundle ID, Files-based access, and no compiled MCM provider.
-  - `3012 Device Access`: the same Bundle ID plus a matching CodeDirectory identifier for the MobileHouseArrest route.
+  - `3012 Device Access`: the MobileHouseArrest Bundle ID is mandatory; CodeDirectory identity is diagnostic and runtime probes remain authoritative.
 - The two flavors intentionally cannot be installed side by side because they share the original Bundle ID.
 - Do not replace the Standard build; both variants share catalog, package, transaction, backup, restore, and UI code.
 - Update the signed-export workflow and provisioning-profile mapping only after the Device Access target exists.
@@ -152,7 +152,7 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - [x] Add `AccessProviderRouter` with exact build/device/signing checks and fail-closed behavior.
 - [x] Wrap the existing Files picker route as `StandardFilesProvider`.
 - [x] Create separate `3012 Standard` and `3012 Device Access` targets/schemes.
-- [~] Configure Device Access Bundle ID and CodeDirectory identity as `com.apple.mobile.MobileHouseArrest`; unsigned build identity is configured, signer preservation remains a distribution requirement.
+- [~] Configure Device Access Bundle ID as `com.apple.mobile.MobileHouseArrest`; CodeDirectory identity is reported without pre-empting runtime probes, while signed-device validation remains required.
 - [x] Keep all SwiftUI features independent from `/var/...`, MCM, kernel, and exploit calls through the coordinator/provider boundary.
 - [x] Add read-only provider mocks and router tests before importing privileged source.
 
@@ -230,3 +230,4 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Rejected the host-only MCM result as a false positive; all-app support now requires enumeration and activation of at least one foreign application container.
 - Added a persisted 80%–200% interface-size control backed by SwiftUI Dynamic Type, with step buttons, a slider, and a 100% reset action.
 - Replaced the single-source host-only MCM gate with a bounded multi-source Device Access pipeline, actual signing diagnostics, path-scoped read grants, retained browser leases, container metadata resolution, and explicit failure states for M11.1–M11.6.
+- Aligned ESign compatibility with upstream 3105: Bundle ID mismatch remains a hard failure, while a different or unavailable CodeDirectory identity is logged as a warning and deferred to the real MCM/path runtime probe.

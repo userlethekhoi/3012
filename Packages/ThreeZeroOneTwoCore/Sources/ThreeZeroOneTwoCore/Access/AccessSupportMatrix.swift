@@ -17,7 +17,6 @@ public struct AccessSupportMatrix: Equatable, Sendable {
             return context.filesPickerAvailable
         case .mobileHouseArrest:
             guard context.bundleIdentifier == Self.mobileHouseArrestBundleID,
-                  context.signingIdentifier == Self.mobileHouseArrestBundleID,
                   context.architecture == "arm64" || context.architecture == "arm64e" else {
                 return false
             }

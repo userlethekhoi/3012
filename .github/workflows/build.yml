@@ -108,7 +108,7 @@ jobs:
           STANDARD_ASSET="3012-v${APP_VERSION}-build.${GITHUB_RUN_NUMBER}-unsigned.ipa"
           DEVICE_ASSET="3012-v${APP_VERSION}-build.${GITHUB_RUN_NUMBER}-DeviceAccess-unsigned.ipa"
           CHANGE=$(git log -1 --pretty=%s "$GITHUB_SHA")
-          NOTES="Build ${GITHUB_RUN_NUMBER} from commit ${GITHUB_SHA}: ${CHANGE}. Both flavors use CFBundleIdentifier com.apple.mobile.MobileHouseArrest. Device Access must preserve the matching CodeDirectory identifier when signed. This release is retained so older builds remain downloadable."
+          NOTES="Build ${GITHUB_RUN_NUMBER} from commit ${GITHUB_SHA}: ${CHANGE}. Both flavors use CFBundleIdentifier com.apple.mobile.MobileHouseArrest. Device Access logs the CodeDirectory identity for diagnostics but relies on actual MCM/path runtime probes. This release is retained so older builds remain downloadable."
 
           cp 3012-unsigned.ipa "$STANDARD_ASSET"
           cp 3012-DeviceAccess-unsigned.ipa "$DEVICE_ASSET"
@@ -138,7 +138,7 @@ jobs:
           git tag --force dev-latest "$GITHUB_SHA"
           git push origin --force refs/tags/dev-latest
 
-          NOTES="Automated unsigned development builds from commit ${GITHUB_SHA}. This rolling release always points to the newest successful main build; immutable build-v* releases retain older IPAs. Both flavors use CFBundleIdentifier com.apple.mobile.MobileHouseArrest. Device Access must also preserve the matching CodeDirectory identifier when signed; automatic identifier rewriting disables container access."
+          NOTES="Automated unsigned development builds from commit ${GITHUB_SHA}. This rolling release always points to the newest successful main build; immutable build-v* releases retain older IPAs. Both flavors use CFBundleIdentifier com.apple.mobile.MobileHouseArrest. CodeDirectory identity differences are diagnostic; actual MCM/path runtime probes determine Device Access availability."
           if gh release view dev-latest >/dev/null 2>&1; then
             gh release upload dev-latest 3012-unsigned.ipa 3012-DeviceAccess-unsigned.ipa --clobber
             gh release edit dev-latest \

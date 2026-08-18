@@ -32,10 +32,17 @@ final class AccessProviderRouterTests: XCTestCase {
         )
     }
 
-    func testMismatchedSigningIdentifierFailsClosed() {
-        XCTAssertFalse(AccessSupportMatrix().allows(
+    func testMismatchedSigningIdentifierDefersToRuntimeProbe() {
+        XCTAssertTrue(AccessSupportMatrix().allows(
             .mobileHouseArrest,
             context: context(signingID: "com.example.resigned")
+        ))
+    }
+
+    func testMismatchedBundleIdentifierStillFailsClosed() {
+        XCTAssertFalse(AccessSupportMatrix().allows(
+            .mobileHouseArrest,
+            context: context(bundleID: "com.example.resigned")
         ))
     }
 

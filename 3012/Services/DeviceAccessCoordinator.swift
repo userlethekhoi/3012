@@ -211,17 +211,24 @@ final class DeviceAccessCoordinator: ObservableObject {
 
 #if DEVICE_ACCESS_BUILD
         let expectedID = AccessSupportMatrix.mobileHouseArrestBundleID
-        guard profile.bundleIdentifier == expectedID,
-              profile.signingIdentifier == expectedID else {
+        guard profile.bundleIdentifier == expectedID else {
             selectedProvider = .standardFiles
             capabilities = [.userSelectedFiles]
             containerAccessState = .signingMismatch
             statusDetail = AppLocalization.text(
-                "The Device Access IPA was re-signed with an incompatible identity.",
-                fallback: "The Device Access IPA was re-signed with an incompatible identity."
+                "The Device Access IPA has an incompatible Bundle ID.",
+                fallback: "The Device Access IPA has an incompatible Bundle ID."
             )
-            logger.error("Device Access identity mismatch; expected \(expectedID).")
+            logger.error(
+                "Device Access Bundle ID mismatch; actual=\(profile.bundleIdentifier), expected=\(expectedID)."
+            )
             return
+        }
+        if profile.signingIdentifier != expectedID {
+            logger.warning(
+                "CodeDirectory identity differs from Bundle ID; continuing with runtime probes. " +
+                "signing=\(profile.signingIdentifier), bundle=\(profile.bundleIdentifier)."
+            )
         }
 #endif
 
