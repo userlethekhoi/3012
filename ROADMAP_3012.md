@@ -6,10 +6,10 @@ This file is the public progress tracker. Mark an item complete only after the r
 
 ## Current checkpoint
 
-- Status: **M8 queued — remove preview UI and build device/support foundation**
+- Status: **M8 in progress — device/support foundation is running; localization and tests remain**
 - Current release: `0.1.0-dev`
-- Last verified build: GitHub Actions `32122072821` (`60ceab4`), including manual large-file patching.
-- Next engineering task: remove all mock/preview presentation, rebuild the home screen around real device information, session logs, localization, and compatibility status.
+- Last verified build: GitHub Actions `32125571050` (`a0bed0d`), including the real device dashboard and session-log foundation.
+- Next engineering task: finish view localization, add policy/log tests, then begin the access-provider contracts in M9.
 - Known limitation: this environment cannot run Xcode; the GitHub Actions build is the first macOS compile gate.
 
 ## Decisions locked for the next session
@@ -131,19 +131,19 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - [~] Test accessibility, memory, interrupted downloads, low storage, invalid signatures, and restore: automated large-file, invalid-signature, interrupted-state, and partial-rollback coverage added; device accessibility and low-storage tests remain.
 - [ ] Publish a release candidate before `1.0.0`.
 
-## M8 — UI reset and parity foundation (next)
+## M8 — UI reset and parity foundation (in progress)
 
-- [ ] Remove `PREVIEW`, hero gradient, mock categories, mock patch rows, and obsolete preview copy.
-- [ ] Replace Store mock data with a real Home/Dashboard feature.
-- [ ] Rework `AppTheme` to white/system surfaces with a lighter system-blue accent and semantic state colors.
-- [ ] Standardize SF Pro typography and SF Mono technical-value/log typography.
-- [ ] Add `DeviceProfileService` for machine identifier, iOS version/build, architecture, app version, Bundle ID, and signing identifier.
-- [ ] Add Compatibility Center models and UI; initially report Standard Files capability only.
-- [ ] Add a bounded, privacy-filtered, rotating `SessionLogger` and terminal-style `SessionLogView` with copy/export.
-- [ ] Add English, Vietnamese, and Simplified Chinese localization using String Catalogs; remove hard-coded Vietnamese strings from Views.
-- [ ] Refresh README/USAGE text that still describes the app as an empty UI preview.
-- [ ] Add unit tests for device/support policy and log redaction/rotation.
-- [ ] Pass core tests, Xcode device build, IPA packaging, and Latest release update.
+- [x] Remove `PREVIEW`, hero gradient, mock categories, mock patch rows, and obsolete preview copy.
+- [x] Replace Store mock data with a real Home/Dashboard feature.
+- [x] Rework `AppTheme` to white/system surfaces with a lighter system-blue accent and semantic state colors.
+- [x] Standardize SF Pro typography and SF Mono technical-value/log typography.
+- [~] Add `DeviceProfileService` for machine identifier, iOS version/build, architecture, app version, and Bundle ID; authoritative signing-identity reporting remains for the Device Access flavor.
+- [x] Add Compatibility Center models and UI; initially report Standard Files capability only.
+- [x] Add a bounded, privacy-filtered, rotating `SessionLogger` and terminal-style `SessionLogView` with copy/export.
+- [~] Add English, Vietnamese, and Simplified Chinese localization using String Catalogs: catalog/language selection and new M8 surfaces are wired; remaining legacy views still need conversion.
+- [x] Refresh README/USAGE text that still describes the app as an empty UI preview.
+- [x] Add unit tests for Standard Files support policy and log redaction/rotation.
+- [x] Pass core tests, Xcode device build, IPA packaging, and Latest release update for the first M8 batch (`32125571050`).
 
 ## M9 — Access-provider architecture
 
@@ -209,3 +209,5 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 - Added manual large-file patching through Files with streaming local package creation, preflight storage checks, transaction backup/rollback, installed history, and guarded restore.
 - Verified GitHub Actions run `32122072821`; manual patch unit tests, iOS build, IPA packaging, and Latest release publishing succeeded.
 - Agreed next-session direction: remove preview/mock UI, adopt white/system-blue native styling and SF Pro/SF Mono typography, add device/log/language/support foundations, then implement capability-routed Device Access providers behind separate build flavors.
+- Replaced preview/mock Store content with a real Home dashboard, Files/Patches navigation, actual device/build/provider status, and terminal-style redacted rotating session logs.
+- Added the English/Vietnamese/Simplified Chinese String Catalog foundation and verified Xcode/IPA/release workflow run `32125571050` for commit `a0bed0d`.

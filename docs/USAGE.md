@@ -23,10 +23,12 @@ Artifact GitHub Actions hiện là unsigned nên không thể cài trực tiếp
 
 ## Các tab
 
-- **Kho:** mock catalog và lối vào Patch thủ công.
-- **Đã cài:** lịch sử patch thủ công, backup và nút khôi phục.
-- **Tải xuống:** background download, pause/resume/retry và import `.3012pkg`.
-- **Cài đặt:** theme System/Light/Dark, channel Stable/Beta và thông tin repository.
+- **Home:** thông tin thiết bị thật, phiên bản/build iOS, kiến trúc, Bundle ID, provider và trạng thái hỗ trợ. Nút terminal mở nhật ký phiên.
+- **Files:** giải thích phạm vi quyền hiện tại và lối vào patch thủ công qua Files picker.
+- **Patches:** gom patch thủ công, catalog online, tải xuống, lịch sử cài và khôi phục.
+- **Settings:** theme System/Light/Dark, ngôn ngữ, channel Stable/Beta và thông tin repository.
+
+Trạng thái **Supported** trên Home hiện chỉ xác nhận `StandardFilesProvider`: chọn thư mục thủ công qua Files hoạt động. Nó không có nghĩa bản Standard đã truy cập được container của ứng dụng khác.
 
 ## Khi catalog online được phát hành
 
@@ -42,12 +44,18 @@ Luồng dự kiến:
 
 ## Patch thủ công cho file lớn
 
-1. Vào **Kho → Patch thủ công**.
+1. Vào **Files → Open Manual Patch** hoặc **Patches → Manual Patch**.
 2. Đặt tên patch và chọn thư mục đích bằng Files.
 3. Chọn một hoặc nhiều file thay thế. File có thể lớn; 3012 đọc theo chunk thay vì nạp toàn bộ vào RAM.
 4. Với mỗi file, nhập relative path tính từ thư mục đích và chọn **Thay file có sẵn** hoặc **Tạo file mới**.
 5. Kiểm tra lại dung lượng, đường dẫn rồi chọn **Kiểm tra và patch**.
 6. 3012 tạo package cục bộ ký tạm thời, xác minh SHA-256, tạo backup/journal và mới bắt đầu ghi file.
-7. Khôi phục từ tab **Đã cài**. App từ chối restore nếu file đã patch bị thay đổi tiếp, để không ghi đè dữ liệu mới.
+7. Khôi phục từ **Patches → Installed & Restore**. App từ chối restore nếu file đã patch bị thay đổi tiếp, để không ghi đè dữ liệu mới.
 
 Chỉ chọn thư mục và file mà bạn có quyền sửa. Patch thủ công không dùng server và không cung cấp khả năng vượt sandbox; quyền truy cập đến từ Files picker của iOS.
+
+## Nhật ký phiên
+
+1. Mở **Home** và nhấn biểu tượng terminal.
+2. Giá trị giống token, password, secret, authorization và UUID được che trước khi hiển thị hoặc ghi xuống file.
+3. Có thể sao chép hoặc chia sẻ phần log đang hiển thị. Log được giới hạn trong bộ nhớ và luân phiên thành tối đa ba file nhỏ trong Application Support của 3012.

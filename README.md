@@ -6,12 +6,14 @@
 
 3012 là dự án iOS mã nguồn mở đang được viết lại theo hướng native, tối giản và dễ kiểm tra. Mục tiêu của dự án là cung cấp một giao diện quản lý catalog/package hiện đại, cho phép nội dung được cập nhật từ server mà không phải đóng gói lại IPA sau mỗi lần thay đổi catalog.
 
-> **Trạng thái:** bản `0.1.0-dev` hiện mới là app shell và UI preview. Download manager, chữ ký catalog, package `.3012pkg`, apply và restore đang nằm trong roadmap; chưa được tuyên bố là đã hoạt động.
+> **Trạng thái:** bản `0.1.0-dev` đã có dashboard thông tin thiết bị, patch thủ công qua Files, transaction backup/rollback/restore, tải nền và nền tảng package `.3012pkg`. Catalog production và quyền truy cập trực tiếp app container chưa được bật.
 
 ## Điểm chính
 
 - SwiftUI thuần, hỗ trợ iPhone/iPad, Light/Dark Mode và Dynamic Type.
 - Giao diện theo ngôn ngữ thiết kế hệ thống iOS, hạn chế hiệu ứng nặng.
+- Dashboard dùng dữ liệu thiết bị thật, hiển thị iOS build, kiến trúc, Bundle ID và provider hiện hành.
+- Nhật ký phiên dùng SF Mono, tự giới hạn/luân phiên và che token, secret, UUID trước khi lưu.
 - Tách theo feature/module để dễ review và kiểm thử.
 - Hướng tới catalog online có chữ ký và package bất biến theo version.
 - Hướng tới background download, pause/resume và streaming verification cho file lớn.
@@ -34,7 +36,7 @@ Thông tin chi tiết nằm trong [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.m
 3012/
 ├── App/                 # App entry và root navigation
 ├── DesignSystem/        # Theme và UI primitives
-├── Features/            # Store, Installed, Downloads, Settings
+├── Features/            # Home, Files, Patches, Downloads, Installed, Settings
 ├── Models/              # Domain models không phụ thuộc UI
 └── Resources/           # Info.plist và asset catalog
 
@@ -95,12 +97,13 @@ IPA trong artifact và Release đều là unsigned. Việc ký và phân phối 
 
 ## Cách sử dụng bản hiện tại
 
-1. Build và mở app.
-2. Tab **Kho** hiển thị mock data chỉ để kiểm tra UI.
-3. Tab **Đã cài** và **Tải xuống** đang là empty state.
-4. Tab **Cài đặt** cho phép đổi Light/Dark/System và chọn channel minh họa.
+1. Mở **Home** để xem model, kiến trúc, phiên bản/build iOS, Bundle ID và provider đang được chọn.
+2. Nhấn biểu tượng terminal trên Home để xem, sao chép hoặc xuất nhật ký phiên đã che dữ liệu nhạy cảm.
+3. Vào **Files** hoặc **Patches → Manual Patch** để chọn thư mục/file bằng Files picker, tạo backup và patch file lớn cục bộ.
+4. Vào **Patches → Installed & Restore** để xem receipt và khôi phục file gốc an toàn.
+5. **Settings** cho phép đổi System/Light/Dark, ngôn ngữ nền tảng và kênh catalog.
 
-Không sử dụng mock package như một package thật. Xem [hướng dẫn sử dụng](docs/USAGE.md) để theo dõi khả năng hiện có theo phiên bản.
+Bản Standard chỉ có quyền với thư mục người dùng tự chọn qua Files; app chưa duyệt trực tiếp container của ứng dụng khác. Xem [hướng dẫn sử dụng](docs/USAGE.md) để biết giới hạn hiện tại.
 
 ## Nguyên tắc catalog/package tương lai
 
@@ -125,4 +128,4 @@ Lỗ hổng bảo mật phải được báo cáo theo [SECURITY.md](SECURITY.md
 
 ### English summary
 
-3012 is an independent SwiftUI rewrite inspired by the product experience and architecture of the original 3105 project. The current `0.1.0-dev` baseline contains a clean UI shell and unsigned IPA build workflow; remote catalogs, signed packages, downloads, apply, and restore remain work in progress. Created and maintained by [Le The Khoi](https://github.com/userlethekhoi).
+3012 is an independent SwiftUI rewrite inspired by the product experience and architecture of the original 3105 project. The current `0.1.0-dev` build includes a real device dashboard, manual Files-based patching, transactional backup/restore, background downloads, signed package foundations, and unsigned IPA automation. Production catalogs and direct app-container access remain disabled. Created and maintained by [Le The Khoi](https://github.com/userlethekhoi).

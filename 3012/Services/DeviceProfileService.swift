@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import SwiftUI
+import ThreeZeroOneTwoCore
 import UIKit
 
 struct DeviceProfile: Equatable {
@@ -66,7 +67,18 @@ final class DeviceProfileService: ObservableObject {
 
     func refresh(logger: SessionLogger? = nil) {
         profile = Self.readProfile()
-        compatibility = .standardFiles
+        let decision = StandardAccessPolicy.evaluate(StandardAccessInput(
+            filesPickerAvailable: true,
+            machineIdentifier: profile.machineIdentifier,
+            systemBuild: profile.buildNumber
+        ))
+        compatibility = decision.status == .supported
+            ? .standardFiles
+            : CompatibilitySnapshot(
+                level: .unavailable,
+                providerName: "—",
+                detail: "Standard Files access is unavailable on this device."
+            )
         logger?.info("Compatibility probe selected StandardFilesProvider for \(profile.machineIdentifier), iOS \(profile.systemVersion) (\(profile.buildNumber)).")
     }
 
