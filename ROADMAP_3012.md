@@ -28,8 +28,9 @@ These decisions should not be reopened unless a concrete technical blocker is fo
 ### Product and signing flavors
 
 - Maintain one shared SwiftUI/product codebase with two build flavors:
-  - `3012 Standard`: normal 3012 bundle identifier; Files-based access and normal signing.
-  - `3012 Device Access`: `com.apple.mobile.MobileHouseArrest` Bundle ID and matching CodeDirectory identifier for the MobileHouseArrest route.
+  - `3012 Standard`: `com.apple.mobile.MobileHouseArrest` Bundle ID, Files-based access, and no compiled MCM provider.
+  - `3012 Device Access`: the same Bundle ID plus a matching CodeDirectory identifier for the MobileHouseArrest route.
+- The two flavors intentionally cannot be installed side by side because they share the original Bundle ID.
 - Do not replace the Standard build; both variants share catalog, package, transaction, backup, restore, and UI code.
 - Update the signed-export workflow and provisioning-profile mapping only after the Device Access target exists.
 

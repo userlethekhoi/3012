@@ -23,8 +23,9 @@ final class BackgroundDownloadManager: NSObject, ObservableObject {
         stateStore = DownloadStateStore(fileURL: stateDirectory.appendingPathComponent("downloads.json"))
         super.init()
 
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.apple.mobile.MobileHouseArrest"
         let configuration = URLSessionConfiguration.background(
-            withIdentifier: "com.userlethekhoi.app3012.packages"
+            withIdentifier: "\(bundleIdentifier).packages"
         )
         configuration.waitsForConnectivity = true
         configuration.isDiscretionary = false

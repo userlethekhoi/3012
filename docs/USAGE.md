@@ -16,15 +16,17 @@ Phiên bản `0.1.0-dev` đã có transaction, backup/restore, tải nền và p
 ### Thiết bị thật
 
 1. Chọn Apple Developer Team trong Signing & Capabilities.
-2. Đổi bundle identifier nếu provisioning profile của bạn yêu cầu.
+2. Giữ Bundle ID `com.apple.mobile.MobileHouseArrest`. Nếu profile không ký được định danh này, dùng quy trình ký tương thích với thiết bị của bạn; đổi định danh sẽ vô hiệu hóa Device Access.
 3. Chọn thiết bị và Run.
 
 Artifact GitHub Actions hiện là unsigned nên không thể cài trực tiếp nếu chưa được ký bằng chứng chỉ/profile phù hợp.
 
 ### Chọn đúng build flavor
 
-- `3012-unsigned.ipa` là bản Standard. Bản này an toàn để ký bằng Bundle ID riêng nhưng chỉ truy cập thư mục người dùng chọn qua Files.
+- `3012-unsigned.ipa` là bản Standard, dùng Bundle ID gốc `com.apple.mobile.MobileHouseArrest` nhưng chỉ truy cập thư mục người dùng chọn qua Files.
 - `3012-DeviceAccess-unsigned.ipa` chứa provider MobileHouseArrest và trình duyệt container chỉ đọc. Khi ký, cả `CFBundleIdentifier` lẫn CodeDirectory identifier phải được giữ là `com.apple.mobile.MobileHouseArrest`. Nếu công cụ ký tự đổi Bundle ID, app có thể cài được nhưng sẽ tự chuyển về Standard Files hoặc báo không hỗ trợ.
+
+Hai flavor không thể cài song song vì dùng cùng Bundle ID. Cài flavor khác sẽ thay thế bản 3012 đang có.
 
 Device Access hiện chỉ được router cân nhắc trên iOS 26.0–26.6.1 và đúng bốn build iOS 27 beta đã ghi trong roadmap. Trạng thái thực tế còn phụ thuộc thiết bị, chữ ký và runtime probe; không có cam kết hỗ trợ một dải iOS liên tục. DarkSword cho iOS 17/18 chưa được bật.
 

@@ -106,7 +106,7 @@ jobs:
           git tag --force dev-latest "$GITHUB_SHA"
           git push origin --force refs/tags/dev-latest
 
-          NOTES="Automated unsigned development builds from commit ${GITHUB_SHA}. Standard uses normal Files access. Device Access must preserve both CFBundleIdentifier and CodeDirectory identifier as com.apple.mobile.MobileHouseArrest when signed; automatic bundle-ID rewriting disables container access."
+          NOTES="Automated unsigned development builds from commit ${GITHUB_SHA}. Both flavors use CFBundleIdentifier com.apple.mobile.MobileHouseArrest. Device Access must also preserve the matching CodeDirectory identifier when signed; automatic identifier rewriting disables container access."
           if gh release view dev-latest >/dev/null 2>&1; then
             gh release upload dev-latest 3012-unsigned.ipa 3012-DeviceAccess-unsigned.ipa --clobber
             gh release edit dev-latest \

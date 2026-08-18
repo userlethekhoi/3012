@@ -88,7 +88,7 @@ jobs:
             <key>signingStyle</key><string>manual</string>
             <key>teamID</key><string>${APPLE_TEAM_ID}</string>
             <key>provisioningProfiles</key><dict>
-              <key>com.userlethekhoi.app3012</key><string>${PROFILE_NAME}</string>
+              <key>com.apple.mobile.MobileHouseArrest</key><string>${PROFILE_NAME}</string>
             </dict>
           </dict></plist>
           PLIST

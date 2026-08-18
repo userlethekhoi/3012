@@ -96,8 +96,10 @@ Mỗi build thành công trên `main` cũng cập nhật prerelease cố định
 
 Release chứa hai artifact:
 
-- `3012-unsigned.ipa`: bản Standard, Bundle ID bình thường, chỉ truy cập thư mục người dùng chọn qua Files.
-- `3012-DeviceAccess-unsigned.ipa`: bản Device Access read-only. Công cụ ký phải giữ cả `CFBundleIdentifier` và CodeDirectory identifier là `com.apple.mobile.MobileHouseArrest`; tự động đổi Bundle ID sẽ làm provider MCM không hoạt động.
+- `3012-unsigned.ipa`: bản Standard dùng Files và Bundle ID gốc `com.apple.mobile.MobileHouseArrest`, nhưng không biên dịch provider MCM.
+- `3012-DeviceAccess-unsigned.ipa`: bản Device Access read-only. Công cụ ký phải giữ cả `CFBundleIdentifier` và CodeDirectory identifier là `com.apple.mobile.MobileHouseArrest`; tự động đổi định danh sẽ làm provider MCM không hoạt động.
+
+Hai flavor có cùng Bundle ID nên không thể cài song song; bản cài sau sẽ thay thế bản đang có.
 
 IPA trong artifact và Release đều là unsigned. Việc ký và phân phối phải tuân theo điều khoản Apple và chứng chỉ thuộc quyền sử dụng của người phát hành. Workflow dùng `GITHUB_TOKEN` tự cấp; không cần và không được commit Personal Access Token.
 
