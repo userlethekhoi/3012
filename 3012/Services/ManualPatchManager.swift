@@ -45,7 +45,7 @@ enum ManualPatchError: LocalizedError {
 
 @MainActor
 final class ManualPatchManager: ObservableObject {
-    static let manualBundleID = "manual.selected-folder"
+    nonisolated static let manualBundleID = "manual.selected-folder"
 
     @Published var patchName = "Patch thủ công"
     @Published var targetURL: URL?
@@ -79,7 +79,7 @@ final class ManualPatchManager: ObservableObject {
     func selectTarget(_ url: URL) {
         do {
             targetBookmark = try url.bookmarkData(
-                options: .withSecurityScope,
+                options: .minimalBookmark,
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
@@ -94,7 +94,7 @@ final class ManualPatchManager: ObservableObject {
         for url in urls {
             do {
                 let bookmark = try url.bookmarkData(
-                    options: .withSecurityScope,
+                    options: .minimalBookmark,
                     includingResourceValuesForKeys: [.fileSizeKey],
                     relativeTo: nil
                 )
@@ -193,7 +193,7 @@ final class ManualPatchManager: ObservableObject {
                     var stale = false
                     let target = try URL(
                         resolvingBookmarkData: receipt.targetBookmark,
-                        options: [.withSecurityScope, .withoutUI],
+                        options: [.withoutUI],
                         relativeTo: nil,
                         bookmarkDataIsStale: &stale
                     )
@@ -220,7 +220,7 @@ final class ManualPatchManager: ObservableObject {
         }
     }
 
-    private static func performApply(
+    nonisolated private static func performApply(
         name: String,
         items: [ManualPatchItem],
         targetBookmark: Data,
@@ -230,7 +230,7 @@ final class ManualPatchManager: ObservableObject {
         var targetStale = false
         let target = try URL(
             resolvingBookmarkData: targetBookmark,
-            options: [.withSecurityScope, .withoutUI],
+            options: [.withoutUI],
             relativeTo: nil,
             bookmarkDataIsStale: &targetStale
         )
@@ -244,7 +244,7 @@ final class ManualPatchManager: ObservableObject {
             var stale = false
             let source = try URL(
                 resolvingBookmarkData: item.bookmark,
-                options: [.withSecurityScope, .withoutUI],
+                options: [.withoutUI],
                 relativeTo: nil,
                 bookmarkDataIsStale: &stale
             )
@@ -295,7 +295,7 @@ final class ManualPatchManager: ObservableObject {
         )
     }
 
-    private static func preflightStorage(
+    nonisolated private static func preflightStorage(
         storageRoot: URL,
         target: URL,
         items: [ManualPatchItem]
