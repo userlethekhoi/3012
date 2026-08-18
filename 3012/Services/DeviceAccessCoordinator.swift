@@ -32,6 +32,12 @@ struct StandardFilesAccessProvider: DeviceAccessProvider {
 }
 
 #if DEVICE_ACCESS_BUILD
+private func isValidApplicationContainerPath(_ path: String?) -> Bool {
+    guard let path else { return false }
+    return path.hasPrefix("/private/var/mobile/Containers/Data/Application/")
+        || path.hasPrefix("/var/mobile/Containers/Data/Application/")
+}
+
 struct MobileHouseArrestAccessProvider: DeviceAccessProvider {
     let id: AccessProviderID = .mobileHouseArrest
     let capabilities: AccessCapability = [.listAppContainers, .readAppContainers]
@@ -62,7 +68,7 @@ struct MobileHouseArrestAccessProvider: DeviceAccessProvider {
         var available = false
         for identifier in foreignIdentifiers {
             let rootPath = MCMActivateContainerPath(2, identifier, false, &bridgeError)
-            if Self.isValidContainerPath(rootPath) {
+            if isValidApplicationContainerPath(rootPath) {
                 available = true
                 break
             }
@@ -79,11 +85,6 @@ struct MobileHouseArrestAccessProvider: DeviceAccessProvider {
         )
     }
 
-    private static func isValidContainerPath(_ path: String?) -> Bool {
-        guard let path else { return false }
-        return path.hasPrefix("/private/var/mobile/Containers/Data/Application/")
-            || path.hasPrefix("/var/mobile/Containers/Data/Application/")
-    }
 }
 #endif
 
@@ -210,7 +211,7 @@ final class DeviceAccessCoordinator: ObservableObject {
             autoreleasepool {
                 var activationError: NSString?
                 guard let path = MCMActivateContainerPath(2, identifier, false, &activationError),
-                      Self.isValidContainerPath(path) else {
+                      isValidApplicationContainerPath(path) else {
                     if firstActivationError == nil {
                         firstActivationError = activationError.map { String($0) }
                             ?? "Container root activation returned an invalid path"
