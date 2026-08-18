@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 enum AppTheme {
-    static let accent = Color(red: 0.28, green: 0.46, blue: 0.98)
+    static let accent = Color(red: 0.204, green: 0.471, blue: 0.965)
     static let cardRadius: CGFloat = 18
     static let sectionSpacing: CGFloat = 22
     static let pagePadding: CGFloat = 16

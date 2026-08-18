@@ -24,7 +24,7 @@ This file is the public progress tracker. Mark an item complete only after the r
 - [x] Add Store, Installed, Downloads, and Settings navigation.
 - [x] Add semantic colors and reusable cards/status/empty states.
 - [x] Add mock data without legacy payloads.
-- [ ] Add a real app icon and visual QA screenshots.
+- [~] Add a real app icon and visual QA screenshots: app icon added; screenshots remain.
 - [x] Pass the first macOS/Xcode CI build.
 - [ ] Add unit and UI test targets.
 
@@ -79,3 +79,5 @@ This file is the public progress tracker. Mark an item complete only after the r
 - Did not migrate legacy patch payloads or access/exploit source.
 - Fixed the first CI compile failure caused by an extra closing brace in `SettingsView.swift`.
 - Verified GitHub Actions run `32113488367`: Release build, unsigned IPA packaging, and artifact upload succeeded.
+- Added the final 3012 app icon and aligned the UI palette to blue, black, white, and system green states.
+- Added rolling `dev-latest` prerelease publishing on every successful `main` build and versioned releases for `v*` tags.

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-${{ github.ref }}
@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Show Xcode version
         run: xcodebuild -version
@@ -57,3 +59,45 @@ jobs:
           path: 3012-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish rolling development release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force dev-latest "$GITHUB_SHA"
+          git push origin --force refs/tags/dev-latest
+
+          NOTES="Automated unsigned development build from commit ${GITHUB_SHA}. This IPA must be signed with an authorized certificate and provisioning profile before installation."
+          if gh release view dev-latest >/dev/null 2>&1; then
+            gh release upload dev-latest 3012-unsigned.ipa --clobber
+            gh release edit dev-latest \
+              --title "3012 Development Build" \
+              --notes "$NOTES" \
+              --prerelease
+          else
+            gh release create dev-latest 3012-unsigned.ipa \
+              --verify-tag \
+              --title "3012 Development Build" \
+              --notes "$NOTES" \
+              --prerelease
+          fi
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          EXTRA_FLAGS=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            EXTRA_FLAGS+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" 3012-unsigned.ipa \
+            --verify-tag \
+            --generate-notes \
+            --title "3012 $GITHUB_REF_NAME" \
+            "${EXTRA_FLAGS[@]}"

@@ -85,7 +85,9 @@ Workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) chạy khi
 3. Chọn **Run workflow**.
 4. Khi job hoàn thành, tải artifact có tên `3012-unsigned-<commit>`.
 
-IPA này là unsigned. Việc ký và phân phối phải tuân theo điều khoản Apple và chứng chỉ thuộc quyền sử dụng của người phát hành.
+Mỗi build thành công trên `main` cũng cập nhật prerelease cố định `dev-latest` và thay thế file `3012-unsigned.ipa`. Tag dạng `v*` tạo một GitHub Release riêng; tag có dấu gạch nối như `v0.2.0-beta.1` được đánh dấu prerelease.
+
+IPA trong artifact và Release đều là unsigned. Việc ký và phân phối phải tuân theo điều khoản Apple và chứng chỉ thuộc quyền sử dụng của người phát hành. Workflow dùng `GITHUB_TOKEN` tự cấp; không cần và không được commit Personal Access Token.
 
 ## Cách sử dụng bản hiện tại
 

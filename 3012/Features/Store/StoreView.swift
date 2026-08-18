@@ -59,7 +59,7 @@ struct StoreView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             LinearGradient(
-                colors: [AppTheme.accent, Color(red: 0.46, green: 0.30, blue: 0.94)],
+                colors: [AppTheme.accent, Color(red: 0.09, green: 0.35, blue: 0.78)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
