@@ -101,12 +101,14 @@ struct ManualPatchView: View {
                 } label: {
                     HStack {
                         if manager.isWorking { ProgressView() }
-                        if manager.isWorking {
-                            Text("Patching…")
-                        } else {
-                            Text("Verify and Patch")
+                        Group {
+                            if manager.isWorking {
+                                Text("Patching…")
+                            } else {
+                                Text("Verify and Patch")
+                            }
                         }
-                            .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity)
                     }
                 }
                 .disabled(manager.isWorking || manager.items.isEmpty || manager.targetURL == nil)

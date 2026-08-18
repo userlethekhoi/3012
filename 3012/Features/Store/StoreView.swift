@@ -27,16 +27,18 @@ struct HomeView: View {
                 Section("Access") {
                     technicalRow("Provider", access.selectedProvider.rawValue)
                     technicalRow("Bundle ID", deviceService.profile.bundleIdentifier)
-                    if access.directContainerAccessAvailable {
-                        Label(
-                            "Container browsing is read-only in this milestone.",
-                            systemImage: "eye.fill"
-                        )
-                    } else {
-                        Label(
-                            "3012 currently writes only inside folders explicitly selected through Files.",
-                            systemImage: "hand.raised.fill"
-                        )
+                    Group {
+                        if access.directContainerAccessAvailable {
+                            Label(
+                                "Container browsing is read-only in this milestone.",
+                                systemImage: "eye.fill"
+                            )
+                        } else {
+                            Label(
+                                "3012 currently writes only inside folders explicitly selected through Files.",
+                                systemImage: "hand.raised.fill"
+                            )
+                        }
                     }
                     .font(.footnote)
                     .foregroundStyle(.secondary)
