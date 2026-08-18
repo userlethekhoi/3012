@@ -1,0 +1,77 @@
+name: Upload immutable package
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: GitHub release tag containing the package
+        required: true
+      asset_name:
+        description: Exact .3012pkg asset name
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    environment: package-publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate configuration
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$R2_ACCOUNT_ID"
+          test -n "$R2_BUCKET"
+          test -n "$R2_PUBLIC_BASE_URL"
+          [[ "$R2_PUBLIC_BASE_URL" == https://* ]]
+
+      - name: Download release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+        run: |
+          set -euo pipefail
+          [[ "$ASSET_NAME" == *.3012pkg ]]
+          [[ "$ASSET_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          mkdir incoming
+          gh release download "$RELEASE_TAG" --pattern "$ASSET_NAME" --dir incoming
+          test -f "incoming/$ASSET_NAME"
+
+      - name: Upload by content digest
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+        run: |
+          set -euo pipefail
+          FILE="incoming/$ASSET_NAME"
+          SHA256="$(sha256sum "$FILE" | awk '{print $1}')"
+          SIZE="$(stat -c '%s' "$FILE")"
+          OBJECT_KEY="packages/${SHA256:0:2}/${SHA256}.3012pkg"
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          aws s3 cp "$FILE" "s3://${R2_BUCKET}/${OBJECT_KEY}" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type "application/vnd.3012.package" \
+            --cache-control "public,max-age=31536000,immutable" \
+            --metadata "sha256=${SHA256}" \
+            --no-progress
+          PUBLIC_URL="${R2_PUBLIC_BASE_URL%/}/${OBJECT_KEY}"
+          {
+            echo "### Uploaded immutable package"
+            echo ""
+            echo "- URL: \`${PUBLIC_URL}\`"
+            echo "- Size: \`${SIZE}\`"
+            echo "- SHA-256: \`${SHA256}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

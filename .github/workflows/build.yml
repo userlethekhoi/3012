@@ -31,6 +31,9 @@ jobs:
       - name: Test core package
         run: swift test --package-path Packages/ThreeZeroOneTwoCore --parallel
 
+      - name: Build publishing tool
+        run: swift build -c release --package-path Packages/ThreeZeroOneTwoCore --product 3012-publisher
+
       - name: Build unsigned device app
         run: |
           set -o pipefail

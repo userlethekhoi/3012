@@ -59,9 +59,9 @@ This file is the public progress tracker. Mark an item complete only after the r
 ## M6 — Publishing
 
 - [ ] Configure authorized object storage for immutable package versions.
-- [ ] Add multipart upload tooling for large files.
-- [ ] Generate size/digest metadata and sign catalogs in CI.
-- [ ] Support stable/beta channels, hidden items, revocation, and rollback.
+- [x] Add multipart upload tooling for large files.
+- [~] Generate size/digest metadata and sign catalogs in CI: tooling/workflows added; protected secrets and production-key provisioning remain.
+- [x] Support stable/beta channels, hidden items, revocation, and rollback.
 
 ## M7 — Release quality
 
@@ -89,3 +89,5 @@ This file is the public progress tracker. Mark an item complete only after the r
 - Added a target-root-scoped transaction engine with preflight validation, backups, an atomic journal, deterministic apply, rollback, and restore tests.
 - Verified GitHub Actions run `32117922769` after the transaction/restore milestone.
 - Added a persisted background `URLSession` download manager with pause/resume/retry, streaming integrity verification, and download-state UI.
+- Verified GitHub Actions run `32118654663`; core tests, app integration, IPA packaging, and rolling release publishing passed.
+- Added content-addressed S3/R2 package upload and protected Ed25519 catalog publishing workflows for large online packages.

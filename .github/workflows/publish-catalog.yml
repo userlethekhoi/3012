@@ -1,0 +1,69 @@
+name: Publish signed catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Catalog channel
+        required: true
+        type: choice
+        options: [stable, beta]
+      payload_path:
+        description: Repository path to the unsigned catalog payload
+        required: true
+        default: server/catalogs/stable.payload.json
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: macos-15
+    environment: package-publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate input path
+        env:
+          PAYLOAD_PATH: ${{ inputs.payload_path }}
+        run: |
+          set -euo pipefail
+          [[ "$PAYLOAD_PATH" =~ ^server/catalogs/[A-Za-z0-9._-]+\.payload\.json$ ]]
+          test -f "$PAYLOAD_PATH"
+
+      - name: Build and test publisher
+        run: |
+          swift test --package-path Packages/ThreeZeroOneTwoCore
+          swift build -c release --package-path Packages/ThreeZeroOneTwoCore --product 3012-publisher
+
+      - name: Sign catalog
+        env:
+          PAYLOAD_PATH: ${{ inputs.payload_path }}
+          CHANNEL: ${{ inputs.channel }}
+          THREE_ZERO_ONE_TWO_SIGNING_KEY_BASE64: ${{ secrets.CATALOG_SIGNING_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$THREE_ZERO_ONE_TWO_SIGNING_KEY_BASE64"
+          PAYLOAD_CHANNEL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["channel"])' "$PAYLOAD_PATH")"
+          test "$PAYLOAD_CHANNEL" = "$CHANNEL"
+          Packages/ThreeZeroOneTwoCore/.build/release/3012-publisher \
+            sign-catalog "$PAYLOAD_PATH" catalog.json
+
+      - name: Upload signed catalog
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          test -n "$R2_ACCOUNT_ID"
+          test -n "$R2_BUCKET"
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          aws s3 cp catalog.json "s3://${R2_BUCKET}/catalogs/${CHANNEL}.json" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type "application/json" \
+            --cache-control "no-cache" \
+            --no-progress
