@@ -77,3 +77,4 @@ This file is the public progress tracker. Mark an item complete only after the r
 - Added public documentation and transparent attribution to 3105/YangJiii.
 - Added the first unsigned IPA GitHub Actions workflow.
 - Did not migrate legacy patch payloads or access/exploit source.
+- Fixed the first CI compile failure caused by an extra closing brace in `SettingsView.swift`.
