@@ -47,6 +47,17 @@ the derived public key, and uploads only the signed envelope. Stable and beta
 channels use separate object names. Clients reject a catalog revision lower
 than their cached revision.
 
+## Signed IPA workflow
+
+The normal `Build 3012` workflow intentionally produces an unsigned IPA. For an
+installable authorized build, create a protected `ios-signing` Environment with
+`IOS_CERTIFICATE_P12_BASE64`, `IOS_CERTIFICATE_PASSWORD`,
+`IOS_PROVISIONING_PROFILE_BASE64`, `TEMP_KEYCHAIN_PASSWORD`, and `APPLE_TEAM_ID`.
+Run **Build signed IPA**, select the export method matching the profile, and
+optionally provide an existing release tag. Signing files live only in the
+runner temporary directory and the temporary keychain is deleted in an
+`always()` cleanup step.
+
 ## Revocation and rollback
 
 Set `revoked` to `true` to prevent new application of a compromised package.

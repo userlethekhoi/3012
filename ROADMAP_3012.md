@@ -66,8 +66,8 @@ This file is the public progress tracker. Mark an item complete only after the r
 ## M7 — Release quality
 
 - [x] Add unsigned IPA workflow.
-- [ ] Add secret-safe signed archive/export workflow.
-- [ ] Test accessibility, memory, interrupted downloads, low storage, invalid signatures, and restore.
+- [~] Add secret-safe signed archive/export workflow: protected workflow added; real certificate/profile run remains.
+- [~] Test accessibility, memory, interrupted downloads, low storage, invalid signatures, and restore: automated large-file, invalid-signature, interrupted-state, and partial-rollback coverage added; device accessibility and low-storage tests remain.
 - [ ] Publish a release candidate before `1.0.0`.
 
 ## Progress log

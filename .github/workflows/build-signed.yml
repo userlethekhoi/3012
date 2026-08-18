@@ -1,0 +1,123 @@
+name: Build signed IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      export_method:
+        description: Apple export method
+        required: true
+        type: choice
+        options: [ad-hoc, development, app-store]
+      release_tag:
+        description: Optional existing tag to receive the signed IPA
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  signed-build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    environment: ios-signing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test source
+        run: swift test --package-path Packages/ThreeZeroOneTwoCore
+
+      - name: Install signing materials
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.TEMP_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$CERTIFICATE_BASE64"
+          test -n "$CERTIFICATE_PASSWORD"
+          test -n "$PROFILE_BASE64"
+          test -n "$KEYCHAIN_PASSWORD"
+          CERTIFICATE_PATH="$RUNNER_TEMP/signing.p12"
+          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/3012-signing.keychain-db"
+          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          printf '%s' "$PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          security cms -D -i "$PROFILE_PATH" > "$RUNNER_TEMP/profile.plist"
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$RUNNER_TEMP/profile.plist")"
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print Name' "$RUNNER_TEMP/profile.plist")"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Archive app
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$APPLE_TEAM_ID"
+          xcodebuild \
+            -project 3012.xcodeproj \
+            -scheme 3012 \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/3012.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            clean archive
+
+      - name: Export signed IPA
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          EXPORT_METHOD: ${{ inputs.export_method }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>${EXPORT_METHOD}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>provisioningProfiles</key><dict>
+              <key>com.userlethekhoi.app3012</key><string>${PROFILE_NAME}</string>
+            </dict>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/3012.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+          IPA_PATH="$(find "$RUNNER_TEMP/export" -maxdepth 1 -name '*.ipa' -print -quit)"
+          test -s "$IPA_PATH"
+          cp "$IPA_PATH" 3012-signed.ipa
+
+      - name: Upload signed IPA artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 3012-signed-${{ github.sha }}
+          path: 3012-signed.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Attach to existing release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" 3012-signed.ipa --clobber
+
+      - name: Remove temporary keychain
+        if: always()
+        run: |
+          if [[ -n "${KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi

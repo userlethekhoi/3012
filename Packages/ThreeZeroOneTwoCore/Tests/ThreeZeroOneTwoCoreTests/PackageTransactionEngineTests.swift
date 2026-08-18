@@ -4,6 +4,10 @@ import XCTest
 @testable import ThreeZeroOneTwoCore
 
 final class PackageTransactionEngineTests: XCTestCase {
+    private enum SimulatedError: Error {
+        case writeFailed
+    }
+
     func testApplyAndRestoreReplaceAndCreateEntries() throws {
         let workspace = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: workspace) }
@@ -79,6 +83,45 @@ final class PackageTransactionEngineTests: XCTestCase {
             )
         }
         XCTAssertEqual(try String(contentsOf: original), "original")
+    }
+
+    func testFailureAfterFirstWriteRollsBackAppliedEntry() throws {
+        let workspace = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let target = workspace.appendingPathComponent("target", isDirectory: true)
+        let backups = workspace.appendingPathComponent("transactions", isDirectory: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+        let first = target.appendingPathComponent("first.txt")
+        let second = target.appendingPathComponent("second.txt")
+        try Data("first-original".utf8).write(to: first)
+        try Data("second-original".utf8).write(to: second)
+
+        let fixture = try makePackage(entries: [
+            ("first", "first.txt", .replaceFile, Data("first-new".utf8)),
+            ("second", "second.txt", .replaceFile, Data("second-new".utf8))
+        ])
+        let reader = PackageReader(trustedPublicKeys: ["test-key": fixture.publicKey])
+        let package = try reader.inspect(fileURL: fixture.url)
+        let engine = PackageTransactionEngine(packageReader: reader) { entry in
+            if entry.id == "second" { throw SimulatedError.writeFailed }
+        }
+
+        XCTAssertThrowsError(try engine.apply(
+            package: package,
+            targetRoots: ["com.example.target": target],
+            backupRoot: backups
+        ))
+        XCTAssertEqual(try String(contentsOf: first), "first-original")
+        XCTAssertEqual(try String(contentsOf: second), "second-original")
+
+        let transactionDirectories = try FileManager.default.contentsOfDirectory(
+            at: backups,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(transactionDirectories.count, 1)
+        let journalURL = transactionDirectories[0].appendingPathComponent("journal.json")
+        XCTAssertEqual(try engine.loadJournal(at: journalURL).status, .rolledBack)
     }
 
     func testUnsafeEntryIdentifierIsRejected() throws {

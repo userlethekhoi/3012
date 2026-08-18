@@ -4,15 +4,18 @@ public struct PackageTransactionEngine {
     private let packageReader: PackageReader
     private let fileManager: FileManager
     private let chunkSize: Int
+    private let onWillApply: ((PackageEntry) throws -> Void)?
 
     public init(
         packageReader: PackageReader,
         fileManager: FileManager = .default,
-        chunkSize: Int = 1_024 * 1_024
+        chunkSize: Int = 1_024 * 1_024,
+        onWillApply: ((PackageEntry) throws -> Void)? = nil
     ) {
         self.packageReader = packageReader
         self.fileManager = fileManager
         self.chunkSize = chunkSize
+        self.onWillApply = onWillApply
     }
 
     public func apply(
@@ -163,6 +166,7 @@ public struct PackageTransactionEngine {
         transactionID: String
     ) throws -> [String] {
         let entry = verifiedEntry.entry
+        try onWillApply?(entry)
         guard let root = targetRoots[entry.bundleID] else {
             throw PackageTransactionError.missingTargetRoot(entry.bundleID)
         }
