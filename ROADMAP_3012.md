@@ -6,9 +6,9 @@ This file is the public progress tracker. Mark an item complete only after the r
 
 ## Current checkpoint
 
-- Status: **M5 in progress — transactional package apply and restore**
+- Status: **M6 in progress — production storage and key provisioning**
 - Current release: `0.1.0-dev`
-- Next engineering task: finish the transaction recovery boundary, then connect background downloads and Files import to the app.
+- Next engineering task: provision production trust/storage, then run device-level download, import, accessibility, and restore QA.
 - Known limitation: this environment cannot run Xcode; the GitHub Actions build is the first macOS compile gate.
 
 ## M1 — Clean public baseline
@@ -46,7 +46,7 @@ This file is the public progress tracker. Mark an item complete only after the r
 - [x] Define manifest schema and per-file digests.
 - [~] Implement file-based inspect, verify, import, and remove: inspect/verify complete; library import/remove remains.
 - [x] Reject traversal, absolute paths, symlinks, duplicate targets, and unsupported versions.
-- [ ] Add Files import and package preview.
+- [~] Add Files import and package preview: bounded unverified preview added; trusted import remains blocked on production public-key provisioning.
 
 ## M5 — Transaction and restore
 

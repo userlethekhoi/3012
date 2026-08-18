@@ -1,8 +1,11 @@
 import SwiftUI
 import ThreeZeroOneTwoCore
+import UniformTypeIdentifiers
 
 struct DownloadsView: View {
     @EnvironmentObject private var manager: BackgroundDownloadManager
+    @StateObject private var packageImport = PackageImportViewModel()
+    @State private var showsImporter = false
 
     var body: some View {
         NavigationStack {
@@ -26,6 +29,68 @@ struct DownloadsView: View {
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Tải xuống")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showsImporter = true
+                    } label: {
+                        Label("Nhập package", systemImage: "square.and.arrow.down")
+                    }
+                }
+            }
+            .fileImporter(
+                isPresented: $showsImporter,
+                allowedContentTypes: [UTType(exportedAs: "app.3012.package")],
+                allowsMultipleSelection: false
+            ) { result in
+                if case .success(let urls) = result, let url = urls.first {
+                    packageImport.inspect(url)
+                }
+            }
+            .sheet(isPresented: Binding(
+                get: { packageImport.preview != nil },
+                set: { if !$0 { packageImport.clear() } }
+            )) {
+                if let preview = packageImport.preview {
+                    NavigationStack {
+                        List {
+                            LabeledContent("Tên", value: preview.name)
+                            LabeledContent("Phiên bản", value: preview.version)
+                            LabeledContent("Nhà phát hành", value: preview.publisherKeyID)
+                            LabeledContent("Số file", value: "\(preview.entryCount)")
+                            LabeledContent(
+                                "Dung lượng payload",
+                                value: ByteCountFormatter.string(
+                                    fromByteCount: preview.payloadBytes,
+                                    countStyle: .file
+                                )
+                            )
+                            Section {
+                                Label(
+                                    "Preview chưa xác minh chữ ký. Package chỉ được phép áp dụng sau khi public key production được cấu hình và toàn bộ SHA-256 hợp lệ.",
+                                    systemImage: "exclamationmark.shield.fill"
+                                )
+                                .foregroundStyle(.orange)
+                            }
+                        }
+                        .navigationTitle("Xem trước package")
+                        .toolbar {
+                            Button("Đóng") { packageImport.clear() }
+                        }
+                    }
+                }
+            }
+            .alert(
+                "Không thể nhập package",
+                isPresented: Binding(
+                    get: { packageImport.errorMessage != nil },
+                    set: { if !$0 { packageImport.clear() } }
+                )
+            ) {
+                Button("Đóng") { packageImport.clear() }
+            } message: {
+                Text(packageImport.errorMessage ?? "Lỗi không xác định")
+            }
         }
     }
 
