@@ -39,6 +39,8 @@ Device Access hiện chỉ được router cân nhắc trên iOS 26.0–26.6.1 v
 
 Trạng thái **Supported** trên Home chỉ xuất hiện khi Device Access vượt qua support matrix, MCM enumeration và kích hoạt thử một container root thành công. Files picker không còn được dùng để tuyên bố container là được hỗ trợ. Trên iOS 16.7.14, Home phải hiện container không khả dụng; patch thủ công qua Files vẫn hoạt động độc lập.
 
+Nếu MCM chỉ trả về `com.apple.mobile.MobileHouseArrest`, ứng dụng mới chỉ nhìn thấy container của chính nó và chưa có quyền all-app. Trường hợp này bị coi là runtime unavailable, không phải Device Access thành công.
+
 ## Khi catalog online được phát hành
 
 Luồng dự kiến:

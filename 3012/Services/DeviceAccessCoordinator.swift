@@ -46,27 +46,38 @@ struct MobileHouseArrestAccessProvider: DeviceAccessProvider {
             )
         }
         var bridgeError: NSString?
-        let identifiers = MCMEnumerateIdentifiersForClass(2, 1, &bridgeError)
-        guard let identifier = identifiers.first else {
+        let hostIdentifier = Bundle.main.bundleIdentifier
+        let identifiers = MCMEnumerateIdentifiersForClass(2, 64, &bridgeError)
+        let foreignIdentifiers = identifiers.filter { $0 != hostIdentifier }
+        guard !foreignIdentifiers.isEmpty else {
             return AccessProbe(
                 providerID: id,
                 outcome: .failed,
                 stage: .runtimeProbe,
-                detail: bridgeError.map { String($0) } ?? "No application containers returned"
+                detail: identifiers.isEmpty
+                    ? bridgeError.map { String($0) } ?? "No application containers returned"
+                    : "MCM returned only the host container; all-app access is not active"
             )
         }
-        let rootPath = MCMActivateContainerPath(2, identifier, false, &bridgeError)
-        let available = rootPath?.hasPrefix(
-            "/private/var/mobile/Containers/Data/Application/"
-        ) == true
+        var available = false
+        for identifier in foreignIdentifiers {
+            let rootPath = MCMActivateContainerPath(2, identifier, false, &bridgeError)
+            if rootPath?.hasPrefix(
+                "/private/var/mobile/Containers/Data/Application/"
+            ) == true {
+                available = true
+                break
+            }
+        }
         return AccessProbe(
             providerID: id,
             outcome: available ? .available : .failed,
             stage: .runtimeProbe,
             capabilities: available ? capabilities : [],
             detail: available
-                ? "Read-only class-2 enumeration and root activation available"
-                : bridgeError.map { String($0) } ?? "Application container root activation failed"
+                ? "Read-only foreign-container enumeration and root activation available"
+                : bridgeError.map { String($0) }
+                    ?? "No foreign application container root could be activated"
         )
     }
 }
@@ -174,6 +185,18 @@ final class DeviceAccessCoordinator: ObservableObject {
                 domain: "app.3012.access.mcm",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: bridgeError]
+            ))
+        }
+
+        let hostIdentifier = Bundle.main.bundleIdentifier
+        guard identifiers.contains(where: { $0 != hostIdentifier }) else {
+            return .failure(NSError(
+                domain: "app.3012.access.mcm",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "MCM exposed only the 3012 host container; all-app access is not active."
+                ]
             ))
         }
 
