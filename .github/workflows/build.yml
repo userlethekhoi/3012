@@ -83,13 +83,14 @@ jobs:
             gh release edit dev-latest \
               --title "3012 Development Build" \
               --notes "$NOTES" \
-              --prerelease
+              --prerelease=false \
+              --latest
           else
             gh release create dev-latest 3012-unsigned.ipa \
               --verify-tag \
               --title "3012 Development Build" \
               --notes "$NOTES" \
-              --prerelease
+              --latest
           fi
 
       - name: Publish tagged release
