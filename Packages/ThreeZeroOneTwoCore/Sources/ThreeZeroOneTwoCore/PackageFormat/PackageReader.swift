@@ -151,6 +151,12 @@ public struct PackageReader: Sendable {
             }
             guard !entry.id.isEmpty,
                   entry.id.count <= 128,
+                  entry.id.utf8.allSatisfy({ byte in
+                      (byte >= 48 && byte <= 57) ||
+                      (byte >= 65 && byte <= 90) ||
+                      (byte >= 97 && byte <= 122) ||
+                      byte == 45 || byte == 46 || byte == 95
+                  }),
                   !entry.bundleID.isEmpty,
                   entry.bundleID.count <= 255,
                   entry.length >= 0,

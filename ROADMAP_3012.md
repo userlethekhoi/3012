@@ -6,9 +6,9 @@ This file is the public progress tracker. Mark an item complete only after the r
 
 ## Current checkpoint
 
-- Status: **M2 in progress — clean app shell and UI foundation**
+- Status: **M5 in progress — transactional package apply and restore**
 - Current release: `0.1.0-dev`
-- Next engineering task: catalog models, trust configuration, and a file-based background download boundary.
+- Next engineering task: finish the transaction recovery boundary, then connect background downloads and Files import to the app.
 - Known limitation: this environment cannot run Xcode; the GitHub Actions build is the first macOS compile gate.
 
 ## M1 — Clean public baseline
@@ -50,10 +50,10 @@ This file is the public progress tracker. Mark an item complete only after the r
 
 ## M5 — Transaction and restore
 
-- [ ] Implement backup and transaction journal.
-- [ ] Apply changes deterministically.
-- [ ] Roll back partial failures.
-- [ ] Restore original files and remove only files created by the transaction.
+- [~] Implement backup and transaction journal: implementation added; CI verification pending.
+- [~] Apply changes deterministically: implementation added; CI verification pending.
+- [~] Roll back partial failures: implementation added; CI verification pending.
+- [~] Restore original files and remove only files created by the transaction: implementation added; CI verification pending.
 - [ ] Integrate an access adapter only after its license and platform requirements are documented.
 
 ## M6 — Publishing
@@ -84,3 +84,6 @@ This file is the public progress tracker. Mark an item complete only after the r
 - Added rolling `dev-latest` prerelease publishing on every successful `main` build and versioned releases for `v*` tags.
 - Verified run `32115618138` and prerelease `dev-latest`; the rolling release contains `3012-unsigned.ipa`.
 - Added `ThreeZeroOneTwoCore` with unit-tested Ed25519 catalog verification, canonical JSON, atomic catalog cache, streaming SHA-256, and the catalog JSON Schema.
+- Added the signed, sequential `.3012pkg` reader, package schema, streaming payload verification, and adversarial path/length tests.
+- Verified GitHub Actions run `32117550487` after the package-format milestone.
+- Added a target-root-scoped transaction engine with preflight validation, backups, an atomic journal, deterministic apply, rollback, and restore tests.
