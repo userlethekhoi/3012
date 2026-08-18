@@ -14,7 +14,8 @@ final class DownloadStateStoreTests: XCTestCase {
             expectedSize: 200 * 1_024 * 1_024,
             status: .paused,
             bytesReceived: 42,
-            resumeDataFilename: "resume.data"
+            resumeDataFilename: "resume.data",
+            updatedAt: Date(timeIntervalSince1970: 1_787_040_000)
         )
 
         try await DownloadStateStore(fileURL: fileURL).save([record])
