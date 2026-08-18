@@ -42,6 +42,8 @@ Each feature owns its views and presentation state. Features communicate through
 
 Contains value types used by domain behavior. Remote DTOs should be decoded and validated before conversion to trusted domain models.
 
+The trust and package primitives live in `Packages/ThreeZeroOneTwoCore`, a Foundation/CryptoKit Swift Package with its own unit tests. Keeping this layer independent from SwiftUI allows CI to test security-sensitive parsing and verification before the app target is built.
+
 ### Infrastructure (planned)
 
 - Catalog client and cache.

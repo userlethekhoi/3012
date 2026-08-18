@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/userlethekhoi/3012/server/schemas/catalog.schema.json",
+  "title": "3012 signed catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["signed", "signature"],
+  "properties": {
+    "signed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "revision", "channel", "generatedAt", "publisherKeyID", "patches"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "channel": { "enum": ["stable", "beta"] },
+        "generatedAt": { "type": "string", "format": "date-time" },
+        "publisherKeyID": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "patches": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": { "$ref": "#/$defs/patch" }
+        }
+      }
+    },
+    "signature": { "type": "string", "contentEncoding": "base64" }
+  },
+  "$defs": {
+    "patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "summary", "version", "category", "downloadURL", "fileSize", "sha256", "minAppVersion", "minIOS", "targetBundleIDs", "visible", "revoked", "updatedAt"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "summary": { "type": "string", "maxLength": 1000 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 128 },
+        "downloadURL": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "fileSize": { "type": "integer", "minimum": 1, "maximum": 2147483648 },
+        "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+        "minAppVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "minIOS": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "targetBundleIDs": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "type": "string", "minLength": 1, "maxLength": 255 }
+        },
+        "visible": { "type": "boolean" },
+        "revoked": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

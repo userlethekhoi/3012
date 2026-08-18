@@ -27,17 +27,17 @@ This file is the public progress tracker. Mark an item complete only after the r
 - [x] Add a real app icon.
 - [ ] Add visual QA screenshots.
 - [x] Pass the first macOS/Xcode CI build.
-- [ ] Add unit and UI test targets.
+- [~] Add test coverage: core Swift Package unit tests added; UI test target remains.
 
 ## M3 — Signed online catalog and large downloads
 
-- [ ] Define and version the catalog JSON Schema.
-- [ ] Pin catalog publisher public keys.
-- [ ] Verify Ed25519 catalog signatures.
-- [ ] Add ETag/cache behavior.
+- [x] Define and version the catalog JSON Schema.
+- [~] Pin catalog publisher public keys: trust API complete; production key provisioning remains.
+- [x] Verify Ed25519 catalog signatures.
+- [~] Add ETag/cache behavior: atomic cache and ETag metadata complete; network revalidation remains.
 - [ ] Add background download tasks with pause/resume/retry.
 - [ ] Persist task state across relaunch.
-- [ ] Verify SHA-256 by streaming from disk.
+- [x] Verify SHA-256 by streaming from disk.
 - [ ] Test a package of at least 200 MB without loading it fully into memory.
 
 ## M4 — `.3012pkg`
@@ -83,3 +83,4 @@ This file is the public progress tracker. Mark an item complete only after the r
 - Added the final 3012 app icon and aligned the UI palette to blue, black, white, and system green states.
 - Added rolling `dev-latest` prerelease publishing on every successful `main` build and versioned releases for `v*` tags.
 - Verified run `32115618138` and prerelease `dev-latest`; the rolling release contains `3012-unsigned.ipa`.
+- Added `ThreeZeroOneTwoCore` with unit-tested Ed25519 catalog verification, canonical JSON, atomic catalog cache, streaming SHA-256, and the catalog JSON Schema.

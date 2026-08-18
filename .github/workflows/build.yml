@@ -28,6 +28,9 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      - name: Test core package
+        run: swift test --package-path Packages/ThreeZeroOneTwoCore --parallel
+
       - name: Build unsigned device app
         run: |
           set -o pipefail
