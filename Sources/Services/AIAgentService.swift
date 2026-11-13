@@ -289,8 +289,9 @@ public final class AIAgentService: ObservableObject {
             selectedSnippet: selectedSnippet,
             lastConsoleOutput: lastConsoleOutput
         )
-        let task = Task { [weak self] in
-            await self?.runGeneration(profileID: profile.id, apiKey: key, context: context, existingFileReader: existingFileReader)
+        let task = Task { [weak self] () -> Void in
+            guard let self else { return }
+            await self.runGeneration(profileID: profile.id, apiKey: key, context: context, existingFileReader: existingFileReader)
         }
         generationTask = task
         await task.value
