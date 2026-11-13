@@ -1,17 +1,17 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.3.0 CI & GITHUB RELEASE VERIFIED GREEN (Run `#43402981526` • Release `v3.3.0-b9` ~12.86 MB ✅)** — Hoàn thiện bộ nhận diện thương hiệu Developer **3012** (*Anodized Carbon* + *Titanium Chalk* + *Terminal Emerald* `#10B981`, số `0` gạch chéo chuẩn lập trình viên & thanh lề Editor), đóng gói trọn bộ 18 kích cỡ `AppIcon` vào `.ipa` (`Assets.car` + `CFBundleIcons`), nâng cấp Logo Vector 120Hz bên trong ứng dụng và banner `README.md`.
+> **Trạng thái hiện tại:** **v3.4.0 CI & GITHUB RELEASE VERIFIED GREEN (Run `#43410979250` • Release `v3.4.0-b11` ~13.04 MB ✅)** — AI Agent tổng quát do người dùng tự cấu hình (17 preset online/offline, API Key trong Keychain), tự động dùng model mới nhất từ API của nhà cung cấp, streaming realtime và chạy offline qua Apple On-Device / Ollama / LM Studio.
 
 ---
 
 ## Tổng kết Toàn bộ 9 Giai Đoạn Triển Khai
 
-### Phase 9 (v3.4.0): AI Agent Tổng Quát — Tự Cấu Hình, Tự Cập Nhật Model Mới Nhất, Streaming Realtime, Online + Offline (`in_progress`)
+### Phase 9 (v3.4.0): AI Agent Tổng Quát — Tự Cấu Hình, Tự Cập Nhật Model Mới Nhất, Streaming Realtime, Online + Offline (`completed` ✅)
 - [x] **Hồ sơ nhà cung cấp AI do người dùng tự cấu hình (`AIProviderModels.swift`, `AIProviderSettingsSheet.swift`):** Bỏ hoàn toàn model mặc định cứng; thêm không giới hạn cấu hình từ 17 preset (OpenAI, Claude, Gemini, DeepSeek, OpenRouter, xAI, Mistral, Groq, Together, Fireworks, Moonshot, Qwen, Z.ai, Custom OpenAI-compatible, Apple On-Device, Ollama, LM Studio), chuyển nhanh ngay trên đầu khung Agent. API Key chuyển từ `UserDefaults` sang **iOS Keychain** (tự động di chuyển cấu hình cũ).
 - [x] **Tự động theo dõi model mới nhất (`AIModelRanker`):** Tải danh sách model trực tiếp từ API `/models` của nhà cung cấp (mỗi 6 giờ hoặc bấm kiểm tra), xếp hạng theo ngày phát hành + số thế hệ model, loại bỏ model không phải chat; 3 chế độ **Mới nhất / Mới nhất (nhanh) / Cố định**, bộ lọc model và thông báo khi tự chuyển sang model mới.
 - [x] **Streaming realtime (`AIProviderClient.swift`):** SSE cho OpenAI-compatible, Anthropic Messages và Gemini `streamGenerateContent`, nút dừng tạo phản hồi, hiển thị Markdown và thông báo lỗi thân thiện (401/404/429/mất mạng/LAN).
 - [x] **Offline:** Apple Foundation Models on-device (iOS 26+, tự kiểm tra khả dụng) và Ollama / LM Studio qua mạng LAN (`NSLocalNetworkUsageDescription`).
-- [ ] **Kiểm chứng CI Build Xanh 100% & Release `.ipa` v3.4.0.**
+- [x] **Kiểm chứng CI Build Xanh 100% (Run `#43410979250`, iOS 26.2 SDK / Xcode 26.3) & Release `v3.4.0-b11` (~13.04 MB); `FoundationModels` được weak-link nên không ảnh hưởng thiết bị iOS 17–25.**
 
 ### Phase 8 (v3.3.0): Thiết Kế Thương Hiệu `3012`, Trọn Bộ `AppIcon` Cho `.ipa` & Logo Vector Nội Bộ / GitHub (`completed` ✅)
 - [x] **Bộ nhận diện thương hiệu Developer `3012` thuần kỹ thuật (Không Neon Tím, Không Icon AI):** Thiết kế trên lưới kiến trúc `1024×1024` với nền *Anodized Carbon* (`#141A22 -> #0A0D12`), chữ số đơn cách *Titanium Chalk* (`#F1F5F9`) tạo hình riêng (`30` / `12`), dấu gạch chéo bên trong số `0` (*Programmer's Slashed Zero*) và thanh lề trái *Terminal Emerald* (`#10B981`).
@@ -72,4 +72,5 @@
 | `SwiftTerm` `v1.99.x` yêu cầu `swift-tools-version: 6.2` | Phòng ngừa | Ghim dải ổn định `1.11.2 ... 1.13.99` (`swift-tools-version: 5.9`) tương thích hoàn hảo với Xcode 16+. |
 | Các kiểu dữ liệu `ByteBuffer`, `PseudoTerminalRequest`, `Curve25519` nằm ở module phụ thuộc bắc cầu của `Citadel` | Phòng ngừa | Khai báo tường minh `NIOCore`, `NIO`, `NIOSSH`, `Crypto` trong `project.yml` để tránh lỗi thiếu module khi biên dịch. |
 | Gọi nhầm `extStore.customSnippets` thay vì thuộc tính gộp `extStore.snippets` trong `App3012Main.swift` | 1 | Đổi sang `extStore.snippets` (commit `1e19490`), build xanh 100% ở Run `#43373662958`. |
+| `Task { [weak self] in await self?.run() }` suy luận kiểu `Task<()?, Never>` không gán được cho `Task<Void, Never>` | 1 | Khai báo tường minh `() -> Void` + `guard let self` (commit `2c052c9`), build xanh ở Run `#43410979250`. |
 | Cách ly Actor Swift Concurrency (`CodeFormatterService.format` gọi `ssh.isConnected` và `Task.detached` gọi `extractSymbols`) | 1 | Đánh dấu `@MainActor` cho `CodeFormatterService.format` và `nonisolated` cho `extractSymbols` + `computeLineUTF16Offsets` (commit `3cee80e`), build xanh 100% ở Run `#43378626235`. |
