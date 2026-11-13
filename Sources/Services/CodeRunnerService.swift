@@ -245,6 +245,10 @@ public final class CodeRunnerService: ObservableObject {
               mkdir <dir>     Create directory
               rm <target>     Delete file or folder
               js <expr>       Evaluate JavaScript expression locally
+              node <file>     Run script/bot 24/7 in on-device background daemon
+              bot new [tok]   Create & launch local Telegram bot
+              ps | logs | kill Manage running background processes on device
+              keepalive on/off Toggle screen-off 24/7 Keep-Alive
               clear           Clear terminal history
             """)
         case "clear":

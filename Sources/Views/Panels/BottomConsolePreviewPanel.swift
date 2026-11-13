@@ -64,11 +64,13 @@ public struct BottomConsolePreviewPanel: View {
     @ObservedObject var runner: CodeRunnerService
     @ObservedObject var liveServer: LiveServerService
     @ObservedObject var sshService: SSHWorkspaceService
+    @ObservedObject var daemonService: LocalDaemonService
     @ObservedObject var workspace: WorkspaceManager
     @ObservedObject var preferences: EditorPreferences
     @ObservedObject var intelligence: CodeIntelligenceService
     var onJumpToLine: (Int) -> Void
     var onFixDiagnosticWithAgent: (EditorDiagnostic) -> Void
+    var onOpenDaemonManager: () -> Void
     var onClose: () -> Void
 
     @State private var selectedPreviewPort: UInt16? = nil
@@ -84,11 +86,13 @@ public struct BottomConsolePreviewPanel: View {
         runner: CodeRunnerService,
         liveServer: LiveServerService,
         sshService: SSHWorkspaceService,
+        daemonService: LocalDaemonService,
         workspace: WorkspaceManager,
         preferences: EditorPreferences,
         intelligence: CodeIntelligenceService,
         onJumpToLine: @escaping (Int) -> Void,
         onFixDiagnosticWithAgent: @escaping (EditorDiagnostic) -> Void,
+        onOpenDaemonManager: @escaping () -> Void = {},
         onClose: @escaping () -> Void
     ) {
         self._selectedTab = selectedTab
@@ -96,11 +100,13 @@ public struct BottomConsolePreviewPanel: View {
         self.runner = runner
         self.liveServer = liveServer
         self.sshService = sshService
+        self.daemonService = daemonService
         self.workspace = workspace
         self.preferences = preferences
         self.intelligence = intelligence
         self.onJumpToLine = onJumpToLine
         self.onFixDiagnosticWithAgent = onFixDiagnosticWithAgent
+        self.onOpenDaemonManager = onOpenDaemonManager
         self.onClose = onClose
     }
 
@@ -192,6 +198,41 @@ public struct BottomConsolePreviewPanel: View {
                             .foregroundColor(.white)
                             .cornerRadius(6)
                     }
+                } else if selectedTab == .terminal {
+                    Button {
+                        daemonService.keepTerminalAliveInBackground.toggle()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(daemonService.isKeepAliveActive ? Color.green : Color.gray)
+                                .frame(width: 6, height: 6)
+                            Text(daemonService.keepTerminalAliveInBackground
+                                 ? preferences.tr("24/7 Ngầm: ON", "24/7 BG: ON")
+                                 : preferences.tr("24/7 Ngầm: OFF", "24/7 BG: OFF"))
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(daemonService.isKeepAliveActive ? Color.green.opacity(0.18) : Color(hex: palette.currentLineBackground))
+                        .foregroundColor(daemonService.isKeepAliveActive ? .green : Color(hex: palette.gutterForeground))
+                        .cornerRadius(6)
+                    }
+
+                    Button {
+                        onOpenDaemonManager()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "paperplane.circle.fill")
+                                .font(.system(size: 10.5, weight: .semibold))
+                            Text(preferences.tr("Treo Bot", "Daemons") + " (\(daemonService.runningJobsCount))")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(Color(hex: palette.accent).opacity(0.2))
+                        .foregroundColor(Color(hex: palette.accent))
+                        .cornerRadius(6)
+                    }
                 } else if selectedTab == .output {
                     Button {
                         runner.consoleOutput = ""
@@ -233,6 +274,7 @@ public struct BottomConsolePreviewPanel: View {
                     SwiftTermTerminalContainer(
                         sshService: sshService,
                         runner: runner,
+                        daemonService: daemonService,
                         workspace: workspace,
                         preferences: preferences
                     )

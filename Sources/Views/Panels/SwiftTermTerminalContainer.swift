@@ -5,17 +5,20 @@ import SwiftTerm
 public struct SwiftTermTerminalContainer: UIViewRepresentable {
     @ObservedObject var sshService: SSHWorkspaceService
     @ObservedObject var runner: CodeRunnerService
+    @ObservedObject var daemonService: LocalDaemonService
     @ObservedObject var workspace: WorkspaceManager
     @ObservedObject var preferences: EditorPreferences
 
     public init(
         sshService: SSHWorkspaceService,
         runner: CodeRunnerService,
+        daemonService: LocalDaemonService,
         workspace: WorkspaceManager,
         preferences: EditorPreferences
     ) {
         self.sshService = sshService
         self.runner = runner
+        self.daemonService = daemonService
         self.workspace = workspace
         self.preferences = preferences
     }
@@ -93,6 +96,10 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 guard let self, let tv = self.terminalView else { return }
                 tv.feed(byteArray: bytes[...])
             }
+            parent.daemonService.onTerminalOutput = { [weak self] text in
+                guard let self, let tv = self.terminalView, !self.parent.sshService.isConnected else { return }
+                tv.feed(text: "\r\n\u{001B}[38;5;114m\(text)\u{001B}[0m")
+            }
 
             if parent.sshService.isConnected {
                 feedWelcomeBanner(remote: true)
@@ -121,8 +128,9 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             if remote {
                 tv.feed(text: "\u{001B}[1;36m3012 Xterm-256Color Terminal — Remote SSH PTY Active\u{001B}[0m\r\n")
             } else {
-                tv.feed(text: "\u{001B}[1;36m3012 Xterm-256Color Terminal\u{001B}[0m (Local Mode — Connect VPS in SSH tab for full Linux bash/vim/g++)\r\n")
-                tv.feed(text: "Type \u{001B}[1;33mhelp\u{001B}[0m for local UNIX & JS commands.\r\n")
+                let keepTag = parent.daemonService.isKeepAliveActive ? "\u{001B}[1;32m24/7 Keep-Alive ON\u{001B}[0m" : "\u{001B}[33mKeep-Alive OFF\u{001B}[0m"
+                tv.feed(text: "\u{001B}[1;36m3012 On-Device Terminal\u{001B}[0m (\(keepTag) • Local iPhone/iPad Runtime)\r\n")
+                tv.feed(text: "Type \u{001B}[1;33mhelp\u{001B}[0m for UNIX, Telegram bot (\u{001B}[36mbot new\u{001B}[0m), & background daemon (\u{001B}[36mnode/bg/ps/kill\u{001B}[0m) commands.\r\n")
             }
         }
 
@@ -277,12 +285,15 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     tv.feed(text: "\r\n")
                     let cmd = localLineBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
                     localLineBuffer = ""
+                    var asyncPromptHandled = false
                     if !cmd.isEmpty {
                         commandHistory.append(cmd)
                         historyCursor = commandHistory.count
-                        executeLocalCommand(cmd, in: tv)
+                        asyncPromptHandled = executeLocalCommand(cmd, in: tv)
                     }
-                    printLocalPrompt()
+                    if !asyncPromptHandled {
+                        printLocalPrompt()
+                    }
                 } else if b == 127 || b == 8 { // Backspace
                     if !localLineBuffer.isEmpty {
                         localLineBuffer.removeLast()
@@ -303,9 +314,12 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         }
 
         @MainActor
-        private func executeLocalCommand(_ raw: String, in tv: TerminalView) {
+        @discardableResult
+        private func executeLocalCommand(_ raw: String, in tv: TerminalView) -> Bool {
             let cwd = localCWD ?? parent.workspace.rootURL
-            let parts = raw.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            let cleanedRaw = raw.hasSuffix("&") ? String(raw.dropLast()).trimmingCharacters(in: .whitespaces) : raw
+            let parts = cleanedRaw.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            guard !parts.isEmpty else { return false }
             let cmd = String(parts[0]).lowercased()
             let arg = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
             let fm = FileManager.default
@@ -313,25 +327,26 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             switch cmd {
             case "help":
                 let helpText = [
-                    "Local UNIX & IDE Commands:",
-                    "  ls [-la]        List directory contents",
-                    "  cd <dir>        Change directory",
-                    "  pwd             Print working directory",
-                    "  cat <file>      Display file content",
-                    "  mkdir <dir>     Create directory",
-                    "  touch <file>    Create empty file",
-                    "  cp <a> <b>      Copy file",
-                    "  mv <a> <b>      Move / rename file",
-                    "  rm <target>     Delete file or directory",
-                    "  grep <pat>      Search text across workspace",
-                    "  js <code>       Run JavaScript locally via JavaScriptCore",
-                    "  clear           Clear terminal screen"
+                    "Local On-Device UNIX, Daemon & Bot Commands:",
+                    "  node <file.js> [&]  Start JS script / bot in background on this device",
+                    "  python <file.py>    Run Python script / bot adapter locally on device",
+                    "  bg <file>           Run file as 24/7 background daemon on device",
+                    "  bot new [token]     Create & launch 24/7 Telegram bot (telegram_bot.js)",
+                    "  ps / jobs           List running on-device background processes",
+                    "  logs <pid>          Show logs for background job <pid>",
+                    "  kill <pid|all>      Stop background process <pid> or all jobs",
+                    "  keepalive [on|off]  Enable/disable 24/7 screen-off background Keep-Alive",
+                    "  curl <url>          Fetch HTTP GET response from device",
+                    "  ls [-la] | cd | pwd | cat | mkdir | touch | cp | mv | rm | grep | js | clear"
                 ].joined(separator: "\r\n")
                 tv.feed(text: helpText + "\r\n")
+                return false
             case "clear":
                 tv.feed(text: "\u{001B}[2J\u{001B}[H")
+                return false
             case "pwd":
                 tv.feed(text: cwd.path + "\r\n")
+                return false
             case "ls":
                 let showHidden = arg.contains("-a") || arg.contains("-la")
                 let cleanArg = arg.replacingOccurrences(of: "-la", with: "").replacingOccurrences(of: "-l", with: "").replacingOccurrences(of: "-a", with: "").trimmingCharacters(in: .whitespaces)
@@ -347,6 +362,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     }
                 }
                 tv.feed(text: "\r\n")
+                return false
             case "cd":
                 if arg.isEmpty || arg == "~" {
                     localCWD = parent.workspace.rootURL
@@ -359,46 +375,146 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                         tv.feed(text: "\u{001B}[31mcd: no such directory: \(arg)\u{001B}[0m\r\n")
                     }
                 }
+                return false
             case "cat":
-                guard !arg.isEmpty else { tv.feed(text: "usage: cat <file>\r\n"); return }
+                guard !arg.isEmpty else { tv.feed(text: "usage: cat <file>\r\n"); return false }
                 let target = cwd.appendingPathComponent(arg)
                 if let content = try? String(contentsOf: target, encoding: .utf8) {
                     tv.feed(text: content.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n")
                 } else {
                     tv.feed(text: "\u{001B}[31mcat: \(arg): No such file\u{001B}[0m\r\n")
                 }
+                return false
             case "mkdir":
-                guard !arg.isEmpty else { tv.feed(text: "usage: mkdir <dir>\r\n"); return }
+                guard !arg.isEmpty else { tv.feed(text: "usage: mkdir <dir>\r\n"); return false }
                 try? fm.createDirectory(at: cwd.appendingPathComponent(arg), withIntermediateDirectories: true)
                 parent.workspace.reloadTree()
+                return false
             case "touch":
-                guard !arg.isEmpty else { tv.feed(text: "usage: touch <file>\r\n"); return }
+                guard !arg.isEmpty else { tv.feed(text: "usage: touch <file>\r\n"); return false }
                 let target = cwd.appendingPathComponent(arg)
                 if !fm.fileExists(atPath: target.path) {
                     try? "".write(to: target, atomically: true, encoding: .utf8)
                 }
                 parent.workspace.reloadTree()
+                return false
             case "rm":
                 let clean = arg.replacingOccurrences(of: "-rf ", with: "").replacingOccurrences(of: "-r ", with: "").trimmingCharacters(in: .whitespaces)
-                guard !clean.isEmpty else { tv.feed(text: "usage: rm <target>\r\n"); return }
+                guard !clean.isEmpty else { tv.feed(text: "usage: rm <target>\r\n"); return false }
                 try? fm.removeItem(at: cwd.appendingPathComponent(clean))
                 parent.workspace.reloadTree()
+                return false
             case "cp", "mv":
                 let sub = arg.split(separator: " ").map(String.init)
-                guard sub.count >= 2 else { tv.feed(text: "usage: \(cmd) <src> <dst>\r\n"); return }
+                guard sub.count >= 2 else { tv.feed(text: "usage: \(cmd) <src> <dst>\r\n"); return false }
                 let src = cwd.appendingPathComponent(sub[0])
                 let dst = cwd.appendingPathComponent(sub[1])
                 if cmd == "cp" { try? fm.copyItem(at: src, to: dst) }
                 else { try? fm.moveItem(at: src, to: dst) }
                 parent.workspace.reloadTree()
+                return false
             case "grep":
-                guard !arg.isEmpty else { tv.feed(text: "usage: grep <query>\r\n"); return }
+                guard !arg.isEmpty else { tv.feed(text: "usage: grep <query>\r\n"); return false }
                 parent.workspace.performWorkspaceSearch(arg)
                 for hit in parent.workspace.searchResults.prefix(25) {
                     tv.feed(text: "\u{001B}[36m\(parent.workspace.relativePath(for: hit.url)):\(hit.line)\u{001B}[0m: \(hit.preview)\r\n")
                 }
+                return false
             case "echo":
                 tv.feed(text: arg + "\r\n")
+                return false
+            case "bg", "node", "python", "python3":
+                let targetName = arg.trimmingCharacters(in: .whitespaces)
+                guard !targetName.isEmpty else {
+                    tv.feed(text: "usage: \(cmd) <script_file>\r\n")
+                    return false
+                }
+                let fileURL = cwd.appendingPathComponent(targetName)
+                guard fm.fileExists(atPath: fileURL.path) else {
+                    if cmd == "node" && (targetName.contains("(") || targetName.contains("=")) {
+                        parent.daemonService.keepTerminalAliveInBackground = true
+                        let job = parent.daemonService.startInlineCommand(name: "inline.js", jsCode: targetName, workspaceRoot: parent.workspace.rootURL)
+                        tv.feed(text: "\u{001B}[1;32m[DAEMON]\u{001B}[0m Inline JS started as PID \(job.pid)\r\n")
+                        return false
+                    }
+                    tv.feed(text: "\u{001B}[31m\(cmd): file not found: \(targetName)\u{001B}[0m\r\n")
+                    return false
+                }
+                parent.daemonService.keepTerminalAliveInBackground = true
+                let job = parent.daemonService.startJob(fileURL: fileURL, workspaceRoot: parent.workspace.rootURL)
+                tv.feed(text: "\u{001B}[1;32m[DAEMON]\u{001B}[0m PID \(job.pid) running on-device (\(job.name)). Safe to turn off screen.\r\n")
+                return false
+            case "bot":
+                let subParts = arg.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+                let subCmd = subParts.first.map { String($0).lowercased() } ?? ""
+                if subCmd == "new" {
+                    let token = subParts.count > 1 ? String(subParts[1]).trimmingCharacters(in: .whitespaces) : ""
+                    parent.daemonService.keepTerminalAliveInBackground = true
+                    let botURL = parent.daemonService.scaffoldTelegramBot(botToken: token, in: parent.workspace, startImmediately: true)
+                    tv.feed(text: "\u{001B}[1;32m[BOT]\u{001B}[0m Created & launched \(botURL.lastPathComponent) on-device (24/7 Keep-Alive ON).\r\n")
+                } else {
+                    tv.feed(text: "usage: bot new [TELEGRAM_BOT_TOKEN]\r\n")
+                }
+                return false
+            case "ps", "jobs":
+                let jobs = parent.daemonService.jobs
+                if jobs.isEmpty {
+                    tv.feed(text: "No background jobs running on device.\r\n")
+                } else {
+                    tv.feed(text: "PID    STATE     UPTIME     SCRIPT\r\n")
+                    for job in jobs {
+                        let pidCol = "\(job.pid)".padding(toLength: 6, withPad: " ", startingAt: 0)
+                        let stCol = (job.isRunning ? "RUNNING" : "STOPPED").padding(toLength: 9, withPad: " ", startingAt: 0)
+                        let upCol = job.uptimeFormatted.padding(toLength: 9, withPad: " ", startingAt: 0)
+                        tv.feed(text: "\(pidCol) \(stCol) \(upCol)  \(job.scriptPath)\r\n")
+                    }
+                }
+                return false
+            case "logs":
+                guard let pid = Int(arg) else {
+                    tv.feed(text: "usage: logs <pid>\r\n")
+                    return false
+                }
+                if let job = parent.daemonService.jobs.first(where: { $0.pid == pid }) {
+                    let recent = job.logs.suffix(40)
+                    tv.feed(text: recent.isEmpty ? "(no logs)\r\n" : recent.joined(separator: "\r\n") + "\r\n")
+                } else {
+                    tv.feed(text: "\u{001B}[31mlogs: unknown PID \(pid)\u{001B}[0m\r\n")
+                }
+                return false
+            case "kill":
+                if arg.lowercased() == "all" {
+                    parent.daemonService.stopAllJobs()
+                    tv.feed(text: "Stopped all on-device background jobs.\r\n")
+                } else if let pid = Int(arg) {
+                    parent.daemonService.stopJob(pid: pid)
+                    tv.feed(text: "Stopped PID \(pid).\r\n")
+                } else {
+                    tv.feed(text: "usage: kill <pid|all>\r\n")
+                }
+                return false
+            case "keepalive":
+                switch arg.lowercased() {
+                case "on", "1", "true":
+                    parent.daemonService.keepTerminalAliveInBackground = true
+                case "off", "0", "false":
+                    parent.daemonService.keepTerminalAliveInBackground = false
+                default:
+                    break
+                }
+                let st = parent.daemonService.isKeepAliveActive ? "ACTIVE (24/7 screen-off ready)" : "OFF"
+                tv.feed(text: "On-Device Keep-Alive: \(st) | Battery: \(parent.daemonService.batteryPercentage)%\r\n")
+                return false
+            case "curl":
+                guard !arg.isEmpty else { tv.feed(text: "usage: curl <https://...>\r\n"); return false }
+                let daemon = parent.daemonService
+                tv.feed(text: "Fetching \(arg)...\r\n")
+                Task { @MainActor [weak self, weak tv] in
+                    let res = await daemon.performHTTPGet(urlString: arg)
+                    tv?.feed(text: res.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n")
+                    self?.printLocalPrompt()
+                }
+                return true
             default:
                 parent.runner.executeLocalShellCommand(raw, workspaceRoot: cwd) {
                     parent.workspace.reloadTree()
@@ -406,6 +522,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 if let last = parent.runner.shellHistory.last {
                     tv.feed(text: last.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n")
                 }
+                return false
             }
         }
     }

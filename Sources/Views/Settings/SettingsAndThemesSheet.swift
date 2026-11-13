@@ -6,6 +6,8 @@ public struct SettingsAndThemesSheet: View {
     @ObservedObject var preferences: EditorPreferences
     @ObservedObject var liveServer: LiveServerService
     @ObservedObject var runner: CodeRunnerService
+    @ObservedObject var daemonService: LocalDaemonService
+    var onOpenDaemonManager: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
 
     @State private var showJSONImporter: Bool = false
@@ -16,11 +18,15 @@ public struct SettingsAndThemesSheet: View {
     public init(
         preferences: EditorPreferences,
         liveServer: LiveServerService,
-        runner: CodeRunnerService
+        runner: CodeRunnerService,
+        daemonService: LocalDaemonService,
+        onOpenDaemonManager: @escaping () -> Void = {}
     ) {
         self.preferences = preferences
         self.liveServer = liveServer
         self.runner = runner
+        self.daemonService = daemonService
+        self.onOpenDaemonManager = onOpenDaemonManager
     }
 
     public var body: some View {
@@ -393,6 +399,70 @@ public struct SettingsAndThemesSheet: View {
                     Text(preferences.tr(
                         "Khi bật tùy chọn này, bạn có thể viết HTML/CSS/JS trong 3012 rồi chuyển sang Safari mở http://localhost:\(liveServer.port) mà iOS không đóng băng máy chủ.",
                         "When enabled, you can edit HTML/CSS/JS in 3012 and switch to Safari at http://localhost:\(liveServer.port) without iOS suspending the server."
+                    ))
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                }
+
+                // MARK: - 6b. On-Device 24/7 Background Terminal & Bot Runner
+                Section(preferences.tr(
+                    "Terminal & Treo Bot Chạy Ngầm 24/7 (Trên Máy)",
+                    "On-Device 24/7 Background Terminal & Bot Runner",
+                    zh: "本机 24/7 后台终端与机器人运行",
+                    ja: "端末内 24/7 バックグラウンド・Bot 実行",
+                    ko: "기기 내 24/7 백그라운드 터미널 & 봇 실행",
+                    ru: "Локальный 24/7 фон для терминала и ботов",
+                    es: "Terminal y Bots 24/7 en Segundo Plano (Local)"
+                )) {
+                    Toggle(
+                        preferences.tr(
+                            "Giữ Terminal & Bot chạy ngầm 24/7 khi tắt màn hình (Chạy trên máy)",
+                            "Keep Terminal & Bots Alive 24/7 When Screen Off (On-Device)"
+                        ),
+                        isOn: $daemonService.keepTerminalAliveInBackground
+                    )
+
+                    Toggle(
+                        preferences.tr(
+                            "Tự khởi động lại Bot nếu gặp lỗi / rớt mạng",
+                            "Auto-Restart Bot on Error / Network Drop"
+                        ),
+                        isOn: $daemonService.autoRestartOnError
+                    )
+
+                    Toggle(
+                        preferences.tr(
+                            "Chống tự tắt màn hình khi đang mở 3012",
+                            "Prevent Screen Auto-Lock While 3012 is Open"
+                        ),
+                        isOn: $daemonService.preventScreenSleep
+                    )
+
+                    Button {
+                        dismiss()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            onOpenDaemonManager()
+                        }
+                    } label: {
+                        HStack {
+                            Label(
+                                preferences.tr("Quản lý Bot Telegram & Tiến trình Ngầm", "Manage Telegram Bots & Background Jobs"),
+                                systemImage: "cpu.fill"
+                            )
+                            Spacer()
+                            Text("\(daemonService.runningJobsCount)")
+                                .font(.caption.monospacedDigit().bold())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(daemonService.runningJobsCount > 0 ? Color.green.opacity(0.2) : Color.secondary.opacity(0.15))
+                                .foregroundColor(daemonService.runningJobsCount > 0 ? .green : .secondary)
+                                .clipShape(Capsule())
+                        }
+                    }
+
+                    Text(preferences.tr(
+                        "Chạy hoàn toàn trên iPhone/iPad của bạn (không tải lên VPS chung), giữ kết nối mạng & tiến trình bot Telegram sống kể cả khi khóa màn hình miễn là còn pin & mạng.",
+                        "Runs 100% locally on your iPhone/iPad (not on any shared VPS), keeping Telegram bot pollers and scripts alive even with the screen locked as long as battery and network remain."
                     ))
                     .font(.footnote)
                     .foregroundColor(.secondary)

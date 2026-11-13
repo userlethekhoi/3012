@@ -22,6 +22,7 @@ struct App3012Main: App {
     @StateObject private var intelligence = CodeIntelligenceService()
     @StateObject private var timelineService = FileTimelineAndArchiveService()
     @StateObject private var theosService = TheosBuildService()
+    @StateObject private var daemonService = LocalDaemonService()
 
     var body: some Scene {
         WindowGroup {
@@ -36,7 +37,8 @@ struct App3012Main: App {
                 extStore: extStore,
                 intelligence: intelligence,
                 timelineService: timelineService,
-                theosService: theosService
+                theosService: theosService,
+                daemonService: daemonService
             )
             .preferredColorScheme(preferences.activePalette.isDark ? .dark : .light)
             .environment(\.locale, Locale(identifier: preferences.appLanguage.localeIdentifier))
@@ -56,6 +58,7 @@ public struct MainIDEWorkspaceView: View {
     @ObservedObject var intelligence: CodeIntelligenceService
     @ObservedObject var timelineService: FileTimelineAndArchiveService
     @ObservedObject var theosService: TheosBuildService
+    @ObservedObject var daemonService: LocalDaemonService
 
     @State private var showLeftExplorer: Bool = false
     @State private var showRightAIPanel: Bool = false
@@ -69,6 +72,7 @@ public struct MainIDEWorkspaceView: View {
     @State private var showTimelineSheet: Bool = false
     @State private var showThemeStudioDirect: Bool = false
     @State private var showTheosBuilderSheet: Bool = false
+    @State private var showDaemonManagerSheet: Bool = false
     @State private var shareZipItem: ShareableZipFile? = nil
 
     @State private var markdownMode: MarkdownDisplayMode = .editor
@@ -113,6 +117,7 @@ public struct MainIDEWorkspaceView: View {
                                     runner: runner,
                                     liveServer: liveServer,
                                     sshService: sshService,
+                                    daemonService: daemonService,
                                     workspace: workspace,
                                     preferences: preferences,
                                     intelligence: intelligence,
@@ -121,6 +126,9 @@ public struct MainIDEWorkspaceView: View {
                                     },
                                     onFixDiagnosticWithAgent: { diag in
                                         fixDiagnosticWithAgent(diag)
+                                    },
+                                    onOpenDaemonManager: {
+                                        showDaemonManagerSheet = true
                                     },
                                     onClose: {
                                         withAnimation(.easeInOut(duration: 0.2)) {
@@ -277,7 +285,18 @@ public struct MainIDEWorkspaceView: View {
             SettingsAndThemesSheet(
                 preferences: preferences,
                 liveServer: liveServer,
-                runner: runner
+                runner: runner,
+                daemonService: daemonService,
+                onOpenDaemonManager: {
+                    showDaemonManagerSheet = true
+                }
+            )
+        }
+        .sheet(isPresented: $showDaemonManagerSheet) {
+            LocalDaemonManagerSheet(
+                daemonService: daemonService,
+                workspace: workspace,
+                preferences: preferences
             )
         }
         .sheet(isPresented: $showThemeStudioDirect) {
@@ -952,6 +971,23 @@ public struct MainIDEWorkspaceView: View {
                 Divider()
 
                 Button {
+                    showDaemonManagerSheet = true
+                } label: {
+                    Label(
+                        preferences.tr(
+                            "Treo Bot & Chạy Ngầm Terminal (24/7 Trên Máy)",
+                            "24/7 Background Terminal & Bot Runner (On-Device)",
+                            zh: "24/7 本机后台终端与 Bot 运行器",
+                            ja: "24/7 端末内バックグラウンド＆Bot",
+                            ko: "24/7 기기 내 백그라운드 & 봇 실행",
+                            ru: "Локальный 24/7 терминал и боты",
+                            es: "Terminal y Bots 24/7 (Local)"
+                        ),
+                        systemImage: "waveform.path.ecg"
+                    )
+                }
+
+                Button {
                     showTheosBuilderSheet = true
                 } label: {
                     Label(preferences.tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)"), systemImage: "hammer.fill")
@@ -1406,6 +1442,7 @@ public struct MainIDEWorkspaceView: View {
                 preferences.formatOnSave.toggle()
             }),
             (preferences.tr("Xem Problems & Báo lỗi trực tiếp", "Show Problems & Inline Diagnostics"), "checklist", { checkSyntaxAndLSPDiagnostics() }),
+            (preferences.tr("Treo Bot Telegram & Chạy Ngầm Terminal 24/7 (Trên Máy)", "24/7 Background Terminal & Telegram Bot Runner (On-Device)"), "waveform.path.ecg", { showDaemonManagerSheet = true }),
             (preferences.tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)"), "hammer.fill", { showTheosBuilderSheet = true }),
             (preferences.tr("Xuất Dự án ra File .zip", "Export Project Workspace as .zip"), "doc.zipper", { exportWorkspaceAsZipAndShare() }),
             (preferences.tr("Mở Live Server localhost:\(liveServer.port) trên Safari", "Open Live Server localhost:\(liveServer.port) in Safari"), "safari", {
