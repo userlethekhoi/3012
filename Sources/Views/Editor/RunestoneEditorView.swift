@@ -6,11 +6,13 @@ public struct CompletionReplacementRequest: Equatable {
     public let token: Int
     public let range: NSRange
     public let replacement: String
+    public let cursorOffset: Int?
 
-    public init(token: Int, range: NSRange, replacement: String) {
+    public init(token: Int, range: NSRange, replacement: String, cursorOffset: Int? = nil) {
         self.token = token
         self.range = range
         self.replacement = replacement
+        self.cursorOffset = cursorOffset
     }
 }
 
@@ -122,6 +124,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
 
         let signature = "\(preferences.themeSignature)|\(preferences.fontName)|\(Int(preferences.fontSize * 2))"
         let fileChanged = context.coordinator.loadedFileURL != fileURL
+        let languageChanged = context.coordinator.loadedLanguage != language
         let themeChanged = context.coordinator.loadedAppearanceSignature != signature
 
         // 1. Apply Autocomplete Replacement cleanly via Runestone's Undo-safe replace(_:withText:)
@@ -132,6 +135,11 @@ public struct RunestoneEditorView: UIViewRepresentable {
             let safeLen = min(max(0, comp.range.length), totalLen - safeLoc)
             context.coordinator.isInternalEdit = true
             textView.replace(NSRange(location: safeLoc, length: safeLen), withText: comp.replacement)
+            if let cursorOffset = comp.cursorOffset {
+                let updatedLen = (textView.text as NSString).length
+                let targetCursor = min(max(0, safeLoc + cursorOffset), updatedLen)
+                textView.selectedRange = NSRange(location: targetCursor, length: 0)
+            }
             onTextChange(textView.text, textView.selectedRange)
             DispatchQueue.main.async {
                 context.coordinator.isInternalEdit = false
@@ -148,7 +156,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
 
         let externalTextChanged = (!context.coordinator.isInternalEdit && textView.text != text)
 
-        if fileChanged || themeChanged || externalTextChanged {
+        if fileChanged || languageChanged || themeChanged || externalTextChanged {
             let preservedRange = textView.selectedRange
             context.coordinator.loadState(
                 into: textView,
@@ -205,7 +213,11 @@ public struct RunestoneEditorView: UIViewRepresentable {
         textView.showSpaces = preferences.showInvisibleCharacters
         textView.showTabs = preferences.showInvisibleCharacters
         textView.lineHeightMultiplier = CGFloat(preferences.lineHeightMultiplier)
-        textView.indentStrategy = .space(length: preferences.tabWidth)
+        if language == .go || language == .makefile {
+            textView.indentStrategy = .tab(length: preferences.tabWidth)
+        } else {
+            textView.indentStrategy = .space(length: preferences.tabWidth)
+        }
     }
 
     private func toggleLineComment(in textView: TextView) {
@@ -248,6 +260,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
     public final class Coordinator: NSObject, TextViewDelegate {
         var parent: RunestoneEditorView
         var loadedFileURL: URL?
+        var loadedLanguage: CodeLanguage?
         var loadedAppearanceSignature: String = ""
         var isInternalEdit: Bool = false
         var lastFindToken: Int = 0
@@ -273,6 +286,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
             restoreSelection: NSRange? = nil
         ) {
             self.loadedFileURL = fileURL
+            self.loadedLanguage = language
             let tsLanguage = language.treeSitterLanguage
             DispatchQueue.global(qos: .userInitiated).async {
                 let state: TextViewState
@@ -282,7 +296,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
                     state = TextViewState(text: code, theme: theme)
                 }
                 DispatchQueue.main.async { [weak self, weak textView] in
-                    guard let self, let textView, self.loadedFileURL == fileURL else { return }
+                    guard let self, let textView, self.loadedFileURL == fileURL, self.loadedLanguage == language else { return }
                     textView.setState(state)
                     if let sel = restoreSelection, sel.location + sel.length <= (code as NSString).length {
                         textView.selectedRange = sel
@@ -293,6 +307,84 @@ public struct RunestoneEditorView: UIViewRepresentable {
                     }
                 }
             }
+        }
+
+        public func textView(_ textView: TextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            // 1. Hardware Keyboard Tab accepts active VS Code IntelliSense suggestion immediately
+            if text == "\t", parent.onAcceptPrimaryCompletion() {
+                return false
+            }
+
+            // 2. VS Code Smart Auto-Indent on Return (Enter)
+            if text == "\n", parent.preferences.autoIndentOnReturn {
+                let ns = textView.text as NSString
+                let safeLoc = min(max(0, range.location), ns.length)
+                let safeEnd = min(max(safeLoc, range.location + range.length), ns.length)
+
+                let lineRange = ns.lineRange(for: NSRange(location: safeLoc, length: 0))
+                let lineBeforeCursor = ns.substring(with: NSRange(location: lineRange.location, length: safeLoc - lineRange.location))
+                let leadingIndent = String(lineBeforeCursor.prefix(while: { $0 == " " || $0 == "\t" }))
+
+                let indentUnit: String
+                if parent.language == .go || parent.language == .makefile {
+                    indentUnit = "\t"
+                } else if parent.language == .python || parent.language == .nim {
+                    indentUnit = "    "
+                } else {
+                    indentUnit = String(repeating: " ", count: max(parent.preferences.tabWidth, 2))
+                }
+
+                let prevChar: String = safeLoc > 0 ? ns.substring(with: NSRange(location: safeLoc - 1, length: 1)) : ""
+                let nextChar: String = safeEnd < ns.length ? ns.substring(with: NSRange(location: safeEnd, length: 1)) : ""
+
+                // Case A: Cursor sits right between {|} or (|) or [|] -> expand block with cursor indented inside!
+                let isBracketPair = (prevChar == "{" && nextChar == "}")
+                    || (prevChar == "(" && nextChar == ")")
+                    || (prevChar == "[" && nextChar == "]")
+
+                if isBracketPair {
+                    let innerLine = "\n\(leadingIndent)\(indentUnit)"
+                    let fullInsert = "\(innerLine)\n\(leadingIndent)"
+                    isInternalEdit = true
+                    textView.replace(NSRange(location: safeLoc, length: safeEnd - safeLoc), withText: fullInsert)
+                    let cursorTarget = safeLoc + (innerLine as NSString).length
+                    textView.selectedRange = NSRange(location: min(cursorTarget, (textView.text as NSString).length), length: 0)
+                    parent.onTextChange(textView.text, textView.selectedRange)
+                    DispatchQueue.main.async { [weak self] in self?.isInternalEdit = false }
+                    return false
+                }
+
+                // Case B: Line before cursor ends with block opener ({, (, [, or : in Python/YAML/C++/Ruby/Lua/Elixir)
+                let trimmedBefore = lineBeforeCursor.trimmingCharacters(in: .whitespaces)
+                let colonBlockLangs: Set<CodeLanguage> = [.python, .nim, .yaml, .c, .cpp, .objectiveC, .swift, .javascript, .typescript]
+                let opensIndent = trimmedBefore.hasSuffix("{")
+                    || trimmedBefore.hasSuffix("(")
+                    || trimmedBefore.hasSuffix("[")
+                    || (trimmedBefore.hasSuffix(":") && colonBlockLangs.contains(parent.language))
+                    || ((parent.language == .ruby || parent.language == .elixir || parent.language == .lua) &&
+                        (trimmedBefore.hasSuffix(" do") || trimmedBefore.hasSuffix(" then") || trimmedBefore.hasPrefix("def ")))
+
+                if opensIndent {
+                    let insert = "\n\(leadingIndent)\(indentUnit)"
+                    isInternalEdit = true
+                    textView.replace(NSRange(location: safeLoc, length: safeEnd - safeLoc), withText: insert)
+                    parent.onTextChange(textView.text, textView.selectedRange)
+                    DispatchQueue.main.async { [weak self] in self?.isInternalEdit = false }
+                    return false
+                }
+
+                // Case C: Preserve current line's indentation
+                if !leadingIndent.isEmpty {
+                    let insert = "\n\(leadingIndent)"
+                    isInternalEdit = true
+                    textView.replace(NSRange(location: safeLoc, length: safeEnd - safeLoc), withText: insert)
+                    parent.onTextChange(textView.text, textView.selectedRange)
+                    DispatchQueue.main.async { [weak self] in self?.isInternalEdit = false }
+                    return false
+                }
+            }
+
+            return true
         }
 
         public func textViewDidChange(_ textView: TextView) {

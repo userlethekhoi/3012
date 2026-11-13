@@ -657,6 +657,12 @@ public final class EditorPreferences: ObservableObject {
     @Published public var enableAutoSave: Bool {
         didSet { UserDefaults.standard.set(enableAutoSave, forKey: "3012.autoSave") }
     }
+    @Published public var formatOnSave: Bool {
+        didSet { UserDefaults.standard.set(formatOnSave, forKey: "3012.formatOnSave") }
+    }
+    @Published public var autoIndentOnReturn: Bool {
+        didSet { UserDefaults.standard.set(autoIndentOnReturn, forKey: "3012.autoIndentReturn") }
+    }
     @Published public var showBreadcrumbs: Bool {
         didSet { UserDefaults.standard.set(showBreadcrumbs, forKey: "3012.showBreadcrumbs") }
     }
@@ -702,6 +708,8 @@ public final class EditorPreferences: ObservableObject {
         self.enableCodeCompletion = UserDefaults.standard.object(forKey: "3012.codeCompletion") as? Bool ?? true
         self.enableLiveDiagnostics = UserDefaults.standard.object(forKey: "3012.liveDiagnostics") as? Bool ?? true
         self.enableAutoSave = UserDefaults.standard.object(forKey: "3012.autoSave") as? Bool ?? true
+        self.formatOnSave = UserDefaults.standard.object(forKey: "3012.formatOnSave") as? Bool ?? true
+        self.autoIndentOnReturn = UserDefaults.standard.object(forKey: "3012.autoIndentReturn") as? Bool ?? true
         self.showBreadcrumbs = UserDefaults.standard.object(forKey: "3012.showBreadcrumbs") as? Bool ?? true
         self.keepServerInBackground = UserDefaults.standard.object(forKey: "3012.keepServerBg") as? Bool ?? true
         loadCustomThemes()

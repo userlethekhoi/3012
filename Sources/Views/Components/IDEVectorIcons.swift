@@ -52,7 +52,7 @@ public struct IDECodeMarkVector: View {
     }
 }
 
-/// Clean Apple SF Symbol + VS Code semantic color icon for files and tabs (no emojis, no noisy fills).
+/// Clean Apple SF Symbol + VS Code semantic color icon for all 64 languages (no emojis, no noisy fills).
 public struct FileLanguageIconView: View {
     public let language: CodeLanguage
     public var size: CGFloat = 12
@@ -72,31 +72,47 @@ public struct FileLanguageIconView: View {
 
     private func semanticColor(for lang: CodeLanguage) -> Color {
         switch lang {
-        case .html:
-            return Color(red: 0.94, green: 0.40, blue: 0.18) // HTML5 Coral
+        case .html, .svelte, .astro:
+            return Color(red: 0.94, green: 0.40, blue: 0.18) // Coral Orange
+        case .vue:
+            return Color(red: 0.26, green: 0.72, blue: 0.51) // Vue Emerald
         case .css:
-            return Color(red: 0.22, green: 0.74, blue: 0.97) // CSS Sky Blue
+            return Color(red: 0.22, green: 0.74, blue: 0.97) // Sky Blue
+        case .scss, .graphql:
+            return Color(red: 0.90, green: 0.33, blue: 0.60) // Pink Magenta
         case .javascript:
             return Color(red: 0.96, green: 0.78, blue: 0.18) // JS Gold
-        case .typescript:
+        case .typescript, .tsx:
             return Color(red: 0.23, green: 0.51, blue: 0.96) // TS Blue
-        case .json:
-            return Color(red: 0.96, green: 0.62, blue: 0.04) // JSON Amber
-        case .python:
-            return Color(red: 0.35, green: 0.65, blue: 0.98) // Python Blue
-        case .c:
-            return Color(red: 0.45, green: 0.56, blue: 0.96) // C Slate Blue
-        case .cpp:
-            return Color(red: 0.39, green: 0.46, blue: 0.95) // C++ Indigo
-        case .objectiveC:
-            return Color(red: 0.26, green: 0.62, blue: 0.98) // Obj-C Blue
+        case .json, .json5, .yaml, .toml, .ini, .protobuf:
+            return Color(red: 0.96, green: 0.62, blue: 0.04) // Config Amber
+        case .python, .lua, .r:
+            return Color(red: 0.35, green: 0.65, blue: 0.98) // Scripting Blue
+        case .c, .cpp, .objectiveC, .assembly:
+            return Color(red: 0.42, green: 0.50, blue: 0.96) // Systems Indigo
+        case .rust, .dlang:
+            return Color(red: 0.92, green: 0.46, blue: 0.24) // Rust Copper
+        case .go, .dart, .dockerfile:
+            return Color(red: 0.00, green: 0.74, blue: 0.88) // Cyan
+        case .zig, .nim:
+            return Color(red: 0.96, green: 0.68, blue: 0.16) // Warm Gold
         case .swift:
-            return Color(red: 0.97, green: 0.45, blue: 0.15) // Apple Swift Orange
-        case .markdown:
-            return Color(red: 0.58, green: 0.64, blue: 0.72) // Markdown Slate
-        case .shell:
-            return Color(red: 0.20, green: 0.83, blue: 0.60) // Shell Emerald
-        case .plainText:
+            return Color(red: 0.97, green: 0.45, blue: 0.15) // Swift Orange
+        case .java, .scala:
+            return Color(red: 0.93, green: 0.35, blue: 0.30) // JVM Red
+        case .kotlin, .elixir, .haskell, .hcl, .bicep:
+            return Color(red: 0.66, green: 0.42, blue: 0.96) // Violet
+        case .csharp, .php:
+            return Color(red: 0.54, green: 0.48, blue: 0.92) // Indigo Purple
+        case .ruby, .erlang, .crystal:
+            return Color(red: 0.88, green: 0.25, blue: 0.33) // Ruby Crimson
+        case .sql:
+            return Color(red: 0.24, green: 0.70, blue: 0.90) // DB Cyan
+        case .shell, .fish, .powershell, .makefile, .cmake, .nix:
+            return Color(red: 0.20, green: 0.83, blue: 0.60) // Terminal Emerald
+        case .markdown, .latex, .xml, .diff, .regex:
+            return Color(red: 0.58, green: 0.64, blue: 0.72) // Slate
+        default:
             return Color.secondary
         }
     }

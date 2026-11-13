@@ -1,10 +1,15 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.0.0 CI VERIFIED GREEN (GitHub Actions Run `#43373662958`, Artifact `14014230131` ~7.86 MB ✅)** — Tích hợp đầy đủ Gợi ý Code trực tiếp, Báo lỗi ngay trên trình soạn thảo, 14+ Theme + Theme Studio, Symbol Outline & Breadcrumbs, Web DevTools F12, Lịch sử File 20 mốc, Markdown/Mermaid Preview, Nhập/Xuất `.zip` và Phím tắt Bluetooth/Magic Keyboard.
+> **Trạng thái hiện tại:** **v3.1.0 (Build 5) — Đang chạy xác minh CI trên GitHub Actions** — Nâng cấp nhận diện toàn diện **64 ngôn ngữ lập trình** (48 bộ ngữ pháp `Tree-sitter` native + 3 tầng nhận diện), **Tự động Format Code theo ngôn ngữ** (`CodeFormatterService` + Format-on-Save/Run), và **VS Code Smart IntelliSense** (Fuzzy/CamelCase, gợi ý sau dấu `.` / `->` / `::` / `#include <`, Emmet HTML, đặt con trỏ thông minh `$0`, gợi ý tham số hàm trực tiếp & Auto-Indent khi nhấn Enter).
 
 ---
 
-## Tổng kết Toàn bộ 5 Giai Đoạn Triển Khai
+## Tổng kết Toàn bộ 6 Giai Đoạn Triển Khai
+
+### Phase 6 (v3.1.0): Nhận Diện Toàn Bộ 64 Ngôn Ngữ, Tự Động Format Code & VS Code Smart IntelliSense (`in_progress`)
+- [x] **Universal Programming Language Recognition (64 Ngôn ngữ + 48 `TreeSitter*Runestone` AST):** Nhận diện 3 tầng (tên file đặc biệt `Dockerfile`/`Makefile`/`CMakeLists.txt`/`Cargo.toml` + hơn 145 đuôi mở rộng + quét nội dung/shebang `#!/usr/bin/env ...`), mở rộng thực thi **1-Tap Run cho 30+ ngôn ngữ** (Zero-Config Wandbox + SSH VPS) và thanh chọn **Language Mode (`Auto-Detect` + ghi đè thủ công)** chuẩn VS Code (`WorkspaceModels.swift`, `SymbolAndTimelineSheets.swift`).
+- [x] **Automatic Language-Specific Code Formatting (`CodeFormatterService.swift`):** Tự động định dạng code theo từng họ ngôn ngữ ngay khi Lưu/Chạy (`Format on Save`) hoặc bấm 1 chạm `Format` (`Cmd+Shift+F`), kết hợp trình format chuẩn công nghiệp trên VPS (`clang-format`, `gofmt`, `rustfmt`, `zig fmt`, `black`, `prettier`, `dart format`, `swift-format`, `shfmt`, `terraform fmt`, `nixfmt`) và bộ pretty-printer nội bộ an toàn với chuỗi/chú thích cho cả 64 ngôn ngữ (JSON/JSONC, HTML/XML/Vue/Svelte/Astro, SQL, Python/YAML, Makefile giữ `\t`, Go `\t`, C/C++/Rust/Java/TS/Swift/CSS, Ruby/Lua/Elixir/Shell/Pascal/CMake).
+- [x] **VS Code-Grade Smart Code Completion & Auto-Indent:** Chấm điểm **Fuzzy Subsequence & CamelCase/snake_case** (`gEBI` -> `getElementById`, `pb` -> `push_back`, `umap` -> `unordered_map`), tự bật gợi ý 0 ký tự ngay sau `.` / `->` / `::` / `#include <`, tích hợp **Emmet HTML/JSX** (`!`, `div.card`, `ul>li*3`), đặt con trỏ tự động vào giữa ngoặc (`$0`), quét ký hiệu xuyên toàn bộ project, hiện khung nhắc tham số hàm (`Signature Help`) và tự động thụt lề khối `{|}` khi nhấn `Enter` (`CodeIntelligenceService.swift`, `RunestoneEditorView.swift`, `App3012Main.swift`).
 
 ### Phase 5 (v3.0.0): Gợi Ý Code, Báo Lỗi Trực Tiếp, Theme Studio & Bộ Công Cụ Pro (`completed` ✅)
 - [x] **Live Code Autocomplete (Bật/Tắt 1 chạm):** Thanh gợi ý từ khóa, thư viện chuẩn (`std::`, DOM, Python built-ins), ký hiệu trong file và Snippets nổi trực tiếp trên trình soạn thảo + nhấn `Tab` chấp nhận nhanh (`CodeIntelligenceService.swift`).

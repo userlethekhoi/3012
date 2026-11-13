@@ -221,67 +221,7 @@ public final class ExtensionStoreService: ObservableObject {
 
     // MARK: - Built-in Code Formatter & Diagnostics (Offline + Remote VPS LSP/Tools)
     public static func formatCode(_ code: String, language: CodeLanguage, tabWidth: Int, sshService: SSHWorkspaceService?) async -> String {
-        if language == .json,
-           let data = code.data(using: .utf8),
-           let obj = try? JSONSerialization.jsonObject(with: data),
-           let pretty = try? JSONSerialization.data(withPrettyObject: obj) {
-            return pretty
-        }
-
-        // If connected to VPS, try industry-standard native formatters (clang-format / black / prettier)
-        if let ssh = sshService, ssh.isConnected {
-            let b64 = Data(code.utf8).base64EncodedString()
-            var remoteFormatterCmd: String?
-            switch language {
-            case .c, .cpp, .objectiveC:
-                remoteFormatterCmd = "command -v clang-format >/dev/null 2>&1 && echo '\(b64)' | base64 -d | clang-format"
-            case .python:
-                remoteFormatterCmd = "command -v black >/dev/null 2>&1 && echo '\(b64)' | base64 -d | black -q -"
-            case .html, .css, .javascript, .typescript:
-                remoteFormatterCmd = "command -v prettier >/dev/null 2>&1 && echo '\(b64)' | base64 -d | prettier --stdin-filepath index.\(language.defaultExtension)"
-            default:
-                break
-            }
-            if let cmd = remoteFormatterCmd {
-                let res = await ssh.executeCommandOnVPS(cmd)
-                if !res.isEmpty && !res.hasPrefix("[Process exited") && !res.hasPrefix("[SSH Error]") {
-                    return res
-                }
-            }
-        }
-
-        // Built-in lightweight brace/tag indentation formatter offline
-        return offlineSmartIndentFormat(code, language: language, tabWidth: tabWidth)
-    }
-
-    private static func offlineSmartIndentFormat(_ code: String, language: CodeLanguage, tabWidth: Int) -> String {
-        if language == .python || language == .markdown || language == .plainText {
-            return code.components(separatedBy: "\n")
-                .map { $0.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression) }
-                .joined(separator: "\n")
-        }
-        let unit = String(repeating: " ", count: max(tabWidth, 2))
-        var depth = 0
-        var formattedLines: [String] = []
-
-        for rawLine in code.components(separatedBy: "\n") {
-            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty {
-                formattedLines.append("")
-                continue
-            }
-            let startsClosing = trimmed.hasPrefix("}") || trimmed.hasPrefix("]") || trimmed.hasPrefix(")") || trimmed.hasPrefix("</")
-            if startsClosing {
-                depth = max(0, depth - 1)
-            }
-            formattedLines.append(String(repeating: unit, count: depth) + trimmed)
-
-            let opens = trimmed.filter { $0 == "{" || $0 == "[" }.count
-            let closes = trimmed.filter { $0 == "}" || $0 == "]" }.count
-            let net = opens - closes + (startsClosing ? 1 : 0)
-            depth = max(0, depth + net)
-        }
-        return formattedLines.joined(separator: "\n")
+        await CodeFormatterService.format(code, language: language, tabWidth: tabWidth, sshService: sshService)
     }
 
     public static func runSyntaxDiagnostics(code: String, language: CodeLanguage, fileName: String, sshService: SSHWorkspaceService?) async -> String {

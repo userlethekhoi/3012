@@ -25,17 +25,19 @@ public struct SettingsAndThemesSheet: View {
     public var body: some View {
         NavigationStack {
             Form {
-                // MARK: - 1. Code Intelligence & Inline Diagnostics Toggles
+                // MARK: - 1. Code Intelligence, Auto-Format & Inline Diagnostics Toggles
                 Section {
-                    Toggle("Bật gợi ý code tự động (Live Autocomplete)", isOn: $preferences.enableCodeCompletion)
+                    Toggle("Bật gợi ý code thông minh như VS Code (IntelliSense)", isOn: $preferences.enableCodeCompletion)
                     Toggle("Bật tô sáng & báo lỗi trực tiếp (Inline Diagnostics)", isOn: $preferences.enableLiveDiagnostics)
+                    Toggle("Tự động Format Code theo ngôn ngữ khi Lưu / Chạy", isOn: $preferences.formatOnSave)
+                    Toggle("Tự động thụt lề thông minh khi nhấn Enter", isOn: $preferences.autoIndentOnReturn)
                     Toggle("Tự động lưu & ghi lịch sử phiên bản (Auto-Save)", isOn: $preferences.enableAutoSave)
                     Toggle("Hiện thanh đường dẫn & danh sách hàm (Breadcrumbs)", isOn: $preferences.showBreadcrumbs)
                     Toggle("Cho phép gập/mở khối code (Code Folding)", isOn: $preferences.enableCodeFolding)
                 } header: {
-                    Text("Gợi Ý Code & Báo Lỗi Trên Trình Soạn Thảo")
+                    Text("Gợi Ý Code Thông Minh, Format & Báo Lỗi Trực Tiếp")
                 } footer: {
-                    Text("Khi bật Gợi ý code, nhấn phím Tab trên thanh Pro Coding Bar để chấp nhận nhanh từ khóa đầu tiên. Khi bật Báo lỗi trực tiếp, dòng có lỗi cú pháp sẽ được tô sáng ngay trên trình soạn thảo.")
+                    Text("Hỗ trợ nhận diện 64 ngôn ngữ lập trình, gợi ý Fuzzy/CamelCase, gợi ý thành phần sau dấu chấm (./::/->), gõ tắt Emmet HTML và tự động căn chỉnh định dạng code chuẩn theo từng ngôn ngữ.")
                 }
 
                 // MARK: - 2. Full Syntax Color & App Theme Gallery + Theme Studio
@@ -189,8 +191,9 @@ public struct SettingsAndThemesSheet: View {
 
                 // MARK: - 6. Hardware Keyboard Shortcuts Reference
                 Section("Phím Tắt Bàn Phím Bluetooth / Magic Keyboard") {
-                    shortcutRow("Cmd + S", "Lưu file & tạo mốc lịch sử")
-                    shortcutRow("Cmd + R", "Chạy file hiện tại (Smart Run)")
+                    shortcutRow("Cmd + S", "Lưu file & tự động Format (nếu bật)")
+                    shortcutRow("Cmd + Shift + F", "Format Code theo ngôn ngữ hiện tại")
+                    shortcutRow("Cmd + R", "Chạy file hiện tại (Smart Run 30+ ngôn ngữ)")
                     shortcutRow("Cmd + P", "Mở Command Palette & tìm nhanh file")
                     shortcutRow("Cmd + /", "Bật/tắt chú thích dòng (Toggle Comment)")
                     shortcutRow("Cmd + B", "Đóng/mở thanh Explorer bên trái")

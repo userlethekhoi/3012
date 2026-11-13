@@ -61,6 +61,7 @@ public struct MainIDEWorkspaceView: View {
     @State private var showSettingsSheet: Bool = false
     @State private var showCommandPalette: Bool = false
     @State private var showSymbolOutlineSheet: Bool = false
+    @State private var showLanguagePickerSheet: Bool = false
     @State private var showTimelineSheet: Bool = false
     @State private var showThemeStudioDirect: Bool = false
     @State private var shareZipItem: ShareableZipFile? = nil
@@ -227,15 +228,22 @@ public struct MainIDEWorkspaceView: View {
             workspace.onFileSavedOrChanged = { [weak liveServer] in
                 liveServer?.notifyFileChanged()
             }
-            workspace.onAnyTabSavedWithURL = { [weak sshService, weak timelineService] fileURL, updatedText in
+            workspace.onAnyTabSavedWithURL = { [weak sshService, weak timelineService, weak intelligence, weak workspace] fileURL, updatedText in
                 sshService?.syncSavedLocalMirrorIfNeeded(localURL: fileURL, content: updatedText)
                 timelineService?.recordSnapshot(for: fileURL, content: updatedText, label: "Auto-Save")
+                if let workspace {
+                    intelligence?.reindexWorkspaceFiles(workspace.flattenFiles(in: workspace.fileTree))
+                }
             }
             liveServer.start(
                 serving: workspace.rootURL,
                 keepAliveInBackground: preferences.keepServerInBackground
             )
+            intelligence.reindexWorkspaceFiles(workspace.flattenFiles(in: workspace.fileTree))
             refreshIntelligenceForActiveTab()
+        }
+        .onChange(of: workspace.fileTree) { _, updatedTree in
+            intelligence.reindexWorkspaceFiles(workspace.flattenFiles(in: updatedTree))
         }
         .onChange(of: workspace.activeTabID) { _, _ in
             intelligence.clearCompletions()
@@ -281,6 +289,23 @@ public struct MainIDEWorkspaceView: View {
                     palette: palette,
                     onSelectLine: { line in
                         triggerJumpToLine(line)
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showLanguagePickerSheet) {
+            if let activeTab = workspace.activeTab {
+                LanguageModePickerSheet(
+                    fileName: activeTab.title,
+                    autoDetectedLanguage: CodeLanguage.detect(
+                        from: activeTab.fileURL,
+                        contentSample: String(activeTab.content.prefix(1200))
+                    ),
+                    currentOverride: activeTab.languageOverride,
+                    palette: palette,
+                    onSelectOverride: { overrideLang in
+                        workspace.setLanguageOverrideForActiveTab(overrideLang)
+                        refreshIntelligenceForActiveTab()
                     }
                 )
             }
@@ -384,8 +409,8 @@ public struct MainIDEWorkspaceView: View {
                 }
             )
 
-            // Floating Live Autocomplete Suggestion Bar
-            if preferences.enableCodeCompletion && !intelligence.completions.isEmpty {
+            // Floating VS Code Smart IntelliSense & Parameter Signature Widget
+            if preferences.enableCodeCompletion && (!intelligence.completions.isEmpty || intelligence.activeSignatureHint != nil) {
                 liveAutocompleteFloatingBar(palette: palette)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 6)
@@ -394,66 +419,111 @@ public struct MainIDEWorkspaceView: View {
         }
     }
 
+    private func completionKindColor(_ kind: CompletionKind, palette: IDEColorPalette) -> Color {
+        switch kind {
+        case .emmet: return .orange
+        case .snippet: return Color(hex: palette.accent)
+        case .method, .function: return Color(hex: palette.function)
+        case .type: return Color(hex: palette.typeName)
+        case .property: return Color(hex: palette.property)
+        case .variable: return Color(hex: palette.variable)
+        case .keyword: return Color(hex: palette.keyword)
+        case .module: return Color(hex: palette.string)
+        }
+    }
+
     @ViewBuilder
     private func liveAutocompleteFloatingBar(palette: IDEColorPalette) -> some View {
-        HStack(spacing: 6) {
-            ScrollView(.horizontal, showsIndicators: false) {
+        VStack(alignment: .leading, spacing: 5) {
+            // 1. Live Function Parameter Signature Callout (when typing inside fn(...))
+            if let sig = intelligence.activeSignatureHint {
                 HStack(spacing: 6) {
-                    ForEach(Array(intelligence.completions.enumerated()), id: \.element.id) { idx, item in
+                    Image(systemName: "function")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundColor(Color(hex: palette.function))
+                    Text(sig)
+                        .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if intelligence.completions.isEmpty {
                         Button {
-                            applyCompletionCandidate(item)
+                            intelligence.clearCompletions()
                         } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: item.kind.systemIcon)
-                                    .symbolRenderingMode(.hierarchical)
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(Color(hex: palette.accent))
-
-                                Text(item.label)
-                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                    .foregroundColor(Color(hex: palette.foreground))
-
-                                Text(item.detail)
-                                    .font(.system(size: 10))
-                                    .foregroundColor(Color(hex: palette.gutterForeground))
-                                    .lineLimit(1)
-
-                                if idx == 0 {
-                                    Text("Tab")
-                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .background(Color(hex: palette.accent).opacity(0.22))
-                                        .foregroundColor(Color(hex: palette.accent))
-                                        .cornerRadius(3)
-                                }
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(Color(hex: palette.editorBackground))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7)
-                                    .stroke(idx == 0 ? Color(hex: palette.accent).opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1)
-                            )
-                            .cornerRadius(7)
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundColor(Color(hex: palette.gutterForeground))
                         }
-                        .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color(hex: palette.editorBackground).opacity(0.9))
+                .cornerRadius(6)
             }
 
-            Button {
-                intelligence.clearCompletions()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(Color(hex: palette.gutterForeground))
-                    .frame(width: 24, height: 24)
+            // 2. Fuzzy / CamelCase / Member Dot / Emmet Completion Strip
+            if !intelligence.completions.isEmpty {
+                HStack(spacing: 6) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(Array(intelligence.completions.enumerated()), id: \.element.id) { idx, item in
+                                Button {
+                                    applyCompletionCandidate(item)
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: item.kind.systemIcon)
+                                            .symbolRenderingMode(.hierarchical)
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(completionKindColor(item.kind, palette: palette))
+
+                                        Text(item.label)
+                                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                            .foregroundColor(Color(hex: palette.foreground))
+
+                                        Text(item.detail)
+                                            .font(.system(size: 10))
+                                            .foregroundColor(Color(hex: palette.gutterForeground))
+                                            .lineLimit(1)
+
+                                        if idx == 0 {
+                                            Text("Tab")
+                                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                .padding(.horizontal, 4)
+                                                .padding(.vertical, 1)
+                                                .background(Color(hex: palette.accent).opacity(0.22))
+                                                .foregroundColor(Color(hex: palette.accent))
+                                                .cornerRadius(3)
+                                        }
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(Color(hex: palette.editorBackground))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 7)
+                                            .stroke(idx == 0 ? Color(hex: palette.accent).opacity(0.8) : Color.white.opacity(0.08), lineWidth: 1)
+                                    )
+                                    .cornerRadius(7)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    Button {
+                        intelligence.clearCompletions()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Color(hex: palette.gutterForeground))
+                            .frame(width: 24, height: 24)
+                    }
+                }
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Color(hex: palette.headerBackground).opacity(0.96))
+        .background(Color(hex: palette.headerBackground).opacity(0.97))
         .overlay(
             RoundedRectangle(cornerRadius: 9)
                 .stroke(Color(hex: palette.currentLineBackground), lineWidth: 1)
@@ -462,12 +532,12 @@ public struct MainIDEWorkspaceView: View {
         .shadow(color: .black.opacity(0.32), radius: 8, x: 0, y: 3)
     }
 
-    // MARK: - Slim Sub-Toolbar (Breadcrumbs + Outline + Inline Diagnostics Pill + Quick Toggles + Markdown/Timeline)
+    // MARK: - Slim Sub-Toolbar (Breadcrumbs + Language Mode + Format + Quick Toggles + Diagnostics + Timeline)
     @ViewBuilder
     private func editorSubToolbar(activeTab: OpenTab, palette: IDEColorPalette) -> some View {
-        if preferences.showBreadcrumbs || activeTab.language == .markdown || !intelligence.diagnostics.isEmpty {
-            HStack(spacing: 8) {
-                // 1. Breadcrumb & Symbol Outline Trigger
+        HStack(spacing: 6) {
+            // 1. Breadcrumb & Symbol Outline Trigger
+            if preferences.showBreadcrumbs {
                 Button {
                     showSymbolOutlineSheet = true
                 } label: {
@@ -493,105 +563,141 @@ public struct MainIDEWorkspaceView: View {
                     }
                 }
                 .buttonStyle(.plain)
+            }
 
-                Spacer(minLength: 4)
+            Spacer(minLength: 4)
 
-                // 2. Markdown & Mermaid Live Preview Mode Picker
-                if activeTab.language == .markdown {
-                    HStack(spacing: 2) {
-                        ForEach(MarkdownDisplayMode.allCases) { mode in
-                            Button {
-                                markdownMode = mode
-                            } label: {
-                                Text(mode.rawValue)
-                                    .font(.system(size: 9.5, weight: markdownMode == mode ? .bold : .regular))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(markdownMode == mode ? Color(hex: palette.accent) : Color.clear)
-                                    .foregroundColor(markdownMode == mode ? .white : Color(hex: palette.gutterForeground))
-                                    .cornerRadius(4)
-                            }
+            // 2. Markdown & Mermaid Live Preview Mode Picker
+            if activeTab.language == .markdown {
+                HStack(spacing: 2) {
+                    ForEach(MarkdownDisplayMode.allCases) { mode in
+                        Button {
+                            markdownMode = mode
+                        } label: {
+                            Text(mode.rawValue)
+                                .font(.system(size: 9.5, weight: markdownMode == mode ? .bold : .regular))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(markdownMode == mode ? Color(hex: palette.accent) : Color.clear)
+                                .foregroundColor(markdownMode == mode ? .white : Color(hex: palette.gutterForeground))
+                                .cornerRadius(4)
                         }
                     }
-                    .padding(1)
-                    .background(Color(hex: palette.currentLineBackground))
-                    .cornerRadius(5)
                 }
+                .padding(1)
+                .background(Color(hex: palette.currentLineBackground))
+                .cornerRadius(5)
+            }
 
-                // 3. Quick Autocomplete Status Pill (1-Tap Toggle)
-                Button {
-                    preferences.enableCodeCompletion.toggle()
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "text.cursor")
-                            .font(.system(size: 9.5, weight: .semibold))
-                        Text(preferences.enableCodeCompletion ? "Gợi ý: ON" : "Gợi ý: OFF")
-                            .font(.system(size: 9.5, weight: .semibold))
+            // 3. VS Code Language Mode Selector Badge (64 Languages + Auto-Detect)
+            Button {
+                showLanguagePickerSheet = true
+            } label: {
+                HStack(spacing: 3) {
+                    FileLanguageIconView(language: activeTab.language, size: 9.5)
+                    Text(activeTab.language.shortBadgeName)
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color(hex: palette.currentLineBackground))
+                .foregroundColor(Color(hex: palette.foreground))
+                .cornerRadius(4)
+            }
+            .buttonStyle(.plain)
+
+            // 4. 1-Tap Format Code Button
+            Button {
+                formatActiveFile()
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "text.alignleft")
+                        .font(.system(size: 9.5, weight: .semibold))
+                    Text("Format")
+                        .font(.system(size: 9.5, weight: .semibold))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color(hex: palette.currentLineBackground))
+                .foregroundColor(Color(hex: palette.foreground))
+                .cornerRadius(4)
+            }
+            .buttonStyle(.plain)
+
+            // 5. Quick Smart Autocomplete Status Pill (1-Tap Toggle)
+            Button {
+                preferences.enableCodeCompletion.toggle()
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "text.cursor")
+                        .font(.system(size: 9.5, weight: .semibold))
+                    Text(preferences.enableCodeCompletion ? "Gợi ý: ON" : "Gợi ý: OFF")
+                        .font(.system(size: 9.5, weight: .semibold))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(preferences.enableCodeCompletion ? Color(hex: palette.accent).opacity(0.16) : Color(hex: palette.currentLineBackground))
+                .foregroundColor(preferences.enableCodeCompletion ? Color(hex: palette.accent) : Color(hex: palette.gutterForeground))
+                .cornerRadius(4)
+            }
+
+            // 6. Inline Error / Warning Status Pill (Tap opens Problems or jumps to error)
+            Button {
+                if !preferences.enableLiveDiagnostics {
+                    preferences.enableLiveDiagnostics = true
+                } else {
+                    bottomTab = .problems
+                    withAnimation { showBottomPanel = true }
+                    if let firstDiag = intelligence.diagnostics.first {
+                        triggerJumpToLine(firstDiag.line)
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(preferences.enableCodeCompletion ? Color(hex: palette.accent).opacity(0.16) : Color(hex: palette.currentLineBackground))
-                    .foregroundColor(preferences.enableCodeCompletion ? Color(hex: palette.accent) : Color(hex: palette.gutterForeground))
-                    .cornerRadius(4)
                 }
-
-                // 4. Inline Error / Warning Status Pill (Tap opens Problems or jumps to error)
-                Button {
+            } label: {
+                HStack(spacing: 3) {
                     if !preferences.enableLiveDiagnostics {
-                        preferences.enableLiveDiagnostics = true
+                        Image(systemName: "eye.slash")
+                            .font(.system(size: 9.5))
+                        Text("Báo lỗi: OFF")
+                            .font(.system(size: 9.5, weight: .semibold))
+                    } else if intelligence.errorCount > 0 {
+                        Image(systemName: "xmark.octagon")
+                            .font(.system(size: 9.5, weight: .bold))
+                        Text("\(intelligence.errorCount) lỗi")
+                            .font(.system(size: 9.5, weight: .bold))
+                    } else if intelligence.warningCount > 0 {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 9.5, weight: .bold))
+                        Text("\(intelligence.warningCount) cảnh báo")
+                            .font(.system(size: 9.5, weight: .bold))
                     } else {
-                        bottomTab = .problems
-                        withAnimation { showBottomPanel = true }
-                        if let firstDiag = intelligence.diagnostics.first {
-                            triggerJumpToLine(firstDiag.line)
-                        }
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text("0 lỗi")
+                            .font(.system(size: 9.5, weight: .semibold))
                     }
-                } label: {
-                    HStack(spacing: 3) {
-                        if !preferences.enableLiveDiagnostics {
-                            Image(systemName: "eye.slash")
-                                .font(.system(size: 9.5))
-                            Text("Báo lỗi: OFF")
-                                .font(.system(size: 9.5, weight: .semibold))
-                        } else if intelligence.errorCount > 0 {
-                            Image(systemName: "xmark.octagon")
-                                .font(.system(size: 9.5, weight: .bold))
-                            Text("\(intelligence.errorCount) lỗi")
-                                .font(.system(size: 9.5, weight: .bold))
-                        } else if intelligence.warningCount > 0 {
-                            Image(systemName: "exclamationmark.triangle")
-                                .font(.system(size: 9.5, weight: .bold))
-                            Text("\(intelligence.warningCount) cảnh báo")
-                                .font(.system(size: 9.5, weight: .bold))
-                        } else {
-                            Image(systemName: "checkmark.circle")
-                                .font(.system(size: 9.5, weight: .semibold))
-                            Text("0 lỗi")
-                                .font(.system(size: 9.5, weight: .semibold))
-                        }
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(diagnosticPillBackground(palette: palette))
-                    .foregroundColor(diagnosticPillForeground(palette: palette))
-                    .cornerRadius(4)
                 }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(diagnosticPillBackground(palette: palette))
+                .foregroundColor(diagnosticPillForeground(palette: palette))
+                .cornerRadius(4)
+            }
 
-                // 5. Local File Version Timeline Button
-                Button {
-                    showTimelineSheet = true
-                } label: {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Color(hex: palette.gutterForeground))
-                }
+            // 7. Local File Version Timeline Button
+            Button {
+                showTimelineSheet = true
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Color(hex: palette.gutterForeground))
             }
-            .padding(.horizontal, 10)
-            .frame(height: 25)
-            .background(Color(hex: palette.sidebarBackground))
-            .overlay(alignment: .bottom) {
-                Divider().overlay(Color.white.opacity(0.06))
-            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 25)
+        .background(Color(hex: palette.sidebarBackground))
+        .overlay(alignment: .bottom) {
+            Divider().overlay(Color.white.opacity(0.06))
         }
     }
 
@@ -725,17 +831,27 @@ public struct MainIDEWorkspaceView: View {
                 Divider()
 
                 Toggle(isOn: $preferences.enableCodeCompletion) {
-                    Label("Gợi ý Code tự động (Autocomplete)", systemImage: "text.cursor")
+                    Label("Gợi ý Code thông minh (Smart IntelliSense)", systemImage: "text.cursor")
                 }
 
                 Toggle(isOn: $preferences.enableLiveDiagnostics) {
                     Label("Báo lỗi trực tiếp trên Editor", systemImage: "exclamationmark.triangle")
                 }
 
+                Toggle(isOn: $preferences.formatOnSave) {
+                    Label("Tự động Format khi Lưu / Chạy", systemImage: "arrow.triangle.2.circlepath")
+                }
+
+                Button {
+                    showLanguagePickerSheet = true
+                } label: {
+                    Label("Chọn Ngôn ngữ (\(workspace.activeTab?.language.shortBadgeName ?? "Auto"))", systemImage: "chevron.left.forwardslash.chevron.right")
+                }
+
                 Button {
                     formatActiveFile()
                 } label: {
-                    Label("Format Document (Làm đẹp Code)", systemImage: "text.alignleft")
+                    Label("Format Document theo Ngôn ngữ", systemImage: "text.alignleft")
                 }
 
                 Divider()
@@ -905,11 +1021,13 @@ public struct MainIDEWorkspaceView: View {
 
     // MARK: - Actions & Intelligence Wiring
     private func applyCompletionCandidate(_ item: CompletionCandidate) {
+        intelligence.recordAcceptedCompletion(item.label)
         let nextToken = (completionRequest?.token ?? 0) + 1
         completionRequest = CompletionReplacementRequest(
             token: nextToken,
             range: item.replaceRange,
-            replacement: item.insertText
+            replacement: item.insertText,
+            cursorOffset: item.cursorOffsetInInsert
         )
         intelligence.clearCompletions()
     }
@@ -936,11 +1054,41 @@ public struct MainIDEWorkspaceView: View {
         )
     }
 
+    private func applyFormatOnSaveIfEnabled() {
+        guard preferences.formatOnSave, let active = workspace.activeTab else { return }
+        let formatted = CodeFormatterService.formatOfflineSynchronously(
+            active.content,
+            language: active.language,
+            tabWidth: preferences.tabWidth
+        )
+        if formatted != active.content {
+            workspace.updateActiveContent(formatted, autoSave: true)
+        }
+        if sshService.isConnected {
+            let tabURL = active.fileURL
+            let lang = active.language
+            let width = preferences.tabWidth
+            Task {
+                let remoteFormatted = await CodeFormatterService.format(
+                    formatted,
+                    language: lang,
+                    tabWidth: width,
+                    sshService: sshService
+                )
+                if workspace.activeTab?.fileURL == tabURL && remoteFormatted != workspace.activeTab?.content {
+                    workspace.updateActiveContent(remoteFormatted, autoSave: true)
+                }
+            }
+        }
+    }
+
     private func saveActiveTabWithCheckpoint() {
+        applyFormatOnSaveIfEnabled()
         workspace.saveActiveTab()
         if let active = workspace.activeTab {
             timelineService.recordSnapshot(for: active.fileURL, content: active.content, label: "Saved")
         }
+        refreshIntelligenceForActiveTab()
     }
 
     private func exportWorkspaceAsZipAndShare() {
@@ -974,6 +1122,7 @@ public struct MainIDEWorkspaceView: View {
     }
 
     private func triggerSmartRun() {
+        applyFormatOnSaveIfEnabled()
         workspace.saveActiveTab()
         guard let active = workspace.activeTab else { return }
 
@@ -982,7 +1131,7 @@ public struct MainIDEWorkspaceView: View {
             return
         }
 
-        if active.language == .html || active.language == .css {
+        if active.language == .html || active.language == .css || active.language == .scss {
             if !liveServer.isRunning {
                 liveServer.start(serving: workspace.rootURL, keepAliveInBackground: preferences.keepServerInBackground)
             } else {
@@ -1002,14 +1151,16 @@ public struct MainIDEWorkspaceView: View {
     private func formatActiveFile() {
         guard let active = workspace.activeTab else { return }
         Task {
-            let formatted = await ExtensionStoreService.formatCode(
+            let formatted = await CodeFormatterService.format(
                 active.content,
                 language: active.language,
                 tabWidth: preferences.tabWidth,
                 sshService: sshService
             )
-            workspace.updateActiveContent(formatted, autoSave: preferences.enableAutoSave)
-            refreshIntelligenceForActiveTab()
+            if formatted != active.content {
+                workspace.updateActiveContent(formatted, autoSave: preferences.enableAutoSave)
+                refreshIntelligenceForActiveTab()
+            }
         }
     }
 
@@ -1057,7 +1208,13 @@ public struct MainIDEWorkspaceView: View {
             ("Open Theme Studio (Customize Code & App Colors)", "slider.horizontal.below.square.filled.and.square", {
                 showThemeStudioDirect = true
             }),
-            ("Format Document (clang-format / prettier / built-in)", "text.alignleft", { formatActiveFile() }),
+            ("Select Language Mode (64 Languages / Auto-Detect)", "chevron.left.forwardslash.chevron.right", {
+                showLanguagePickerSheet = true
+            }),
+            ("Format Document by Language (Cmd+Shift+F)", "text.alignleft", { formatActiveFile() }),
+            ("Toggle Auto-Format on Save & Run (\(preferences.formatOnSave ? "ON" : "OFF"))", "arrow.triangle.2.circlepath", {
+                preferences.formatOnSave.toggle()
+            }),
             ("Show Problems & Inline Diagnostics", "checklist", { checkSyntaxAndLSPDiagnostics() }),
             ("Export Project Workspace as .zip", "doc.zipper", { exportWorkspaceAsZipAndShare() }),
             ("Open Live Server localhost:\(liveServer.port) in Safari", "safari", {

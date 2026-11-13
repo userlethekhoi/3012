@@ -265,6 +265,12 @@ public final class WorkspaceManager: ObservableObject {
         openTabs[idx].selectedRangeLength = range.length
     }
 
+    public func setLanguageOverrideForActiveTab(_ overrideLanguage: CodeLanguage?) {
+        guard let activeTabID,
+              let idx = openTabs.firstIndex(where: { $0.id == activeTabID }) else { return }
+        openTabs[idx].languageOverride = overrideLanguage
+    }
+
     public func selectedSnippetInActiveTab() -> String? {
         guard let tab = activeTab, tab.selectedRangeLength > 0 else { return nil }
         let ns = tab.content as NSString

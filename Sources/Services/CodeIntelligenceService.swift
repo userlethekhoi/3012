@@ -3,19 +3,29 @@ import UIKit
 import JavaScriptCore
 import Runestone
 
-// MARK: - 1. Autocomplete Models
+// MARK: - 1. VS Code-Grade IntelliSense Models
 public enum CompletionKind: String {
+    case emmet = "Emmet"
     case snippet = "Snippet"
-    case symbol = "Symbol"
+    case method = "Method"
+    case function = "Function"
+    case type = "Type"
+    case property = "Property"
+    case variable = "Symbol"
     case keyword = "Keyword"
-    case stdlib = "Stdlib"
+    case module = "Header"
 
     public var systemIcon: String {
         switch self {
+        case .emmet: return "chevron.left.forwardslash.chevron.right"
         case .snippet: return "text.badge.plus"
-        case .symbol: return "cube"
-        case .keyword: return "chevron.left.forwardslash.chevron.right"
-        case .stdlib: return "function"
+        case .method: return "cube.transparent"
+        case .function: return "function"
+        case .type: return "cube"
+        case .property: return "slider.horizontal.3"
+        case .variable: return "character.textbox"
+        case .keyword: return "command"
+        case .module: return "shippingbox"
         }
     }
 }
@@ -24,23 +34,35 @@ public struct CompletionCandidate: Identifiable, Equatable {
     public let id: String
     public let label: String
     public let insertText: String
+    public let cursorOffsetInInsert: Int?
     public let detail: String
     public let kind: CompletionKind
     public let replaceRange: NSRange
+    public let score: Int
 
     public init(
         label: String,
-        insertText: String,
+        rawTemplate: String,
         detail: String,
         kind: CompletionKind,
-        replaceRange: NSRange
+        replaceRange: NSRange,
+        score: Int = 500
     ) {
-        self.id = "\(kind.rawValue)-\(label)"
+        self.id = "\(kind.rawValue)-\(label)-\(detail)"
         self.label = label
-        self.insertText = insertText
+        if let markerRange = rawTemplate.range(of: "$0") {
+            let prefixStr = String(rawTemplate[..<markerRange.lowerBound])
+            let cursorUTF16 = (prefixStr as NSString).length
+            self.insertText = rawTemplate.replacingOccurrences(of: "$0", with: "")
+            self.cursorOffsetInInsert = cursorUTF16
+        } else {
+            self.insertText = rawTemplate
+            self.cursorOffsetInInsert = nil
+        }
         self.detail = detail
         self.kind = kind
         self.replaceRange = replaceRange
+        self.score = score
     }
 }
 
@@ -75,18 +97,20 @@ public struct EditorDiagnostic: Identifiable, Equatable {
     }
 }
 
-// MARK: - 3. Symbol Outline & Breadcrumb Models
+// MARK: - 3. Symbol Outline & Cross-File Signature Models
 public struct DocumentSymbolItem: Identifiable, Equatable {
     public let id: String
     public let name: String
+    public let signature: String
     public let detail: String
     public let systemIcon: String
-    public let line: Int        // 1-based line
+    public let line: Int
     public let range: NSRange
 
-    public init(name: String, detail: String, systemIcon: String, line: Int, range: NSRange) {
+    public init(name: String, signature: String = "", detail: String, systemIcon: String, line: Int, range: NSRange) {
         self.id = "\(line)-\(name)"
         self.name = name
+        self.signature = signature.isEmpty ? name : signature
         self.detail = detail
         self.systemIcon = systemIcon
         self.line = line
@@ -94,15 +118,25 @@ public struct DocumentSymbolItem: Identifiable, Equatable {
     }
 }
 
-// MARK: - 4. Code Intelligence Service
+public struct WorkspaceIndexedSymbol: Equatable {
+    public let name: String
+    public let signature: String
+    public let kind: CompletionKind
+    public let fileName: String
+}
+
+// MARK: - 4. Smart Code Intelligence Service
 @MainActor
 public final class CodeIntelligenceService: ObservableObject {
     @Published public var completions: [CompletionCandidate] = []
+    @Published public var activeSignatureHint: String? = nil
     @Published public var diagnostics: [EditorDiagnostic] = []
     @Published public var symbols: [DocumentSymbolItem] = []
     @Published public var activeBreadcrumbSymbol: String? = nil
 
     private var diagnosticsTask: Task<Void, Never>?
+    private var workspaceSymbols: [WorkspaceIndexedSymbol] = []
+    private var recentAcceptedLabels: [String] = []
 
     public init() {}
 
@@ -112,6 +146,14 @@ public final class CodeIntelligenceService: ObservableObject {
 
     public var warningCount: Int {
         diagnostics.filter { $0.severity == .warning }.count
+    }
+
+    public func recordAcceptedCompletion(_ label: String) {
+        recentAcceptedLabels.removeAll { $0 == label }
+        recentAcceptedLabels.insert(label, at: 0)
+        if recentAcceptedLabels.count > 30 {
+            recentAcceptedLabels.removeLast()
+        }
     }
 
     public func makeRunestoneHighlightedRanges(enabled: Bool) -> [HighlightedRange] {
@@ -130,7 +172,37 @@ public final class CodeIntelligenceService: ObservableObject {
         }
     }
 
-    // MARK: - Live Code Completion
+    // MARK: - Cross-File Workspace Symbol & Signature Indexer
+    public func reindexWorkspaceFiles(_ fileURLs: [URL]) {
+        let urls = Array(fileURLs.prefix(80))
+        Task.detached(priority: .utility) {
+            var collected: [WorkspaceIndexedSymbol] = []
+            var seen = Set<String>()
+            for url in urls {
+                guard let content = try? String(contentsOf: url, encoding: .utf8) else { continue }
+                let lang = CodeLanguage.detect(from: url, contentSample: String(content.prefix(600)))
+                let docSyms = CodeIntelligenceService.extractSymbols(from: content, language: lang)
+                let fName = url.lastPathComponent
+                for s in docSyms {
+                    let key = "\(s.name)|\(fName)"
+                    if seen.insert(key).inserted {
+                        let k: CompletionKind = s.systemIcon == "function" ? .function : .type
+                        collected.append(WorkspaceIndexedSymbol(
+                            name: s.name,
+                            signature: s.signature,
+                            kind: k,
+                            fileName: fName
+                        ))
+                    }
+                }
+            }
+            await MainActor.run { [weak self] in
+                self?.workspaceSymbols = collected
+            }
+        }
+    }
+
+    // MARK: - Smart VS Code IntelliSense (Fuzzy + CamelCase + Member Dot/Scope + Emmet + Signature Hints)
     public func updateCompletions(
         in text: String,
         selectedRange: NSRange,
@@ -139,23 +211,93 @@ public final class CodeIntelligenceService: ObservableObject {
         enabled: Bool
     ) {
         guard enabled, selectedRange.length == 0 else {
-            if !completions.isEmpty { completions = [] }
+            clearCompletions()
             return
         }
         let nsText = text as NSString
         let cursor = min(max(0, selectedRange.location), nsText.length)
         guard cursor > 0 else {
-            if !completions.isEmpty { completions = [] }
+            clearCompletions()
             return
         }
 
-        // Scan backwards for identifier prefix ([A-Za-z0-9_#@<!])
+        // Update Live Function Parameter Signature Help
+        updateSignatureHelp(nsText: nsText, cursor: cursor)
+
+        let lineRange = nsText.lineRange(for: NSRange(location: cursor, length: 0))
+        let linePrefix = nsText.substring(with: NSRange(location: lineRange.location, length: cursor - lineRange.location))
+
+        // 1. Check C/C++ #include <header> context
+        if (language == .c || language == .cpp || language == .objectiveC),
+           let incMatch = linePrefix.range(of: #"#include\s*[<"][A-Za-z0-9_./]*$"#, options: .regularExpression) {
+            let fullMatch = String(linePrefix[incMatch])
+            let headerQuery: String
+            if let openIdx = fullMatch.lastIndex(where: { $0 == "<" || $0 == "\"" }) {
+                headerQuery = String(fullMatch[fullMatch.index(after: openIdx)...])
+            } else {
+                headerQuery = ""
+            }
+            let repRange = NSRange(location: cursor - (headerQuery as NSString).length, length: (headerQuery as NSString).length)
+            let headers = [
+                "iostream", "vector", "string", "algorithm", "unordered_map", "unordered_set",
+                "map", "set", "queue", "stack", "deque", "cmath", "numeric", "memory",
+                "functional", "iomanip", "sstream", "fstream", "optional", "variant",
+                "bits/stdc++.h", "stdio.h", "stdlib.h", "stdint.h", "stdbool.h", "string.h"
+            ]
+            completions = headers.compactMap { h -> CompletionCandidate? in
+                guard headerQuery.isEmpty || Self.fuzzyScore(query: headerQuery, candidate: h) > 0 else { return nil }
+                let closing = fullMatch.contains("<") ? ">" : "\""
+                return CompletionCandidate(
+                    label: h,
+                    rawTemplate: "\(h)\(closing)$0",
+                    detail: "Standard Header",
+                    kind: .module,
+                    replaceRange: repRange,
+                    score: 1000
+                )
+            }
+            return
+        }
+
+        // 2. Check HTML / JSX / TSX / Vue / Svelte Emmet Abbreviation (e.g. div.card, ul>li*3, button#submit, !)
+        if [.html, .tsx, .vue, .svelte, .astro].contains(language) {
+            if let emmet = Self.tryExpandEmmet(linePrefix: linePrefix, cursor: cursor) {
+                completions = [emmet]
+                return
+            }
+        }
+
+        // 3. Check Member Access Trigger (`.` or `->` or `::`)
+        if let memberCtx = Self.extractMemberAccessContext(linePrefix: linePrefix, cursor: cursor) {
+            let memberItems = Self.memberCatalog(receiver: memberCtx.receiver, accessor: memberCtx.accessor, language: language)
+            var matched: [CompletionCandidate] = []
+            for item in memberItems {
+                let sc = memberCtx.memberPrefix.isEmpty ? 950 : Self.fuzzyScore(query: memberCtx.memberPrefix, candidate: item.label)
+                if sc > 0 {
+                    matched.append(CompletionCandidate(
+                        label: item.label,
+                        rawTemplate: item.template,
+                        detail: item.detail,
+                        kind: item.kind,
+                        replaceRange: memberCtx.replaceRange,
+                        score: sc
+                    ))
+                }
+            }
+            if !matched.isEmpty {
+                matched.sort { $0.score > $1.score }
+                completions = Array(matched.prefix(10))
+                return
+            }
+        }
+
+        // 4. General Identifier / Keyword / Fuzzy Subsequence / CamelCase Scan
         var start = cursor
         while start > 0 {
             let ch = nsText.character(at: start - 1)
             guard let scalar = UnicodeScalar(ch) else { break }
             let isIdent = CharacterSet.alphanumerics.contains(scalar)
-                || scalar == "_" || scalar == "#" || scalar == "@" || scalar == ":"
+                || scalar == "_" || scalar == "#" || scalar == "@" || scalar == "$"
             if isIdent {
                 start -= 1
             } else {
@@ -164,92 +306,415 @@ public final class CodeIntelligenceService: ObservableObject {
         }
 
         let prefixLen = cursor - start
-        guard prefixLen >= 2 else {
+        let triggersOnSingleChar = (prefixLen == 1 && ["#", "@", "$"].contains(nsText.substring(with: NSRange(location: start, length: 1))))
+        guard prefixLen >= 1 && (prefixLen >= 2 || triggersOnSingleChar) else {
             if !completions.isEmpty { completions = [] }
             return
         }
 
         let replaceRange = NSRange(location: start, length: prefixLen)
         let prefix = nsText.substring(with: replaceRange)
-        let lowerPrefix = prefix.lowercased()
 
         var results: [CompletionCandidate] = []
         var seenLabels = Set<String>()
 
-        // 1. Matching Snippets
-        for snip in snippets where (snip.language == "all" || snip.language.lowercased() == language.defaultExtension || snip.language.lowercased() == language.rawValue.lowercased()) {
-            if snip.prefix.lowercased().hasPrefix(lowerPrefix), snip.prefix != prefix {
-                if seenLabels.insert(snip.prefix).inserted {
-                    results.append(CompletionCandidate(
-                        label: snip.prefix,
-                        insertText: snip.body,
-                        detail: snip.title,
-                        kind: .snippet,
-                        replaceRange: replaceRange
-                    ))
-                }
-            }
+        func addCandidate(label: String, template: String, detail: String, kind: CompletionKind, bonus: Int = 0) {
+            guard label != prefix else { return }
+            let baseScore = Self.fuzzyScore(query: prefix, candidate: label)
+            guard baseScore > 0 else { return }
+            guard seenLabels.insert(label).inserted else { return }
+            let recencyBonus = recentAcceptedLabels.contains(label) ? 140 : 0
+            results.append(CompletionCandidate(
+                label: label,
+                rawTemplate: template,
+                detail: detail,
+                kind: kind,
+                replaceRange: replaceRange,
+                score: baseScore + bonus + recencyBonus
+            ))
         }
 
-        // 2. Symbols / Identifiers in Current Document
-        let identRegex = try? NSRegularExpression(pattern: #"\b[A-Za-z_][A-Za-z0-9_]{2,}\b"#)
-        if let identRegex {
-            let matches = identRegex.matches(in: text, range: NSRange(location: 0, length: min(nsText.length, 60_000)))
+        // A. Built-in & OpenVSX Snippets
+        for snip in snippets where (snip.language == "all" || snip.language.lowercased() == language.defaultExtension.lowercased() || snip.language.lowercased() == language.rawValue.lowercased()) {
+            addCandidate(label: snip.prefix, template: snip.body, detail: snip.title, kind: .snippet, bonus: 90)
+        }
+
+        // B. Smart Language Templates, Keywords & Stdlib APIs
+        for entry in Self.smartLanguageCatalog(for: language) {
+            addCandidate(label: entry.label, template: entry.template, detail: entry.detail, kind: entry.kind, bonus: entry.kind == .snippet ? 60 : 25)
+        }
+
+        // C. Current File Symbols with Exact Signatures
+        for sym in symbols {
+            let tpl = sym.systemIcon == "function" ? "\(sym.name)($0)" : sym.name
+            let k: CompletionKind = sym.systemIcon == "function" ? .function : .type
+            addCandidate(label: sym.name, template: tpl, detail: sym.signature, kind: k, bonus: 75)
+        }
+
+        // D. Cross-File Workspace Symbols
+        for wSym in workspaceSymbols {
+            let tpl = wSym.kind == .function ? "\(wSym.name)($0)" : wSym.name
+            addCandidate(label: wSym.name, template: tpl, detail: "\(wSym.signature) • \(wSym.fileName)", kind: wSym.kind, bonus: 45)
+        }
+
+        // E. Identifiers in Active Buffer (Variables, Parameters, Local Names)
+        if let identRegex = try? NSRegularExpression(pattern: #"\b[A-Za-z_][A-Za-z0-9_]{2,}\b"#) {
+            let scanLen = min(nsText.length, 75_000)
+            let matches = identRegex.matches(in: text, range: NSRange(location: 0, length: scanLen))
             for m in matches {
                 let word = nsText.substring(with: m.range)
-                if word != prefix && word.lowercased().hasPrefix(lowerPrefix) {
-                    if seenLabels.insert(word).inserted {
-                        results.append(CompletionCandidate(
-                            label: word,
-                            insertText: word,
-                            detail: "Workspace Symbol",
-                            kind: .symbol,
-                            replaceRange: replaceRange
-                        ))
-                    }
-                }
-                if results.count >= 24 { break }
+                addCandidate(label: word, template: word, detail: "Local Identifier", kind: .variable, bonus: 35)
+                if results.count >= 45 { break }
             }
         }
 
-        // 3. Language Keywords & Stdlib APIs
-        for (kw, detail, isStdlib) in Self.languageCatalog(for: language) {
-            if kw != prefix && kw.lowercased().hasPrefix(lowerPrefix) {
-                if seenLabels.insert(kw).inserted {
-                    let insertion: String
-                    if language == .html && !kw.hasPrefix("<") && detail == "HTML Tag" {
-                        insertion = "<\(kw)></\(kw)>"
-                    } else {
-                        insertion = kw
-                    }
-                    results.append(CompletionCandidate(
-                        label: kw,
-                        insertText: insertion,
-                        detail: detail,
-                        kind: isStdlib ? .stdlib : .keyword,
-                        replaceRange: replaceRange
-                    ))
-                }
-            }
-        }
-
-        // Sort exact case-prefix matches first, then shorter labels
         results.sort { a, b in
-            let aExact = a.label.hasPrefix(prefix)
-            let bExact = b.label.hasPrefix(prefix)
-            if aExact != bExact { return aExact && !bExact }
-            if a.kind != b.kind && (a.kind == .snippet || b.kind == .snippet) {
-                return a.kind == .snippet
-            }
+            if a.score != b.score { return a.score > b.score }
             return a.label.count < b.label.count
         }
 
-        completions = Array(results.prefix(8))
+        completions = Array(results.prefix(10))
     }
 
     public func clearCompletions() {
-        if !completions.isEmpty {
-            completions = []
+        if !completions.isEmpty { completions = [] }
+        if activeSignatureHint != nil { activeSignatureHint = nil }
+    }
+
+    // MARK: - Live Parameter Signature Hint (VS Code Parameter Callout)
+    private func updateSignatureHelp(nsText: NSString, cursor: Int) {
+        let lookbackStart = max(0, cursor - 160)
+        let slice = nsText.substring(with: NSRange(location: lookbackStart, length: cursor - lookbackStart))
+        // Walk backwards to find an unclosed '('
+        var parenDepth = 0
+        let chars = Array(slice)
+        var openParenIdx: Int? = nil
+        for i in stride(from: chars.count - 1, through: 0, by: -1) {
+            let c = chars[i]
+            if c == ")" { parenDepth += 1 }
+            else if c == "(" {
+                if parenDepth == 0 {
+                    openParenIdx = i
+                    break
+                } else {
+                    parenDepth -= 1
+                }
+            } else if c == ";" || c == "{" || c == "}" {
+                break
+            }
+        }
+        guard let pIdx = openParenIdx, pIdx > 0 else {
+            activeSignatureHint = nil
+            return
+        }
+        var nameStart = pIdx
+        while nameStart > 0 && (chars[nameStart - 1].isLetter || chars[nameStart - 1].isNumber || chars[nameStart - 1] == "_") {
+            nameStart -= 1
+        }
+        let fnName = String(chars[nameStart..<pIdx])
+        guard !fnName.isEmpty, !["if", "for", "while", "switch", "catch"].contains(fnName) else {
+            activeSignatureHint = nil
+            return
+        }
+        if let localMatch = symbols.first(where: { $0.name == fnName }) {
+            activeSignatureHint = localMatch.signature
+        } else if let wsMatch = workspaceSymbols.first(where: { $0.name == fnName }) {
+            activeSignatureHint = "\(wsMatch.signature)  [\(wsMatch.fileName)]"
+        } else {
+            activeSignatureHint = nil
+        }
+    }
+
+    // MARK: - VS Code Fuzzy & CamelCase Subsequence Scorer
+    public static func fuzzyScore(query: String, candidate: String) -> Int {
+        guard !query.isEmpty else { return 500 }
+        if candidate == query { return 0 }
+        let qLower = query.lowercased()
+        let cLower = candidate.lowercased()
+
+        // 1. Exact Case Prefix
+        if candidate.hasPrefix(query) {
+            return 1200 - min(candidate.count, 60)
+        }
+        // 2. Case-Insensitive Prefix
+        if cLower.hasPrefix(qLower) {
+            return 1080 - min(candidate.count, 60)
+        }
+        // 3. Suffix after namespace/dot (e.g. "cout" matches "std::cout")
+        if let sep = cLower.lastIndex(where: { $0 == ":" || $0 == "." }),
+           cLower[cLower.index(after: sep)...].hasPrefix(qLower) {
+            return 1020 - min(candidate.count, 60)
+        }
+
+        // 4. CamelCase / snake_case Acronym & Boundary Subsequence Match
+        let qChars = Array(qLower)
+        let origChars = Array(candidate)
+        let cChars = Array(cLower)
+        var qIdx = 0
+        var boundaryHits = 0
+        var consecutiveHits = 0
+        var lastMatchIdx = -2
+
+        for (cIdx, ch) in cChars.enumerated() {
+            if qIdx < qChars.count && ch == qChars[qIdx] {
+                let isBoundary = (cIdx == 0)
+                    || origChars[cIdx].isUppercase
+                    || (cIdx > 0 && ["_", ".", ":", "-"].contains(origChars[cIdx - 1]))
+                if isBoundary { boundaryHits += 1 }
+                if cIdx == lastMatchIdx + 1 { consecutiveHits += 1 }
+                lastMatchIdx = cIdx
+                qIdx += 1
+            }
+        }
+
+        guard qIdx == qChars.count else { return 0 }
+
+        if boundaryHits == qChars.count {
+            // Pure camelCase / snake_case acronym match like "gEBI" -> "getElementById" or "pb" -> "push_back"
+            return 940 - min(candidate.count, 60)
+        }
+        if cLower.contains(qLower) {
+            return 800 - min(candidate.count, 60)
+        }
+        // Require at least half the characters to be boundary or consecutive to avoid noisy matches
+        if boundaryHits + consecutiveHits >= max(1, qChars.count - 1) {
+            return 640 + (boundaryHits * 25) + (consecutiveHits * 15) - min(candidate.count, 60)
+        }
+        return 0
+    }
+
+    // MARK: - Emmet HTML / JSX Abbreviation Expander
+    private static func tryExpandEmmet(linePrefix: String, cursor: Int) -> CompletionCandidate? {
+        let trimmedLeft = linePrefix.trimmingCharacters(in: .whitespaces)
+        guard !trimmedLeft.isEmpty, !trimmedLeft.contains(" "), !trimmedLeft.hasPrefix("<") else { return nil }
+
+        let repLen = (trimmedLeft as NSString).length
+        let repRange = NSRange(location: cursor - repLen, length: repLen)
+
+        if trimmedLeft == "!" {
+            let html5 = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>$0Document</title>
+            </head>
+            <body>
+              
+            </body>
+            </html>
+            """
+            return CompletionCandidate(label: "! (HTML5 Boilerplate)", rawTemplate: html5, detail: "Emmet Abbreviation", kind: .emmet, replaceRange: repRange, score: 1400)
+        }
+
+        // ul>li*N pattern
+        if let multRx = try? NSRegularExpression(pattern: #"^([a-zA-Z][a-zA-Z0-9]*)>([a-zA-Z][a-zA-Z0-9]*)\*(\d{1,2})$"#),
+           let m = multRx.firstMatch(in: trimmedLeft, range: NSRange(location: 0, length: repLen)) {
+            let ns = trimmedLeft as NSString
+            let parent = ns.substring(with: m.range(at: 1))
+            let child = ns.substring(with: m.range(at: 2))
+            let count = min(max(Int(ns.substring(with: m.range(at: 3))) ?? 3, 1), 12)
+            let children = (0..<count).map { idx in
+                idx == 0 ? "  <\(child)>$0</\(child)>" : "  <\(child)></\(child)>"
+            }.joined(separator: "\n")
+            let expanded = "<\(parent)>\n\(children)\n</\(parent)>"
+            return CompletionCandidate(label: trimmedLeft, rawTemplate: expanded, detail: "Emmet Repeat", kind: .emmet, replaceRange: repRange, score: 1380)
+        }
+
+        // tag.class1.class2 or tag#id.class or .class
+        if let tagClassRx = try? NSRegularExpression(pattern: #"^([a-zA-Z][a-zA-Z0-9]*)?(#[a-zA-Z0-9_-]+)?((\.[a-zA-Z0-9_-]+)+)$"#),
+           let m = tagClassRx.firstMatch(in: trimmedLeft, range: NSRange(location: 0, length: repLen)) {
+            let ns = trimmedLeft as NSString
+            let tag = m.range(at: 1).location != NSNotFound ? ns.substring(with: m.range(at: 1)) : "div"
+            let idPart = m.range(at: 2).location != NSNotFound ? String(ns.substring(with: m.range(at: 2)).dropFirst()) : nil
+            let classesPart = ns.substring(with: m.range(at: 3)).split(separator: ".").joined(separator: " ")
+            var attrs = ""
+            if let idPart { attrs += " id=\"\(idPart)\"" }
+            if !classesPart.isEmpty { attrs += " class=\"\(classesPart)\"" }
+            let expanded = "<\(tag)\(attrs)>$0</\(tag)>"
+            return CompletionCandidate(label: trimmedLeft, rawTemplate: expanded, detail: "Emmet → <\(tag)\(attrs)>", kind: .emmet, replaceRange: repRange, score: 1360)
+        }
+
+        return nil
+    }
+
+    // MARK: - Member Access Context Extractor (`.` / `->` / `::`)
+    private static func extractMemberAccessContext(linePrefix: String, cursor: Int) -> (receiver: String, accessor: String, memberPrefix: String, replaceRange: NSRange)? {
+        let pattern = #"([A-Za-z_][A-Za-z0-9_.]*)(\.|->|::)([A-Za-z0-9_]*)$"#
+        guard let rx = try? NSRegularExpression(pattern: pattern),
+              let m = rx.firstMatch(in: linePrefix, range: NSRange(location: 0, length: (linePrefix as NSString).length)) else {
+            return nil
+        }
+        let ns = linePrefix as NSString
+        let receiver = ns.substring(with: m.range(at: 1))
+        let accessor = ns.substring(with: m.range(at: 2))
+        let memberPrefix = ns.substring(with: m.range(at: 3))
+        let memLen = (memberPrefix as NSString).length
+        let repRange = NSRange(location: cursor - memLen, length: memLen)
+        return (receiver, accessor, memberPrefix, repRange)
+    }
+
+    private static func memberCatalog(receiver: String, accessor: String, language: CodeLanguage) -> [(label: String, template: String, detail: String, kind: CompletionKind)] {
+        if accessor == "::" {
+            if receiver == "std" {
+                return [
+                    ("cout", "cout << $0 << '\\n';", "std::ostream", .property),
+                    ("cin", "cin >> $0;", "std::istream", .property),
+                    ("vector", "vector<$0>", "Dynamic Array", .type),
+                    ("string", "string", "UTF-8 String", .type),
+                    ("unordered_map", "unordered_map<$0>", "Hash Table", .type),
+                    ("map", "map<$0>", "Ordered Map", .type),
+                    ("set", "set<$0>", "Ordered Set", .type),
+                    ("priority_queue", "priority_queue<$0>", "Max/Min Heap", .type),
+                    ("pair", "pair<$0>", "2-Tuple", .type),
+                    ("sort", "sort($0.begin(), .end());", "<algorithm>", .function),
+                    ("max", "max($0)", "<algorithm>", .function),
+                    ("min", "min($0)", "<algorithm>", .function),
+                    ("make_unique", "make_unique<$0>()", "<memory>", .function),
+                    ("make_shared", "make_shared<$0>()", "<memory>", .function)
+                ]
+            }
+            if language == .rust {
+                return [
+                    ("new", "new()", "Constructor", .function),
+                    ("from", "from($0)", "From Trait", .function),
+                    ("with_capacity", "with_capacity($0)", "Preallocate", .function),
+                    ("default", "default()", "Default Trait", .function)
+                ]
+            }
+        }
+
+        // Specific Well-Known Receivers
+        switch receiver {
+        case "console":
+            return [
+                ("log", "log($0)", "Console Info", .method),
+                ("error", "error($0)", "Console Error", .method),
+                ("warn", "warn($0)", "Console Warning", .method),
+                ("table", "table($0)", "Tabular View", .method),
+                ("time", "time('$0')", "Start Timer", .method),
+                ("timeEnd", "timeEnd('$0')", "End Timer", .method)
+            ]
+        case "document":
+            return [
+                ("querySelector", "querySelector('$0')", "Element | null", .method),
+                ("querySelectorAll", "querySelectorAll('$0')", "NodeList", .method),
+                ("getElementById", "getElementById('$0')", "HTMLElement | null", .method),
+                ("createElement", "createElement('$0')", "HTMLElement", .method),
+                ("addEventListener", "addEventListener('$0', (e) => {\n  \n})", "DOM Event", .method),
+                ("body", "body", "HTMLBodyElement", .property)
+            ]
+        case "Math":
+            return [
+                ("max", "max($0)", "Number", .method),
+                ("min", "min($0)", "Number", .method),
+                ("floor", "floor($0)", "Integer Floor", .method),
+                ("ceil", "ceil($0)", "Integer Ceil", .method),
+                ("round", "round($0)", "Nearest Int", .method),
+                ("random", "random()", "0.0 ..< 1.0", .method),
+                ("sqrt", "sqrt($0)", "Square Root", .method)
+            ]
+        case "JSON":
+            return [
+                ("stringify", "stringify($0, null, 2)", "Serialize JSON", .method),
+                ("parse", "parse($0)", "Parse JSON", .method)
+            ]
+        case "fmt":
+            return [
+                ("Println", "Println($0)", "fmt.Println", .function),
+                ("Printf", "Printf(\"$0\\n\", )", "fmt.Printf", .function),
+                ("Sprintf", "Sprintf(\"$0\", )", "Format String", .function),
+                ("Errorf", "Errorf(\"$0\")", "Format Error", .function)
+            ]
+        case "System", "System.out":
+            return receiver == "System"
+                ? [("out.println", "out.println($0);", "Print Line", .method)]
+                : [
+                    ("println", "println($0);", "Print Line", .method),
+                    ("printf", "printf(\"$0\\n\", );", "Formatted Print", .method),
+                    ("print", "print($0);", "Print", .method)
+                ]
+        case "Console":
+            return [
+                ("WriteLine", "WriteLine($0);", "C# Stdout", .method),
+                ("Write", "Write($0);", "C# Print", .method),
+                ("ReadLine", "ReadLine()", "C# Stdin", .method)
+            ]
+        default:
+            break
+        }
+
+        // Language-Specific Generic Member Suggestions
+        switch language {
+        case .cpp, .c:
+            return [
+                ("push_back", "push_back($0)", "Append Element", .method),
+                ("emplace_back", "emplace_back($0)", "Construct In-Place", .method),
+                ("pop_back", "pop_back()", "Remove Last", .method),
+                ("begin", "begin()", "Iterator Start", .method),
+                ("end", "end()", "Iterator End", .method),
+                ("size", "size()", "Element Count", .method),
+                ("empty", "empty()", "Bool", .method),
+                ("clear", "clear()", "Remove All", .method),
+                ("find", "find($0)", "Lookup Key", .method),
+                ("insert", "insert($0)", "Insert Item", .method),
+                ("erase", "erase($0)", "Remove Item", .method),
+                ("substr", "substr($0)", "Substring", .method),
+                ("first", "first", "Pair First", .property),
+                ("second", "second", "Pair Second", .property)
+            ]
+        case .python:
+            return [
+                ("append", "append($0)", "list.append", .method),
+                ("extend", "extend($0)", "list.extend", .method),
+                ("pop", "pop()", "Remove & Return", .method),
+                ("items", "items()", "dict (k, v)", .method),
+                ("keys", "keys()", "dict keys", .method),
+                ("values", "values()", "dict values", .method),
+                ("get", "get($0)", "dict safe lookup", .method),
+                ("split", "split($0)", "str.split", .method),
+                ("join", "join($0)", "str.join", .method),
+                ("strip", "strip()", "str.strip", .method),
+                ("replace", "replace($0)", "str.replace", .method)
+            ]
+        case .javascript, .typescript, .tsx, .vue, .svelte, .astro:
+            return [
+                ("map", "map(($0) => )", "Array.map", .method),
+                ("filter", "filter(($0) => )", "Array.filter", .method),
+                ("reduce", "reduce((acc, $0) => acc, 0)", "Array.reduce", .method),
+                ("forEach", "forEach(($0) => {\n  \n})", "Array.forEach", .method),
+                ("find", "find(($0) => )", "Array.find", .method),
+                ("includes", "includes($0)", "Contains", .method),
+                ("push", "push($0)", "Array.push", .method),
+                ("slice", "slice($0)", "Subarray/Str", .method),
+                ("length", "length", "Count", .property),
+                ("addEventListener", "addEventListener('$0', (e) => {})", "EventTarget", .method)
+            ]
+        case .rust:
+            return [
+                ("unwrap", "unwrap()", "Unwrap Option/Result", .method),
+                ("expect", "expect(\"$0\")", "Unwrap with Message", .method),
+                ("iter", "iter()", "Slice Iterator", .method),
+                ("map", "map(|$0| )", "Iterator.map", .method),
+                ("collect", "collect::<Vec<_>>()", "Collect Iterator", .method),
+                ("clone", "clone()", "Clone Value", .method),
+                ("len", "len()", "Length", .method),
+                ("is_empty", "is_empty()", "Bool", .method),
+                ("push", "push($0)", "Vec/String push", .method)
+            ]
+        case .swift:
+            return [
+                ("map", "map { $0 }", "Sequence.map", .method),
+                ("filter", "filter { $0 }", "Sequence.filter", .method),
+                ("compactMap", "compactMap { $0 }", "Non-nil map", .method),
+                ("append", "append($0)", "Array.append", .method),
+                ("count", "count", "Element Count", .property),
+                ("isEmpty", "isEmpty", "Bool", .property),
+                ("first", "first", "Optional First", .property)
+            ]
+        default:
+            return []
         }
     }
 
@@ -262,9 +727,7 @@ public final class CodeIntelligenceService: ObservableObject {
         diagnosticsEnabled: Bool,
         sshService: SSHWorkspaceService?
     ) {
-        // Update symbols & breadcrumb synchronously if small, or inside task
-        let extracted = Self.extractSymbols(from: code, language: language)
-        self.symbols = extracted
+        self.symbols = Self.extractSymbols(from: code, language: language)
         updateActiveBreadcrumb(cursorLocation: cursorLocation, in: code)
 
         diagnosticsTask?.cancel()
@@ -274,13 +737,13 @@ public final class CodeIntelligenceService: ObservableObject {
         }
 
         diagnosticsTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 420_000_000) // 420ms debounce
+            try? await Task.sleep(nanoseconds: 420_000_000)
             guard !Task.isCancelled else { return }
 
             var found = Self.runFastOfflineDiagnostics(code: code, language: language)
 
-            // If connected to SSH VPS and editing C/C++/Python, enrich with real compiler syntax check!
-            if let ssh = sshService, ssh.isConnected, (language == .c || language == .cpp || language == .python) {
+            if let ssh = sshService, ssh.isConnected,
+               [.c, .cpp, .python, .rust, .php, .ruby, .shell].contains(language) {
                 let remoteDiags = await Self.runRemoteCompilerDiagnostics(
                     code: code,
                     language: language,
@@ -313,7 +776,7 @@ public final class CodeIntelligenceService: ObservableObject {
         activeBreadcrumbSymbol = currentSym
     }
 
-    // MARK: - Offline Real-Time Syntax & Lint Analyzer
+    // MARK: - Offline Real-Time Syntax & Lint Analyzer Across Languages
     public static func runFastOfflineDiagnostics(code: String, language: CodeLanguage) -> [EditorDiagnostic] {
         let lines = code.components(separatedBy: "\n")
         let lineOffsets = computeLineUTF16Offsets(lines: lines)
@@ -326,7 +789,6 @@ public final class CodeIntelligenceService: ObservableObject {
             return NSRange(location: lineOffsets[idx], length: max(len, 1))
         }
 
-        // 1. JSON Exact Parser Check
         if language == .json {
             let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return [] }
@@ -346,14 +808,12 @@ public final class CodeIntelligenceService: ObservableObject {
             }
         }
 
-        // 2. JavaScript Exact Syntax Check via iOS JavaScriptCore
         if language == .javascript {
             if let ctx = JSContext() {
                 var jsSyntaxDiag: EditorDiagnostic?
                 ctx.exceptionHandler = { _, exc in
                     guard let exc else { return }
                     let msg = exc.toString() ?? "JavaScript Syntax Error"
-                    // Subtract 1 line for wrapper function header
                     let rawLine = Int(exc.forProperty("line")?.toInt32() ?? 2) - 1
                     let clampedLine = min(max(1, rawLine), max(1, lines.count))
                     jsSyntaxDiag = EditorDiagnostic(
@@ -374,8 +834,7 @@ public final class CodeIntelligenceService: ObservableObject {
             }
         }
 
-        // 3. HTML Unclosed / Mismatched Tag Check
-        if language == .html {
+        if language == .html || language == .xml || language == .vue {
             let voidTags: Set<String> = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr", "!doctype"]
             let tagRegex = try? NSRegularExpression(pattern: #"<\s*(/?)\s*([a-zA-Z0-9!-]+)([^>]*?)(/?)>"#)
             var tagStack: [(name: String, line: Int)] = []
@@ -386,10 +845,9 @@ public final class CodeIntelligenceService: ObservableObject {
                         let isClosing = nsLine.substring(with: m.range(at: 1)) == "/"
                         let rawTag = nsLine.substring(with: m.range(at: 2)).lowercased()
                         let selfClosing = nsLine.substring(with: m.range(at: 4)) == "/"
-                        if rawTag.hasPrefix("!--") || voidTags.contains(rawTag) || selfClosing { continue }
+                        if rawTag.hasPrefix("!") || rawTag.hasPrefix("?") || voidTags.contains(rawTag) || selfClosing { continue }
                         if isClosing {
                             if let lastIdx = tagStack.lastIndex(where: { $0.name == rawTag }) {
-                                // Any unclosed inner tags above lastIdx are errors
                                 for unclosed in tagStack[(lastIdx + 1)...] {
                                     issues.append(EditorDiagnostic(
                                         line: unclosed.line,
@@ -403,7 +861,7 @@ public final class CodeIntelligenceService: ObservableObject {
                                 issues.append(EditorDiagnostic(
                                     line: i + 1,
                                     severity: .error,
-                                    message: "Thẻ đóng </\(rawTag)> dư thừa (không có thẻ mở tương ứng).",
+                                    message: "Thẻ đóng </\(rawTag)> dư thừa.",
                                     range: lineNSRange(i + 1)
                                 ))
                             }
@@ -424,12 +882,13 @@ public final class CodeIntelligenceService: ObservableObject {
             return Array(issues.prefix(20))
         }
 
-        // 4. Universal Comment/String-Aware Bracket Balance + Language Lint (C/C++/Python/TS/Swift/CSS/ObjC)
-        if language != .markdown && language != .plainText {
+        let proseLanguages: Set<CodeLanguage> = [.markdown, .plainText, .diff, .ini, .regex]
+        if !proseLanguages.contains(language) {
             var stack: [(ch: Character, line: Int, col: Int)] = []
             let matchingOpen: [Character: Character] = [")": "(", "}": "{", "]": "["]
             let matchingClose: [Character: Character] = ["(": ")", "{": "}", "[": "]"]
             var inBlockComment = false
+            let hashCommentLangs: Set<CodeLanguage> = [.python, .ruby, .perl, .r, .julia, .elixir, .yaml, .toml, .shell, .fish, .powershell, .dockerfile, .makefile, .cmake, .hcl, .nix]
 
             for (idx, line) in lines.enumerated() {
                 let lineNo = idx + 1
@@ -460,10 +919,9 @@ public final class CodeIntelligenceService: ObservableObject {
                         continue
                     }
 
-                    // Line comments
-                    if (language == .python || language == .shell) && c == "#" {
-                        break
-                    }
+                    if hashCommentLangs.contains(language) && c == "#" { break }
+                    if (language == .lua || language == .sql || language == .haskell) && c == "-" && cIdx + 1 < chars.count && chars[cIdx + 1] == "-" { break }
+
                     if c == "/" && cIdx + 1 < chars.count {
                         if chars[cIdx + 1] == "/" { break }
                         if chars[cIdx + 1] == "*" {
@@ -474,7 +932,6 @@ public final class CodeIntelligenceService: ObservableObject {
                     }
 
                     if c == "\"" || c == "'" || c == "`" {
-                        // Skip Python triple quotes naive false positive
                         if cIdx + 2 < chars.count && chars[cIdx + 1] == c && chars[cIdx + 2] == c {
                             break
                         }
@@ -501,8 +958,7 @@ public final class CodeIntelligenceService: ObservableObject {
                     cIdx += 1
                 }
 
-                // Unclosed single-line string literal check (excluding backtick template literals)
-                if let q = inStringQuote, q != "`" {
+                if let q = inStringQuote, q != "`" && !(language == .rust && q == "'") {
                     issues.append(EditorDiagnostic(
                         line: lineNo,
                         severity: .error,
@@ -511,7 +967,6 @@ public final class CodeIntelligenceService: ObservableObject {
                     ))
                 }
 
-                // Python block header colon check
                 if language == .python {
                     let stripped = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
                     let pyBlockRegex = #"^(def\s+\w+\(.*\)|class\s+\w+.*|if\s+.+|elif\s+.+|else|for\s+.+|while\s+.+|try|except.*|finally|with\s+.+)$"#
@@ -525,19 +980,6 @@ public final class CodeIntelligenceService: ObservableObject {
                             line: lineNo,
                             severity: .error,
                             message: "Thiếu dấu ':' ở cuối câu lệnh khối Python.",
-                            range: lineNSRange(lineNo)
-                        ))
-                    }
-                }
-
-                // C / C++ missing semicolon heuristic on return / #include errors
-                if language == .c || language == .cpp || language == .objectiveC {
-                    let trimmed = line.components(separatedBy: "//").first?.trimmingCharacters(in: .whitespaces) ?? ""
-                    if trimmed.hasPrefix("return ") && !trimmed.hasSuffix(";") && !trimmed.hasSuffix("{") && !trimmed.hasSuffix(",") {
-                        issues.append(EditorDiagnostic(
-                            line: lineNo,
-                            severity: .warning,
-                            message: "Có thể thiếu dấu ';' ở cuối lệnh return.",
                             range: lineNSRange(lineNo)
                         ))
                     }
@@ -559,7 +1001,7 @@ public final class CodeIntelligenceService: ObservableObject {
         return Array(issues.prefix(25))
     }
 
-    // MARK: - Remote VPS Compiler / LSP Diagnostics Parser
+    // MARK: - Remote VPS Compiler Diagnostics Parser
     private static func runRemoteCompilerDiagnostics(
         code: String,
         language: CodeLanguage,
@@ -574,13 +1016,19 @@ public final class CodeIntelligenceService: ObservableObject {
             cmd = "echo '\(b64)' | base64 -d | gcc -std=c17 -fsyntax-only -Wall -x c - 2>&1"
         case .python:
             cmd = "mkdir -p /tmp/3012_diag && echo '\(b64)' | base64 -d > /tmp/3012_diag/live.py && python3 -m py_compile /tmp/3012_diag/live.py 2>&1"
+        case .php:
+            cmd = "echo '\(b64)' | base64 -d | php -l 2>&1"
+        case .ruby:
+            cmd = "echo '\(b64)' | base64 -d | ruby -c 2>&1"
+        case .shell:
+            cmd = "echo '\(b64)' | base64 -d | bash -n 2>&1"
         default:
             return []
         }
 
         let raw = await sshService.executeCommandOnVPS(cmd)
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("Syntax OK"), !trimmed.hasPrefix("No syntax errors") else { return [] }
 
         let lines = code.components(separatedBy: "\n")
         let offsets = computeLineUTF16Offsets(lines: lines)
@@ -591,10 +1039,8 @@ public final class CodeIntelligenceService: ObservableObject {
         }
 
         var parsed: [EditorDiagnostic] = []
-        // GCC/Clang format: <stdin>:12:5: error: expected ';' before '}' token
         let gccRegex = try? NSRegularExpression(pattern: #":(\d+):(\d+):\s*(fatal error|error|warning):\s*(.+)$"#)
-        // Python py_compile format: File "...", line 8
-        let pyLineRegex = try? NSRegularExpression(pattern: #"line\s+(\d+)"#)
+        let genericLineRegex = try? NSRegularExpression(pattern: #"line\s+(\d+)"#, options: [.caseInsensitive])
 
         for outLine in trimmed.components(separatedBy: "\n") {
             let ns = outLine as NSString
@@ -610,8 +1056,7 @@ public final class CodeIntelligenceService: ObservableObject {
                     message: msg,
                     range: rangeForLine(lineNum)
                 ))
-            } else if language == .python,
-                      let pm = pyLineRegex?.firstMatch(in: outLine, range: NSRange(location: 0, length: ns.length)) {
+            } else if let pm = genericLineRegex?.firstMatch(in: outLine, range: NSRange(location: 0, length: ns.length)) {
                 let lineNum = Int(ns.substring(with: pm.range(at: 1))) ?? 1
                 parsed.append(EditorDiagnostic(
                     line: lineNum,
@@ -624,7 +1069,7 @@ public final class CodeIntelligenceService: ObservableObject {
         return parsed
     }
 
-    // MARK: - Symbol Outline Extractor (Functions, Classes, Structs, Markdown Headings, HTML Sections)
+    // MARK: - Universal Symbol & Signature Extractor (Across Languages)
     public static func extractSymbols(from code: String, language: CodeLanguage) -> [DocumentSymbolItem] {
         let lines = code.components(separatedBy: "\n")
         let offsets = computeLineUTF16Offsets(lines: lines)
@@ -637,7 +1082,27 @@ public final class CodeIntelligenceService: ObservableObject {
                 (#"\b(class|struct|enum|protocol|actor|extension)\s+([A-Za-z_][A-Za-z0-9_.]*)"#, 2, "Type", "cube"),
                 (#"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("#, 1, "Function", "function")
             ]
-        case .c, .cpp, .objectiveC:
+        case .rust:
+            patterns = [
+                (#"\b(struct|enum|trait|impl|mod)\s+([A-Za-z_][A-Za-z0-9_]*)"#, 2, "Type", "cube"),
+                (#"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*[<(]"#, 1, "Function", "function")
+            ]
+        case .go:
+            patterns = [
+                (#"\btype\s+([A-Za-z_][A-Za-z0-9_]*)\s+(?:struct|interface)"#, 1, "Type", "cube"),
+                (#"\bfunc\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\("#, 1, "Function", "function")
+            ]
+        case .java, .csharp, .dart, .groovy, .solidity:
+            patterns = [
+                (#"\b(class|interface|enum|record|struct|contract)\s+([A-Za-z_][A-Za-z0-9_]*)"#, 2, "Type", "cube"),
+                (#"^\s*(?:public|private|protected|static|async|virtual|override|\s)+[A-Za-z0-9_<>\[\]?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("#, 1, "Method", "function")
+            ]
+        case .kotlin, .scala:
+            patterns = [
+                (#"\b(class|interface|object|trait)\s+([A-Za-z_][A-Za-z0-9_]*)"#, 2, "Type", "cube"),
+                (#"\b(?:fun|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*[<(]"#, 1, "Function", "function")
+            ]
+        case .c, .cpp, .objectiveC, .zig, .dlang:
             patterns = [
                 (#"\b(class|struct|namespace|enum)\s+([A-Za-z_][A-Za-z0-9_]*)"#, 2, "Type", "cube"),
                 (#"^\s*(?:[A-Za-z_][A-Za-z0-9_:<>\*\s&]+)\s+([A-Za-z_~][A-Za-z0-9_:]*)\s*\([^;]*\)\s*(?:const)?\s*\{"#, 1, "Function", "function")
@@ -647,29 +1112,30 @@ public final class CodeIntelligenceService: ObservableObject {
                 (#"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)"#, 1, "Class", "cube"),
                 (#"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("#, 1, "Function", "function")
             ]
-        case .javascript, .typescript:
+        case .php, .ruby, .elixir, .lua, .julia:
+            patterns = [
+                (#"\b(class|module|defmodule)\s+([A-Za-z_][A-Za-z0-9_.:]*)"#, 2, "Type", "cube"),
+                (#"\b(?:function|def|defp)\s+([A-Za-z_][A-Za-z0-9_?!.]*)"#, 1, "Function", "function")
+            ]
+        case .javascript, .typescript, .tsx:
             patterns = [
                 (#"\b(class|interface|type|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)"#, 2, "Type", "cube"),
                 (#"\b(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\("#, 1, "Function", "function"),
-                (#"\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>"#, 1, "Arrow Fn", "function")
+                (#"\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>"#, 1, "Function", "function")
             ]
-        case .html:
+        case .html, .vue, .svelte, .astro:
             patterns = [
-                (#"<(header|nav|main|section|article|footer|form|script|style)[^>]*>"#, 1, "Section", "chevron.left.forwardslash.chevron.right"),
+                (#"<(header|nav|main|section|article|footer|form|script|style|template)[^>]*>"#, 1, "Section", "chevron.left.forwardslash.chevron.right"),
                 (#"id\s*=\s*["']([^"']+)["']"#, 1, "#id", "number")
             ]
-        case .css:
-            patterns = [
-                (#"^\s*([.#a-zA-Z][^{]+)\s*\{"#, 1, "Selector", "curlybraces")
-            ]
+        case .css, .scss:
+            patterns = [(#"^\s*([.#@a-zA-Z][^{]+)\s*\{"#, 1, "Selector", "curlybraces")]
+        case .sql:
+            patterns = [(#"(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|FUNCTION|PROCEDURE|INDEX)\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z0-9_.]+)"#, 1, "Schema", "cylinder.split.1x2")]
         case .markdown:
-            patterns = [
-                (#"^(#{1,4}\s+.+)$"#, 1, "Heading", "list.bullet.indent")
-            ]
-        case .shell:
-            patterns = [
-                (#"^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)"#, 1, "Function", "terminal")
-            ]
+            patterns = [(#"^(#{1,4}\s+.+)$"#, 1, "Heading", "list.bullet.indent")]
+        case .shell, .fish:
+            patterns = [(#"^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)"#, 1, "Function", "apple.terminal")]
         default:
             patterns = []
         }
@@ -687,11 +1153,15 @@ public final class CodeIntelligenceService: ObservableObject {
                 if let m = rx.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)),
                    m.numberOfRanges > grp {
                     let rawName = nsLine.substring(with: m.range(at: grp)).trimmingCharacters(in: .whitespaces)
-                    let disallowed: Set<String> = ["if", "for", "while", "switch", "catch"]
+                    let disallowed: Set<String> = ["if", "for", "while", "switch", "catch", "else", "return"]
                     guard !rawName.isEmpty, !disallowed.contains(rawName) else { continue }
+                    let sig = line.trimmingCharacters(in: .whitespaces)
+                        .replacingOccurrences(of: #"\s*\{$"#, with: "", options: .regularExpression)
+                        .replacingOccurrences(of: #":$"#, with: "", options: .regularExpression)
                     let docRange = NSRange(location: offsets[i], length: nsLine.length)
                     items.append(DocumentSymbolItem(
                         name: rawName,
+                        signature: String(sig.prefix(90)),
                         detail: "\(kind) • Line \(i + 1)",
                         systemIcon: icon,
                         line: i + 1,
@@ -704,14 +1174,14 @@ public final class CodeIntelligenceService: ObservableObject {
         return items
     }
 
-    // MARK: - Helpers & Keyword Catalog
+    // MARK: - Helpers & Comprehensive Multi-Language Smart Catalog
     private static func computeLineUTF16Offsets(lines: [String]) -> [Int] {
         var offsets: [Int] = []
         offsets.reserveCapacity(lines.count)
         var running = 0
         for line in lines {
             offsets.append(running)
-            running += (line as NSString).length + 1 // +1 for '\n'
+            running += (line as NSString).length + 1
         }
         return offsets
     }
@@ -723,66 +1193,174 @@ public final class CodeIntelligenceService: ObservableObject {
         return Int(digits)
     }
 
-    private static func languageCatalog(for language: CodeLanguage) -> [(String, String, Bool)] {
+    private static func smartLanguageCatalog(for language: CodeLanguage) -> [(label: String, template: String, detail: String, kind: CompletionKind)] {
         switch language {
         case .cpp, .c, .objectiveC:
             return [
-                ("#include", "Preprocessor", false), ("#define", "Preprocessor", false), ("#pragma once", "Header Guard", false),
-                ("iostream", "C++ Stream Header", true), ("vector", "std::vector", true), ("string", "std::string", true),
-                ("algorithm", "STL Algorithms", true), ("unordered_map", "Hash Map", true), ("map", "Balanced Tree Map", true),
-                ("queue", "FIFO Queue", true), ("priority_queue", "Heap", true), ("cmath", "Math Library", true),
-                ("std::cout", "Standard Output", true), ("std::cin", "Standard Input", true), ("std::endl", "Newline Flush", true),
-                ("std::vector", "Dynamic Array", true), ("std::sort", "Sort Range", true), ("std::pair", "Tuple Pair", true),
-                ("printf", "C Formatted Print", true), ("scanf", "C Formatted Input", true), ("malloc", "Heap Alloc", true),
-                ("return", "Keyword", false), ("const", "Keyword", false), ("constexpr", "Keyword", false),
-                ("auto", "Type Deduction", false), ("struct", "Keyword", false), ("class", "Keyword", false),
-                ("namespace", "Keyword", false), ("template", "Keyword", false), ("typename", "Keyword", false),
-                ("public:", "Access", false), ("private:", "Access", false), ("virtual", "Keyword", false),
-                ("override", "Keyword", false), ("nullptr", "Null Pointer", false), ("sizeof", "Operator", false)
+                ("for (int i...)", "for (int i = 0; i < $0; ++i) {\n    \n}", "Indexed Loop", .snippet),
+                ("for (auto&...)", "for (const auto& item : $0) {\n    \n}", "Range-Based Loop", .snippet),
+                ("if (...)", "if ($0) {\n    \n}", "Conditional Block", .snippet),
+                ("while (...)", "while ($0) {\n    \n}", "While Loop", .snippet),
+                ("main", "int main() {\n    $0\n    return 0;\n}", "Entry Point", .snippet),
+                ("#include <>", "#include <$0>", "System Header", .module),
+                ("std::cout", "std::cout << $0 << '\\n';", "Standard Output", .function),
+                ("std::cin", "std::cin >> $0;", "Standard Input", .function),
+                ("std::vector", "std::vector<$0>", "Dynamic Array", .type),
+                ("std::string", "std::string", "String Type", .type),
+                ("std::unordered_map", "std::unordered_map<$0>", "Hash Map", .type),
+                ("std::sort", "std::sort($0.begin(), .end());", "Sort Container", .function),
+                ("std::pair", "std::pair<$0>", "Tuple Pair", .type),
+                ("push_back", "push_back($0)", "Append Item", .method),
+                ("printf", "printf(\"$0\\n\");", "C Printf", .function),
+                ("scanf", "scanf(\"$0\", );", "C Scanf", .function),
+                ("constexpr", "constexpr ", "Compile-Time", .keyword),
+                ("nullptr", "nullptr", "Null Pointer", .keyword),
+                ("struct", "struct $0 {\n    \n};", "Struct Definition", .keyword),
+                ("class", "class $0 {\npublic:\n    \n};", "Class Definition", .keyword),
+                ("return", "return $0;", "Return Statement", .keyword)
             ]
+
         case .python:
             return [
-                ("def", "Function", false), ("class", "Class", false), ("import", "Import", false), ("from", "From Import", false),
-                ("return", "Return", false), ("async", "Async", false), ("await", "Await", false), ("yield", "Generator", false),
-                ("lambda", "Anonymous Fn", false), ("elif", "Conditional", false), ("except", "Exception", false), ("finally", "Finally", false),
-                ("with", "Context Manager", false), ("assert", "Assertion", false), ("True", "Boolean", false), ("False", "Boolean", false), ("None", "NoneType", false),
-                ("print", "Built-in", true), ("input", "Built-in", true), ("range", "Built-in", true), ("enumerate", "Built-in", true),
-                ("len", "Built-in", true), ("sorted", "Built-in", true), ("zip", "Built-in", true), ("isinstance", "Built-in", true),
-                ("__init__", "Constructor", true), ("__name__", "Module Name", true)
+                ("def", "def $0():\n    pass", "Function Definition", .snippet),
+                ("class", "class $0:\n    def __init__(self):\n        pass", "Class Definition", .snippet),
+                ("for in range", "for i in range($0):\n    ", "Range Loop", .snippet),
+                ("ifmain", "if __name__ == \"__main__\":\n    $0", "Main Guard", .snippet),
+                ("try/except", "try:\n    $0\nexcept Exception as err:\n    print(err)", "Error Handler", .snippet),
+                ("with open", "with open(\"$0\", \"r\", encoding=\"utf-8\") as f:\n    data = f.read()", "Read File", .snippet),
+                ("print", "print($0)", "Built-in Output", .function),
+                ("input", "input($0)", "Built-in Input", .function),
+                ("enumerate", "enumerate($0)", "Indexed Iterable", .function),
+                ("isinstance", "isinstance($0, )", "Type Check", .function),
+                ("sorted", "sorted($0)", "Sorted List", .function),
+                ("len", "len($0)", "Length", .function),
+                ("async def", "async def $0():\n    ", "Async Coroutine", .keyword),
+                ("import", "import $0", "Import Module", .keyword),
+                ("from import", "from $0 import ", "Named Import", .keyword),
+                ("return", "return $0", "Return Value", .keyword)
             ]
-        case .javascript, .typescript:
+
+        case .javascript, .typescript, .tsx:
             return [
-                ("function", "Keyword", false), ("const", "Keyword", false), ("let", "Keyword", false), ("async", "Keyword", false),
-                ("await", "Keyword", false), ("return", "Keyword", false), ("export", "ES Module", false), ("import", "ES Module", false),
-                ("interface", "TS Interface", false), ("type", "TS Type", false), ("implements", "TS Keyword", false), ("readonly", "TS Keyword", false),
-                ("console.log", "Console API", true), ("console.error", "Console API", true), ("document.querySelector", "DOM API", true),
-                ("document.getElementById", "DOM API", true), ("addEventListener", "DOM Event", true), ("fetch", "Fetch HTTP API", true),
-                ("JSON.stringify", "JSON API", true), ("JSON.parse", "JSON API", true), ("Promise.all", "Promise API", true),
-                ("setTimeout", "Timer API", true), ("localStorage", "Web Storage", true)
+                ("console.log", "console.log($0);", "Log Output", .method),
+                ("console.error", "console.error($0);", "Log Error", .method),
+                ("function", "function $0() {\n  \n}", "Function Declaration", .snippet),
+                ("async fn", "async function $0() {\n  \n}", "Async Function", .snippet),
+                ("arrow fn", "const $0 = () => {\n  \n};", "Arrow Function", .snippet),
+                ("fetch", "const res = await fetch('$0');\nconst data = await res.json();", "Fetch JSON", .snippet),
+                ("try/catch", "try {\n  $0\n} catch (err) {\n  console.error(err);\n}", "Try/Catch Block", .snippet),
+                ("interface", "interface $0 {\n  \n}", "TS Interface", .type),
+                ("type", "type $0 = ", "TS Type Alias", .type),
+                ("document.querySelector", "document.querySelector('$0')", "DOM Query", .method),
+                ("document.getElementById", "document.getElementById('$0')", "DOM by ID", .method),
+                ("addEventListener", "addEventListener('$0', (e) => {\n  \n});", "Event Listener", .method),
+                ("Promise.all", "await Promise.all([$0])", "Concurrent Promises", .method),
+                ("setTimeout", "setTimeout(() => {\n  $0\n}, 300);", "Timer", .function),
+                ("export default", "export default $0", "ES Module Export", .keyword),
+                ("import from", "import { $0 } from '';", "ES Module Import", .keyword)
             ]
-        case .html:
+
+        case .rust:
             return [
-                ("div", "HTML Tag", false), ("section", "HTML Tag", false), ("main", "HTML Tag", false), ("header", "HTML Tag", false),
-                ("footer", "HTML Tag", false), ("nav", "HTML Tag", false), ("button", "HTML Tag", false), ("input", "HTML Tag", false),
-                ("script", "HTML Tag", false), ("style", "HTML Tag", false), ("canvas", "HTML Tag", false), ("form", "HTML Tag", false),
-                ("class=\"\"", "Attribute", true), ("id=\"\"", "Attribute", true), ("href=\"\"", "Attribute", true), ("src=\"\"", "Attribute", true)
+                ("fn main", "fn main() {\n    $0\n}", "Entry Point", .snippet),
+                ("println!", "println!(\"$0\");", "Stdout Macro", .function),
+                ("eprintln!", "eprintln!(\"$0\");", "Stderr Macro", .function),
+                ("format!", "format!(\"$0\")", "String Macro", .function),
+                ("vec!", "vec![$0]", "Vec Macro", .function),
+                ("struct", "#[derive(Debug, Clone)]\nstruct $0 {\n    \n}", "Struct + Derive", .snippet),
+                ("enum", "#[derive(Debug, Clone)]\nenum $0 {\n    \n}", "Enum + Derive", .snippet),
+                ("impl", "impl $0 {\n    \n}", "Implementation", .snippet),
+                ("match", "match $0 {\n    _ => {}\n}", "Pattern Match", .snippet),
+                ("let mut", "let mut $0 = ", "Mutable Binding", .keyword),
+                ("Result", "Result<$0, Box<dyn std::error::Error>>", "Result Type", .type),
+                ("Option", "Option<$0>", "Option Type", .type),
+                ("HashMap", "std::collections::HashMap<$0>", "HashMap", .type)
             ]
-        case .css:
+
+        case .go:
             return [
-                ("display: flex;", "Flexbox", true), ("display: grid;", "CSS Grid", true), ("justify-content: center;", "Layout", true),
-                ("align-items: center;", "Layout", true), ("background-color:", "Color", true), ("border-radius:", "Border", true),
-                ("padding:", "Spacing", true), ("margin:", "Spacing", true), ("box-shadow:", "Effect", true), ("transition:", "Animation", true),
-                ("@media (max-width: 768px)", "Responsive", false), ("position: relative;", "Position", true)
+                ("func main", "func main() {\n\t$0\n}", "Entry Point", .snippet),
+                ("fmt.Println", "fmt.Println($0)", "Print Line", .function),
+                ("fmt.Printf", "fmt.Printf(\"$0\\n\", )", "Formatted Print", .function),
+                ("iferr", "if err != nil {\n\treturn $0err\n}", "Go Error Guard", .snippet),
+                ("for range", "for i, v := range $0 {\n\t\n}", "Range Loop", .snippet),
+                ("struct", "type $0 struct {\n\t\n}", "Struct Type", .snippet),
+                ("interface", "type $0 interface {\n\t\n}", "Interface Type", .snippet),
+                ("make slice", "make([]$0, 0)", "Allocate Slice", .function),
+                ("make map", "make(map[string]$0)", "Allocate Map", .function),
+                ("go func", "go func() {\n\t$0\n}()", "Goroutine", .snippet)
             ]
+
+        case .java, .kotlin, .csharp, .dart:
+            return [
+                ("main", language == .kotlin ? "fun main() {\n    $0\n}" : (language == .csharp ? "static void Main(string[] args) {\n    $0\n}" : "public static void main(String[] args) {\n    $0\n}"), "Entry Point", .snippet),
+                ("println", language == .csharp ? "Console.WriteLine($0);" : (language == .java ? "System.out.println($0);" : "println($0)"), "Print Output", .function),
+                ("for", "for (int i = 0; i < $0; i++) {\n    \n}", "For Loop", .snippet),
+                ("class", "public class $0 {\n    \n}", "Class Declaration", .type),
+                ("interface", "public interface $0 {\n    \n}", "Interface", .type),
+                ("try/catch", "try {\n    $0\n} catch (Exception e) {\n    \n}", "Exception Handler", .snippet)
+            ]
+
         case .swift:
             return [
-                ("import", "Keyword", false), ("struct", "Keyword", false), ("class", "Keyword", false), ("enum", "Keyword", false),
-                ("protocol", "Keyword", false), ("extension", "Keyword", false), ("func", "Keyword", false), ("guard", "Keyword", false),
-                ("async", "Concurrency", false), ("await", "Concurrency", false), ("throws", "Error", false), ("@Published", "Combine", true),
-                ("@State", "SwiftUI", true), ("@MainActor", "Concurrency", true), ("VStack", "SwiftUI", true), ("HStack", "SwiftUI", true)
+                ("struct View", "struct $0: View {\n    var body: some View {\n        Text(\"Hello\")\n    }\n}", "SwiftUI View", .snippet),
+                ("func", "func $0() {\n    \n}", "Function", .snippet),
+                ("guard let", "guard let $0 else { return }", "Unwrap Guard", .snippet),
+                ("Task", "Task {\n    $0\n}", "Async Task", .snippet),
+                ("@Published", "@Published var $0", "Combine Property", .property),
+                ("@State", "@State private var $0", "SwiftUI State", .property),
+                ("print", "print($0)", "Console Output", .function)
             ]
+
+        case .html, .vue, .svelte, .astro:
+            return [
+                ("div", "<div>$0</div>", "HTML Container", .emmet),
+                ("section", "<section>$0</section>", "HTML Section", .emmet),
+                ("main", "<main>$0</main>", "HTML Main", .emmet),
+                ("header", "<header>$0</header>", "HTML Header", .emmet),
+                ("footer", "<footer>$0</footer>", "HTML Footer", .emmet),
+                ("button", "<button type=\"button\">$0</button>", "HTML Button", .emmet),
+                ("input", "<input type=\"text\" placeholder=\"$0\" />", "HTML Input", .emmet),
+                ("a href", "<a href=\"$0\"></a>", "Anchor Link", .emmet),
+                ("img", "<img src=\"$0\" alt=\"\" />", "Image Element", .emmet),
+                ("script", "<script>\n  $0\n</script>", "Inline Script", .emmet),
+                ("style", "<style>\n  $0\n</style>", "Inline CSS", .emmet),
+                ("link css", "<link rel=\"stylesheet\" href=\"$0style.css\" />", "Stylesheet Link", .emmet)
+            ]
+
+        case .css, .scss:
+            return [
+                ("display: flex", "display: flex;\nalign-items: center;\njustify-content: $0center;", "Flexbox Center", .snippet),
+                ("display: grid", "display: grid;\ngrid-template-columns: repeat($0, 1fr);\ngap: 16px;", "CSS Grid", .snippet),
+                ("background", "background: $0;", "Background", .property),
+                ("border-radius", "border-radius: $0px;", "Rounded Corners", .property),
+                ("box-shadow", "box-shadow: 0 10px 30px rgba(0, 0, 0, $00.25);", "Drop Shadow", .property),
+                ("transition", "transition: all $00.2s ease;", "Smooth Transition", .property),
+                ("@media", "@media (max-width: $0768px) {\n  \n}", "Responsive Breakpoint", .snippet)
+            ]
+
+        case .sql:
+            return [
+                ("SELECT", "SELECT $0 FROM ;", "Query Rows", .keyword),
+                ("CREATE TABLE", "CREATE TABLE $0 (\n  id INTEGER PRIMARY KEY,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);", "Table DDL", .snippet),
+                ("INSERT INTO", "INSERT INTO $0 () VALUES ();", "Insert Row", .snippet),
+                ("UPDATE", "UPDATE $0 SET  WHERE id = ;", "Update Row", .snippet),
+                ("LEFT JOIN", "LEFT JOIN $0 ON ", "Join Clause", .keyword),
+                ("GROUP BY", "GROUP BY $0 ORDER BY ", "Aggregation", .keyword)
+            ]
+
+        case .php, .ruby, .lua, .shell, .dockerfile, .hcl:
+            return [
+                ("function", language == .ruby ? "def $0\n  \nend" : "function $0()\n  \nend", "Function Block", .snippet),
+                ("if", "if $0\n  \nend", "Conditional", .keyword),
+                ("echo", "echo \"$0\"", "Print Output", .function)
+            ]
+
         default:
-            return []
+            return [
+                ("function", "function $0() {\n  \n}", "Function", .snippet),
+                ("return", "return $0", "Return", .keyword)
+            ]
         }
     }
 }

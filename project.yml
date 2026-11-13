@@ -46,8 +46,8 @@ targets:
         PRODUCT_NAME: "3012"
         PRODUCT_MODULE_NAME: App3012
         PRODUCT_BUNDLE_IDENTIFIER: com.dev.app3012
-        MARKETING_VERSION: "3.0.0"
-        CURRENT_PROJECT_VERSION: "4"
+        MARKETING_VERSION: "3.1.0"
+        CURRENT_PROJECT_VERSION: "5"
         SWIFT_VERSION: "5.10"
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
@@ -93,29 +93,101 @@ targets:
       - package: Runestone
         product: Runestone
       - package: TreeSitterLanguages
-        product: TreeSitterHTMLRunestone
+        product: TreeSitterAstroRunestone
       - package: TreeSitterLanguages
-        product: TreeSitterCSSRunestone
+        product: TreeSitterBashRunestone
       - package: TreeSitterLanguages
-        product: TreeSitterJavaScriptRunestone
+        product: TreeSitterBicepRunestone
       - package: TreeSitterLanguages
-        product: TreeSitterTypeScriptRunestone
-      - package: TreeSitterLanguages
-        product: TreeSitterJSONRunestone
-      - package: TreeSitterLanguages
-        product: TreeSitterPythonRunestone
-      - package: TreeSitterLanguages
-        product: TreeSitterCRunestone
+        product: TreeSitterCMakeRunestone
       - package: TreeSitterLanguages
         product: TreeSitterCPPRunestone
       - package: TreeSitterLanguages
-        product: TreeSitterObjectiveCRunestone
+        product: TreeSitterCRunestone
       - package: TreeSitterLanguages
-        product: TreeSitterSwiftRunestone
+        product: TreeSitterCSharpRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterCSSRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterDartRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterDiffRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterElixirRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterElmRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterFishRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterGoRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterHCLRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterHTMLRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterHaskellRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterJSON5Runestone
+      - package: TreeSitterLanguages
+        product: TreeSitterJSONRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterJavaRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterJavaScriptRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterJuliaRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterLaTeXRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterLuaRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterMarkdownInlineRunestone
       - package: TreeSitterLanguages
         product: TreeSitterMarkdownRunestone
       - package: TreeSitterLanguages
-        product: TreeSitterBashRunestone
+        product: TreeSitterNixRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterOCamlRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterObjectiveCRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterPHPRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterPascalRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterPerlRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterProtoRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterPythonRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterRRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterRegexRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterRubyRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterRustRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterSCSSRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterSQLRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterScalaRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterSvelteRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterSwiftRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterTOMLRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterTSXRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterTypeScriptRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterXMLRunestone
+      - package: TreeSitterLanguages
+        product: TreeSitterYAMLRunestone
       - package: SwiftTerm
         product: SwiftTerm
       - package: Citadel

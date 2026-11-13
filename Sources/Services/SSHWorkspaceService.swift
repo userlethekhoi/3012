@@ -363,18 +363,56 @@ public final class SSHWorkspaceService: ObservableObject {
             runCmd = "gcc -std=c17 -O2 '\(safeFile)' -o app_out && ./app_out < stdin.txt"
         case .objectiveC:
             runCmd = "clang '\(safeFile)' -o app_out && ./app_out < stdin.txt"
+        case .rust:
+            runCmd = "rustc -O '\(safeFile)' -o app_out && ./app_out < stdin.txt"
+        case .go:
+            runCmd = "go run '\(safeFile)' < stdin.txt"
+        case .zig:
+            runCmd = "zig run '\(safeFile)' < stdin.txt"
+        case .java:
+            runCmd = "java '\(safeFile)' < stdin.txt"
+        case .kotlin:
+            runCmd = "kotlinc '\(safeFile)' -include-runtime -d app.jar && java -jar app.jar < stdin.txt"
+        case .csharp:
+            runCmd = "mcs '\(safeFile)' -out:app.exe && mono app.exe < stdin.txt"
+        case .dart:
+            runCmd = "dart run '\(safeFile)' < stdin.txt"
         case .python:
             runCmd = "python3 '\(safeFile)' < stdin.txt"
         case .javascript:
             runCmd = "node '\(safeFile)' < stdin.txt"
-        case .typescript:
+        case .typescript, .tsx:
             runCmd = "npx --yes tsx '\(safeFile)' < stdin.txt"
+        case .php:
+            runCmd = "php '\(safeFile)' < stdin.txt"
+        case .ruby:
+            runCmd = "ruby '\(safeFile)' < stdin.txt"
+        case .perl:
+            runCmd = "perl '\(safeFile)' < stdin.txt"
+        case .lua:
+            runCmd = "lua '\(safeFile)' < stdin.txt"
+        case .r:
+            runCmd = "Rscript '\(safeFile)' < stdin.txt"
+        case .julia:
+            runCmd = "julia '\(safeFile)' < stdin.txt"
+        case .elixir:
+            runCmd = "elixir '\(safeFile)' < stdin.txt"
+        case .haskell:
+            runCmd = "runghc '\(safeFile)' < stdin.txt"
+        case .ocaml:
+            runCmd = "ocaml '\(safeFile)' < stdin.txt"
+        case .scala:
+            runCmd = "scala '\(safeFile)' < stdin.txt"
+        case .pascal:
+            runCmd = "fpc '\(safeFile)' -oapp_out && ./app_out < stdin.txt"
+        case .sql:
+            runCmd = "sqlite3 :memory: < '\(safeFile)'"
         case .swift:
             runCmd = "swift '\(safeFile)' < stdin.txt"
-        case .shell:
+        case .shell, .fish:
             runCmd = "bash '\(safeFile)' < stdin.txt"
         default:
-            return "Ngôn ngữ \(language.rawValue) không cần biên dịch trên VPS."
+            return "Ngôn ngữ \(language.rawValue) không cần biên dịch trực tiếp trên VPS."
         }
 
         let fullScript = """

@@ -407,3 +407,129 @@ public struct ThemeStudioEditorSheet: View {
         return String(data: data, encoding: .utf8)
     }
 }
+
+// MARK: - 4. VS Code Select Language Mode Sheet (64 Languages + Auto-Detect)
+public struct LanguageModePickerSheet: View {
+    public let fileName: String
+    public let autoDetectedLanguage: CodeLanguage
+    public let currentOverride: CodeLanguage?
+    public let palette: IDEColorPalette
+    public var onSelectOverride: (CodeLanguage?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var query: String = ""
+
+    public init(
+        fileName: String,
+        autoDetectedLanguage: CodeLanguage,
+        currentOverride: CodeLanguage?,
+        palette: IDEColorPalette,
+        onSelectOverride: @escaping (CodeLanguage?) -> Void
+    ) {
+        self.fileName = fileName
+        self.autoDetectedLanguage = autoDetectedLanguage
+        self.currentOverride = currentOverride
+        self.palette = palette
+        self.onSelectOverride = onSelectOverride
+    }
+
+    private var filteredLanguages: [CodeLanguage] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return CodeLanguage.allCases }
+        return CodeLanguage.allCases.filter {
+            $0.rawValue.localizedCaseInsensitiveContains(q)
+                || $0.shortBadgeName.localizedCaseInsensitiveContains(q)
+                || $0.defaultExtension.localizedCaseInsensitiveContains(q)
+        }
+    }
+
+    public var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("Tìm ngôn ngữ lập trình (C++, Rust, Python, TSX, SQL...)", text: $query)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                }
+                .padding(10)
+                .background(Color(uiColor: .secondarySystemBackground))
+                .cornerRadius(9)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+
+                List {
+                    Section("Nhận diện thông minh (Auto-Detect)") {
+                        Button {
+                            onSelectOverride(nil)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 10) {
+                                FileLanguageIconView(language: autoDetectedLanguage, size: 14)
+                                    .frame(width: 22)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Tự động nhận diện — \(autoDetectedLanguage.rawValue)")
+                                        .font(.system(size: 13.5, weight: .semibold))
+                                        .foregroundColor(.primary)
+                                    Text("Quét từ tên file (\(fileName)), đuôi mở rộng & nội dung shebang/cú pháp")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+                                if currentOverride == nil {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(Color(hex: palette.accent))
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+
+                    Section("Tất cả \(CodeLanguage.allCases.count) Ngôn ngữ hỗ trợ (\(filteredLanguages.count))") {
+                        ForEach(filteredLanguages) { lang in
+                            let isSelected = (currentOverride == lang)
+                            Button {
+                                onSelectOverride(lang)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 10) {
+                                    FileLanguageIconView(language: lang, size: 14)
+                                        .frame(width: 22)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(lang.rawValue)
+                                            .font(.system(size: 13.5, weight: isSelected ? .bold : .medium))
+                                            .foregroundColor(.primary)
+                                        Text(".\(lang.defaultExtension) • \(lang.treeSitterLanguage != nil ? "Tree-sitter AST" : "Syntax Engine")")
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    if isSelected {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(Color(hex: palette.accent))
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
+                }
+                .listStyle(.insetGrouped)
+            }
+            .navigationTitle("Chọn Ngôn Ngữ — \(fileName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Đóng") { dismiss() }
+                }
+            }
+        }
+    }
+}
