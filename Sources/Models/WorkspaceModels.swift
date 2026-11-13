@@ -660,22 +660,126 @@ private extension TreeSitterLanguage {
     static var clojureOrFallback: TreeSitterLanguage { .bash }
 }
 
+// MARK: - VS Code Semantic Working-Tree File Decorations
+public enum WorkspaceFileDiffStatus: String, Codable, Equatable, Hashable, Sendable {
+    case unchanged
+    case untrackedNew  // Brand-new file ("U" — Green)
+    case addedCode     // Updated with newly added code lines ("A" — Green)
+    case modified      // Edited in-place without adding net new code ("M" — Yellow / Amber)
+    case deleted       // Recently deleted file ("D" — Red + strikethrough)
+
+    public var badgeText: String? {
+        switch self {
+        case .unchanged: return nil
+        case .untrackedNew: return "U"
+        case .addedCode: return "A"
+        case .modified: return "M"
+        case .deleted: return "D"
+        }
+    }
+
+    public var isStrikethrough: Bool {
+        self == .deleted
+    }
+
+    public var priorityRank: Int {
+        switch self {
+        case .deleted: return 4
+        case .modified: return 3
+        case .addedCode: return 2
+        case .untrackedNew: return 1
+        case .unchanged: return 0
+        }
+    }
+
+    /// Official VS Code Explorer / Git Decoration Colors (Dark & Light theme adapted)
+    public func colorHex(isDark: Bool) -> String? {
+        switch self {
+        case .unchanged:
+            return nil
+        case .untrackedNew, .addedCode:
+            return isDark ? "#73C991" : "#1A7F37"
+        case .modified:
+            return isDark ? "#E2C08D" : "#9A6700"
+        case .deleted:
+            return isDark ? "#F14C4C" : "#CF222E"
+        }
+    }
+
+    public static func classify(baselineContent: String?, currentContent: String?) -> WorkspaceFileDiffStatus {
+        switch (baselineContent, currentContent) {
+        case (nil, nil):
+            return .unchanged
+        case (nil, .some):
+            return .untrackedNew
+        case (.some, nil):
+            return .deleted
+        case let (.some(rawOld), .some(rawNew)):
+            let old = rawOld.replacingOccurrences(of: "\r\n", with: "\n")
+            let new = rawNew.replacingOccurrences(of: "\r\n", with: "\n")
+            if old == new {
+                return .unchanged
+            }
+            let oldNonEmpty = old.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            let newNonEmpty = new.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+
+            // Added new code lines (or populated a previously blank file) -> VS Code Green ("A")
+            if newNonEmpty.count > oldNonEmpty.count || (oldNonEmpty.isEmpty && !newNonEmpty.isEmpty) {
+                return .addedCode
+            }
+            // In-place code edits / replacements / line removals without adding net new code -> VS Code Amber/Yellow ("M")
+            return .modified
+        }
+    }
+
+    public static func lineDelta(baselineContent: String?, currentContent: String?) -> (added: Int, removed: Int) {
+        let oldLines = (baselineContent ?? "")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let newLines = (currentContent ?? "")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+
+        if baselineContent == nil { return (newLines.count, 0) }
+        if currentContent == nil { return (0, oldLines.count) }
+
+        var oldBag: [String: Int] = [:]
+        for l in oldLines { oldBag[l, default: 0] += 1 }
+        var shared = 0
+        for l in newLines {
+            if let c = oldBag[l], c > 0 {
+                shared += 1
+                oldBag[l] = c - 1
+            }
+        }
+        return (max(0, newLines.count - shared), max(0, oldLines.count - shared))
+    }
+}
+
 public struct FileNode: Identifiable, Hashable {
     public let id: String
     public let url: URL
     public let name: String
     public let isDirectory: Bool
+    public let isDeletedGhost: Bool
     public var children: [FileNode]?
 
     public var language: CodeLanguage {
         CodeLanguage.detect(from: url)
     }
 
-    public init(url: URL, isDirectory: Bool, children: [FileNode]? = nil) {
-        self.id = url.path
+    public init(url: URL, isDirectory: Bool, isDeletedGhost: Bool = false, children: [FileNode]? = nil) {
+        self.id = isDeletedGhost ? "deleted::\(url.path)" : url.path
         self.url = url
         self.name = url.lastPathComponent
         self.isDirectory = isDirectory
+        self.isDeletedGhost = isDeletedGhost
         self.children = children
     }
 }

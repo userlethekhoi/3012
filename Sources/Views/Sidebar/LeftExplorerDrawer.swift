@@ -138,6 +138,8 @@ public struct LeftExplorerDrawer: View {
 
                                 if tab == .ssh && sshService.isConnected {
                                     Circle().fill(Color.green).frame(width: 7, height: 7).offset(x: -5, y: 3)
+                                } else if tab == .git && workspace.totalDecoratedFilesCount > 0 {
+                                    Circle().fill(Color(hex: palette.accent)).frame(width: 7, height: 7).offset(x: -5, y: 3)
                                 }
                             }
                         }
@@ -364,6 +366,16 @@ public struct LeftExplorerDrawer: View {
                     .foregroundColor(Color(hex: palette.accent))
                     .lineLimit(1)
                 Spacer()
+                if workspace.totalDecoratedFilesCount > 0 {
+                    Button {
+                        workspace.resetDiffBaselineToCurrentDisk()
+                    } label: {
+                        Image(systemName: "checkmark.seal")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(Color(hex: palette.gutterForeground))
+                    }
+                    .help("Đặt trạng thái hiện tại làm mốc chuẩn (Xóa dấu U/A/M/D)")
+                }
                 Button {
                     targetParentDir = workspace.rootURL
                     newItemName = ""
@@ -393,6 +405,7 @@ public struct LeftExplorerDrawer: View {
                         FileNodeRow(
                             node: node,
                             depth: 0,
+                            workspace: workspace,
                             activeURL: workspace.activeTabID,
                             palette: palette,
                             onSelectFile: { url in
@@ -415,6 +428,12 @@ public struct LeftExplorerDrawer: View {
                             },
                             onDelete: { url in
                                 workspace.deleteItem(at: url)
+                            },
+                            onRestoreDeleted: { url in
+                                workspace.restoreDeletedFile(at: url)
+                            },
+                            onDismissDeleted: { url in
+                                workspace.dismissDeletedGhost(at: url)
                             }
                         )
                     }
@@ -517,6 +536,7 @@ public struct LeftExplorerDrawer: View {
                             commitMessageInput = ""
                             Task {
                                 await gitService.commitAll(message: msg, workspaceRoot: workspace.rootURL, sshService: sshService)
+                                workspace.resetDiffBaselineToCurrentDisk(with: gitService.commits.first?.snapshotFiles)
                             }
                         } label: {
                             Label("Commit All", systemImage: "checkmark.circle.fill")
@@ -537,6 +557,7 @@ public struct LeftExplorerDrawer: View {
                                     gitService.statusBanner = res
                                 } else {
                                     await gitService.pushToGitHubREST(workspaceRoot: workspace.rootURL, commitMessage: msg)
+                                    workspace.resetDiffBaselineToCurrentDisk(with: gitService.commits.first?.snapshotFiles)
                                 }
                             }
                         } label: {
@@ -559,29 +580,59 @@ public struct LeftExplorerDrawer: View {
                     .foregroundColor(Color(hex: palette.gutterForeground))
 
                 ForEach(gitService.changedFiles) { item in
-                    HStack {
+                    let statusColor: Color = {
+                        if let hex = item.diffKind.colorHex(isDark: palette.isDark) {
+                            return Color(hex: hex)
+                        }
+                        return Color(hex: palette.foreground)
+                    }()
+
+                    HStack(spacing: 6) {
                         Text(item.statusBadge)
                             .font(.system(size: 10, weight: .black, design: .monospaced))
-                            .foregroundColor(item.statusBadge == "A" ? .green : (item.statusBadge == "D" ? .red : .yellow))
-                            .frame(width: 16)
+                            .foregroundColor(statusColor)
+                            .frame(width: 15)
+
                         Button {
                             selectedGitDiffText = gitService.diffPreview(for: item.relativePath, workspaceRoot: workspace.rootURL)
                         } label: {
                             Text(item.relativePath)
-                                .font(.system(size: 11.5, design: .monospaced))
-                                .foregroundColor(Color(hex: palette.foreground))
+                                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                                .foregroundColor(statusColor)
+                                .strikethrough(item.diffKind.isStrikethrough, color: statusColor)
                                 .lineLimit(1)
                         }
-                        Spacer()
+
+                        Spacer(minLength: 4)
+
+                        if item.addedLines > 0 || item.removedLines > 0 {
+                            HStack(spacing: 3) {
+                                if item.addedLines > 0 {
+                                    Text("+\(item.addedLines)")
+                                        .foregroundColor(Color(hex: palette.isDark ? "#73C991" : "#1A7F37"))
+                                }
+                                if item.removedLines > 0 {
+                                    Text("-\(item.removedLines)")
+                                        .foregroundColor(Color(hex: palette.isDark ? "#F14C4C" : "#CF222E"))
+                                }
+                            }
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        }
+
                         Button {
                             Task {
-                                await gitService.discardChanges(for: item.relativePath, workspaceRoot: workspace.rootURL)
-                                workspace.reloadTree()
+                                if item.diffKind == .deleted {
+                                    workspace.restoreDeletedFile(at: workspace.rootURL.appendingPathComponent(item.relativePath))
+                                    await gitService.refreshStatus(workspaceRoot: workspace.rootURL, sshService: sshService)
+                                } else {
+                                    await gitService.discardChanges(for: item.relativePath, workspaceRoot: workspace.rootURL)
+                                    workspace.reloadTree()
+                                }
                             }
                         } label: {
                             Image(systemName: "arrow.uturn.backward")
                                 .font(.system(size: 10.5))
-                                .foregroundColor(.red)
+                                .foregroundColor(statusColor)
                         }
                     }
                     .padding(.vertical, 3)
@@ -1080,6 +1131,7 @@ public struct LeftExplorerDrawer: View {
 private struct FileNodeRow: View {
     let node: FileNode
     let depth: Int
+    @ObservedObject var workspace: WorkspaceManager
     let activeURL: URL?
     let palette: IDEColorPalette
     let onSelectFile: (URL) -> Void
@@ -1087,8 +1139,24 @@ private struct FileNodeRow: View {
     let onNewFolderInDir: (URL) -> Void
     let onRename: (URL) -> Void
     let onDelete: (URL) -> Void
+    let onRestoreDeleted: (URL) -> Void
+    let onDismissDeleted: (URL) -> Void
 
     @State private var isExpanded: Bool = true
+
+    private var itemDiffStatus: WorkspaceFileDiffStatus {
+        if node.isDirectory {
+            return workspace.folderDiffStatus(for: node)
+        }
+        return workspace.diffStatus(for: node.url, isDeletedGhost: node.isDeletedGhost)
+    }
+
+    private var itemTitleColor: Color {
+        if let hex = itemDiffStatus.colorHex(isDark: palette.isDark) {
+            return Color(hex: hex)
+        }
+        return Color(hex: palette.foreground)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -1097,6 +1165,8 @@ private struct FileNodeRow: View {
                     withAnimation(.easeInOut(duration: 0.15)) {
                         isExpanded.toggle()
                     }
+                } else if node.isDeletedGhost {
+                    onRestoreDeleted(node.url)
                 } else {
                     onSelectFile(node.url)
                 }
@@ -1114,14 +1184,43 @@ private struct FileNodeRow: View {
                     } else {
                         Spacer().frame(width: 12)
                         FileLanguageIconView(language: node.language, size: 12)
+                            .opacity(node.isDeletedGhost ? 0.55 : 1.0)
                     }
 
                     Text(node.name)
                         .font(.system(size: 12.5, weight: activeURL == node.url ? .bold : .regular))
-                        .foregroundColor(Color(hex: palette.foreground))
+                        .foregroundColor(itemTitleColor)
+                        .strikethrough(itemDiffStatus.isStrikethrough, color: itemTitleColor)
                         .lineLimit(1)
 
-                    Spacer()
+                    Spacer(minLength: 4)
+
+                    if node.isDirectory {
+                        if let hex = itemDiffStatus.colorHex(isDark: palette.isDark) {
+                            Circle()
+                                .fill(Color(hex: hex))
+                                .frame(width: 6, height: 6)
+                                .padding(.trailing, 2)
+                        }
+                    } else {
+                        if node.isDeletedGhost {
+                            Button {
+                                onRestoreDeleted(node.url)
+                            } label: {
+                                Image(systemName: "arrow.uturn.backward")
+                                    .font(.system(size: 9.5, weight: .bold))
+                                    .foregroundColor(itemTitleColor)
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        if let badge = itemDiffStatus.badgeText {
+                            Text(badge)
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(itemTitleColor)
+                                .frame(minWidth: 12, alignment: .trailing)
+                        }
+                    }
                 }
                 .padding(.leading, CGFloat(depth * 13))
                 .padding(.vertical, 5)
@@ -1130,12 +1229,21 @@ private struct FileNodeRow: View {
                 .cornerRadius(6)
             }
             .contextMenu {
-                if node.isDirectory {
-                    Button { onNewFileInDir(node.url) } label: { Label("Tạo File trong này", systemImage: "doc.badge.plus") }
-                    Button { onNewFolderInDir(node.url) } label: { Label("Tạo Thư mục con", systemImage: "folder.badge.plus") }
+                if node.isDeletedGhost {
+                    Button { onRestoreDeleted(node.url) } label: {
+                        Label("Khôi phục File vừa xóa", systemImage: "arrow.uturn.backward")
+                    }
+                    Button { onDismissDeleted(node.url) } label: {
+                        Label("Ẩn khỏi danh sách xóa", systemImage: "eye.slash")
+                    }
+                } else {
+                    if node.isDirectory {
+                        Button { onNewFileInDir(node.url) } label: { Label("Tạo File trong này", systemImage: "doc.badge.plus") }
+                        Button { onNewFolderInDir(node.url) } label: { Label("Tạo Thư mục con", systemImage: "folder.badge.plus") }
+                    }
+                    Button { onRename(node.url) } label: { Label("Đổi tên", systemImage: "pencil") }
+                    Button(role: .destructive) { onDelete(node.url) } label: { Label("Xóa", systemImage: "trash") }
                 }
-                Button { onRename(node.url) } label: { Label("Đổi tên", systemImage: "pencil") }
-                Button(role: .destructive) { onDelete(node.url) } label: { Label("Xóa", systemImage: "trash") }
             }
 
             if node.isDirectory, isExpanded, let children = node.children {
@@ -1143,13 +1251,16 @@ private struct FileNodeRow: View {
                     FileNodeRow(
                         node: child,
                         depth: depth + 1,
+                        workspace: workspace,
                         activeURL: activeURL,
                         palette: palette,
                         onSelectFile: onSelectFile,
                         onNewFileInDir: onNewFileInDir,
                         onNewFolderInDir: onNewFolderInDir,
                         onRename: onRename,
-                        onDelete: onDelete
+                        onDelete: onDelete,
+                        onRestoreDeleted: onRestoreDeleted,
+                        onDismissDeleted: onDismissDeleted
                     )
                 }
             }

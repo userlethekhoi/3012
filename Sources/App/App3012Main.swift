@@ -736,12 +736,20 @@ public struct MainIDEWorkspaceView: View {
                 }
             }
 
-            // Compact Scrollable Tab Strip
+            // Compact Scrollable Tab Strip with VS Code Working-Tree Status Colors (U / A / M / D)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
                     ForEach(workspace.openTabs) { tab in
                         let isSelected = (workspace.activeTabID == tab.id)
                         let isRemoteSFTP = (sshService.remotePathBound(to: tab.fileURL) != nil)
+                        let tabDiffStatus = workspace.diffStatus(for: tab.fileURL)
+                        let tabStatusColor: Color = {
+                            if let hex = tabDiffStatus.colorHex(isDark: palette.isDark) {
+                                return Color(hex: hex)
+                            }
+                            return Color(hex: isSelected ? palette.foreground : palette.gutterForeground)
+                        }()
+
                         HStack(spacing: 4) {
                             if isRemoteSFTP {
                                 Image(systemName: "icloud")
@@ -750,12 +758,18 @@ public struct MainIDEWorkspaceView: View {
                             } else {
                                 FileLanguageIconView(language: tab.language, size: 10.5)
                             }
+
                             Text(tab.title)
-                                .font(.system(size: 12, weight: isSelected ? .bold : .regular))
-                                .foregroundColor(Color(hex: isSelected ? palette.foreground : palette.gutterForeground))
+                                .font(.system(size: 12, weight: isSelected ? .bold : .medium))
+                                .foregroundColor(tabStatusColor)
+                                .strikethrough(tabDiffStatus.isStrikethrough, color: tabStatusColor)
                                 .lineLimit(1)
 
-                            if tab.isDirty {
+                            if let badge = tabDiffStatus.badgeText {
+                                Text(badge)
+                                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                    .foregroundColor(tabStatusColor)
+                            } else if tab.isDirty {
                                 Circle()
                                     .fill(Color(hex: palette.accent))
                                     .frame(width: 5.5, height: 5.5)

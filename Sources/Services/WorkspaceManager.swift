@@ -9,6 +9,10 @@ public final class WorkspaceManager: ObservableObject {
     @Published public var activeTabID: URL?
     @Published public var searchQuery: String = ""
     @Published public var searchResults: [(url: URL, line: Int, preview: String)] = []
+    @Published public private(set) var fileStatuses: [String: WorkspaceFileDiffStatus] = [:]
+
+    private var baselineSnapshots: [String: String] = [:]
+    private var deletedGhostContents: [String: String] = [:]
 
     public var onFileSavedOrChanged: (() -> Void)?
     public var onAnyTabSavedWithURL: ((URL, String) -> Void)?
@@ -18,11 +22,16 @@ public final class WorkspaceManager: ObservableObject {
         return openTabs.first(where: { $0.id == activeTabID })
     }
 
+    public var totalDecoratedFilesCount: Int {
+        fileStatuses.values.filter { $0 != .unchanged }.count
+    }
+
     public init() {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let defaultWorkspace = docs.appendingPathComponent("Workspace", isDirectory: true)
         self.rootURL = defaultWorkspace
         bootstrapDefaultWorkspaceIfNeeded(at: defaultWorkspace)
+        loadOrInitializeBaseline(at: defaultWorkspace)
         reloadTree()
         let indexFile = defaultWorkspace.appendingPathComponent("index.html")
         if FileManager.default.fileExists(atPath: indexFile.path) {
@@ -172,28 +181,44 @@ public final class WorkspaceManager: ObservableObject {
 
     public func reloadTree() {
         fileTree = buildNodes(at: rootURL)
+        recomputeAllFileStatuses()
     }
 
     private func buildNodes(at directory: URL) -> [FileNode] {
         let fm = FileManager.default
-        guard let items = try? fm.contentsOfDirectory(
+        let items = (try? fm.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
-        ) else {
-            return []
-        }
+        )) ?? []
 
         var dirs: [FileNode] = []
         var files: [FileNode] = []
+        var existingNamesLower = Set<String>()
 
         for url in items {
+            existingNamesLower.insert(url.lastPathComponent.lowercased())
             let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
             if isDir {
                 let children = buildNodes(at: url)
                 dirs.append(FileNode(url: url, isDirectory: true, children: children))
             } else {
-                files.append(FileNode(url: url, isDirectory: false, children: nil))
+                files.append(FileNode(url: url, isDirectory: false, isDeletedGhost: false, children: nil))
+            }
+        }
+
+        // Inject recently deleted / baseline-deleted files belonging to this exact folder so they show in Red ("D")
+        let dirStandardPath = directory.standardizedFileURL.path
+        let allDeletedRelPaths = Set(deletedGhostContents.keys).union(
+            baselineSnapshots.keys.filter { rel in
+                !fm.fileExists(atPath: rootURL.appendingPathComponent(rel).path)
+            }
+        )
+        for rel in allDeletedRelPaths {
+            let deletedURL = rootURL.appendingPathComponent(rel)
+            let parentPath = deletedURL.deletingLastPathComponent().standardizedFileURL.path
+            if parentPath == dirStandardPath && !existingNamesLower.contains(deletedURL.lastPathComponent.lowercased()) {
+                files.append(FileNode(url: deletedURL, isDirectory: false, isDeletedGhost: true, children: nil))
             }
         }
 
@@ -205,6 +230,7 @@ public final class WorkspaceManager: ObservableObject {
     public func flattenFiles(in nodes: [FileNode]) -> [URL] {
         var result: [URL] = []
         for node in nodes {
+            if node.isDeletedGhost { continue }
             if node.isDirectory, let children = node.children {
                 result.append(contentsOf: flattenFiles(in: children))
             } else {
@@ -256,6 +282,7 @@ public final class WorkspaceManager: ObservableObject {
             onFileSavedOrChanged?()
             onAnyTabSavedWithURL?(openTabs[idx].fileURL, newText)
         }
+        updateSingleFileStatus(for: openTabs[idx].fileURL, liveContent: newText)
     }
 
     public func updateSelectionOnly(_ range: NSRange) {
@@ -287,6 +314,7 @@ public final class WorkspaceManager: ObservableObject {
               let idx = openTabs.firstIndex(where: { $0.id == activeTabID }) else { return }
         try? openTabs[idx].content.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
         openTabs[idx].savedContent = openTabs[idx].content
+        updateSingleFileStatus(for: openTabs[idx].fileURL, liveContent: openTabs[idx].content)
         onFileSavedOrChanged?()
         onAnyTabSavedWithURL?(openTabs[idx].fileURL, openTabs[idx].content)
     }
@@ -296,6 +324,7 @@ public final class WorkspaceManager: ObservableObject {
             try? openTabs[idx].content.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
             openTabs[idx].savedContent = openTabs[idx].content
         }
+        recomputeAllFileStatuses()
         onFileSavedOrChanged?()
     }
 
@@ -315,6 +344,9 @@ public final class WorkspaceManager: ObservableObject {
         let parent = directory ?? rootURL
         try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         let target = parent.appendingPathComponent(name)
+        let rel = relativePath(for: target)
+        deletedGhostContents.removeValue(forKey: rel)
+        saveDeletedGhostsMeta()
         let lang = CodeLanguage.detect(from: target)
         let body = initialContent ?? lang.starterTemplate
         do {
@@ -358,12 +390,47 @@ public final class WorkspaceManager: ObservableObject {
     }
 
     public func deleteItem(at url: URL) {
+        let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+        if !isDir {
+            let rel = relativePath(for: url)
+            let priorContent = openTabs.first(where: { $0.fileURL.standardizedFileURL == url.standardizedFileURL })?.content
+                ?? (try? String(contentsOf: url, encoding: .utf8))
+                ?? baselineSnapshots[rel]
+                ?? ""
+            deletedGhostContents[rel] = priorContent
+            saveDeletedGhostsMeta()
+        }
         if let tab = openTabs.first(where: { $0.fileURL.standardizedFileURL == url.standardizedFileURL }) {
-            closeTab(tab.id)
+            openTabs.removeAll { $0.id == tab.id }
+            if activeTabID == tab.id {
+                activeTabID = openTabs.last?.id
+            }
         }
         try? FileManager.default.removeItem(at: url)
         reloadTree()
         onFileSavedOrChanged?()
+    }
+
+    public func restoreDeletedFile(at url: URL) {
+        let rel = relativePath(for: url)
+        let restoredBody = deletedGhostContents[rel] ?? baselineSnapshots[rel] ?? ""
+        let parent = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        try? restoredBody.write(to: url, atomically: true, encoding: .utf8)
+        deletedGhostContents.removeValue(forKey: rel)
+        saveDeletedGhostsMeta()
+        reloadTree()
+        openFile(at: url)
+        onFileSavedOrChanged?()
+    }
+
+    public func dismissDeletedGhost(at url: URL) {
+        let rel = relativePath(for: url)
+        deletedGhostContents.removeValue(forKey: rel)
+        baselineSnapshots.removeValue(forKey: rel)
+        saveDeletedGhostsMeta()
+        saveBaselineMeta()
+        reloadTree()
     }
 
     public func renameItem(at url: URL, to newName: String) {
@@ -372,6 +439,12 @@ public final class WorkspaceManager: ObservableObject {
         let dest = url.deletingLastPathComponent().appendingPathComponent(trimmed)
         do {
             try FileManager.default.moveItem(at: url, to: dest)
+            let oldRel = relativePath(for: url)
+            let newRel = relativePath(for: dest)
+            if let baseVal = baselineSnapshots.removeValue(forKey: oldRel) {
+                baselineSnapshots[newRel] = baseVal
+                saveBaselineMeta()
+            }
             if let idx = openTabs.firstIndex(where: { $0.fileURL.standardizedFileURL == url.standardizedFileURL }) {
                 let content = openTabs[idx].content
                 let wasActive = (activeTabID == openTabs[idx].id)
@@ -390,10 +463,144 @@ public final class WorkspaceManager: ObservableObject {
         self.rootURL = externalURL
         self.openTabs.removeAll()
         self.activeTabID = nil
+        loadOrInitializeBaseline(at: externalURL)
         reloadTree()
         if let first = flattenFiles(in: fileTree).first {
             openFile(at: first)
         }
+    }
+
+    // MARK: - VS Code Working-Tree Diff Baseline & Status Decoration Engine
+    private var baselineMetaURL: URL {
+        rootURL.appendingPathComponent(".3012baseline.json")
+    }
+
+    private var deletedGhostsMetaURL: URL {
+        rootURL.appendingPathComponent(".3012deleted.json")
+    }
+
+    private func loadOrInitializeBaseline(at root: URL) {
+        deletedGhostContents = [:]
+        if let ghostData = try? Data(contentsOf: root.appendingPathComponent(".3012deleted.json")),
+           let decodedGhosts = try? JSONDecoder().decode([String: String].self, from: ghostData) {
+            deletedGhostContents = decodedGhosts
+        }
+
+        if let data = try? Data(contentsOf: root.appendingPathComponent(".3012baseline.json")),
+           let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+            baselineSnapshots = decoded
+            return
+        }
+
+        // Seed initial clean baseline from existing files on disk
+        baselineSnapshots = snapshotCurrentDiskTextFiles(at: root)
+        saveBaselineMeta()
+    }
+
+    public func resetDiffBaselineToCurrentDisk(with customSnapshot: [String: String]? = nil) {
+        baselineSnapshots = customSnapshot ?? snapshotCurrentDiskTextFiles(at: rootURL)
+        deletedGhostContents.removeAll()
+        saveBaselineMeta()
+        saveDeletedGhostsMeta()
+        reloadTree()
+    }
+
+    private func saveBaselineMeta() {
+        if let data = try? JSONEncoder().encode(baselineSnapshots) {
+            try? data.write(to: baselineMetaURL, options: .atomic)
+        }
+    }
+
+    private func saveDeletedGhostsMeta() {
+        if deletedGhostContents.isEmpty {
+            try? FileManager.default.removeItem(at: deletedGhostsMetaURL)
+        } else if let data = try? JSONEncoder().encode(deletedGhostContents) {
+            try? data.write(to: deletedGhostsMetaURL, options: .atomic)
+        }
+    }
+
+    private func snapshotCurrentDiskTextFiles(at root: URL) -> [String: String] {
+        var map: [String: String] = [:]
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return map }
+
+        let rootPrefix = root.standardizedFileURL.path
+        for case let fileURL as URL in enumerator {
+            let isDir = (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            guard !isDir else { continue }
+            guard let text = try? String(contentsOf: fileURL, encoding: .utf8), text.utf8.count < 512_000 else { continue }
+            var rel = fileURL.standardizedFileURL.path
+            if rel.hasPrefix(rootPrefix) {
+                rel = String(rel.dropFirst(rootPrefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            }
+            if !rel.isEmpty {
+                map[rel] = text
+            }
+        }
+        return map
+    }
+
+    private func updateSingleFileStatus(for url: URL, liveContent: String) {
+        let rel = relativePath(for: url)
+        let status = WorkspaceFileDiffStatus.classify(
+            baselineContent: baselineSnapshots[rel],
+            currentContent: liveContent
+        )
+        if fileStatuses[rel] != status {
+            if status == .unchanged {
+                fileStatuses.removeValue(forKey: rel)
+            } else {
+                fileStatuses[rel] = status
+            }
+        }
+    }
+
+    public func recomputeAllFileStatuses() {
+        var updated: [String: WorkspaceFileDiffStatus] = [:]
+        let diskFiles = snapshotCurrentDiskTextFiles(at: rootURL)
+
+        for (rel, diskContent) in diskFiles {
+            let openContent = openTabs.first(where: { relativePath(for: $0.fileURL) == rel })?.content
+            let status = WorkspaceFileDiffStatus.classify(
+                baselineContent: baselineSnapshots[rel],
+                currentContent: openContent ?? diskContent
+            )
+            if status != .unchanged {
+                updated[rel] = status
+            }
+        }
+
+        let deletedPaths = Set(deletedGhostContents.keys).union(
+            baselineSnapshots.keys.filter { diskFiles[$0] == nil }
+        )
+        for delRel in deletedPaths where diskFiles[delRel] == nil {
+            updated[delRel] = .deleted
+        }
+
+        if fileStatuses != updated {
+            fileStatuses = updated
+        }
+    }
+
+    public func diffStatus(for url: URL, isDeletedGhost: Bool = false) -> WorkspaceFileDiffStatus {
+        if isDeletedGhost { return .deleted }
+        let rel = relativePath(for: url)
+        return fileStatuses[rel] ?? .unchanged
+    }
+
+    public func folderDiffStatus(for node: FileNode) -> WorkspaceFileDiffStatus {
+        guard node.isDirectory, let children = node.children else { return .unchanged }
+        var highest: WorkspaceFileDiffStatus = .unchanged
+        for child in children {
+            let childStatus = child.isDirectory ? folderDiffStatus(for: child) : diffStatus(for: child.url, isDeletedGhost: child.isDeletedGhost)
+            if childStatus.priorityRank > highest.priorityRank {
+                highest = childStatus
+            }
+        }
+        return highest
     }
 
     public func performWorkspaceSearch(_ query: String) {

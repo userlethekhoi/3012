@@ -4,7 +4,24 @@ import ZIPFoundation
 public struct GitChangedFile: Identifiable, Equatable {
     public var id: String { relativePath }
     public let relativePath: String
-    public let statusBadge: String // "M", "A", "D"
+    public let statusBadge: String // "U", "A", "M", "D"
+    public let diffKind: WorkspaceFileDiffStatus
+    public let addedLines: Int
+    public let removedLines: Int
+
+    public init(
+        relativePath: String,
+        statusBadge: String,
+        diffKind: WorkspaceFileDiffStatus = .modified,
+        addedLines: Int = 0,
+        removedLines: Int = 0
+    ) {
+        self.relativePath = relativePath
+        self.statusBadge = statusBadge
+        self.diffKind = diffKind
+        self.addedLines = addedLines
+        self.removedLines = removedLines
+    }
 }
 
 public struct GitCommitRecord: Codable, Identifiable, Equatable {
@@ -54,7 +71,22 @@ public final class GitService: ObservableObject {
                     let trimmed = line.trimmingCharacters(in: .whitespaces)
                     let code = String(trimmed.prefix(2)).trimmingCharacters(in: .whitespaces)
                     let path = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-                    return GitChangedFile(relativePath: path, statusBadge: code.isEmpty ? "M" : code)
+                    let kind: WorkspaceFileDiffStatus
+                    let badge: String
+                    if code.contains("?") {
+                        kind = .untrackedNew
+                        badge = "U"
+                    } else if code.contains("A") {
+                        kind = .addedCode
+                        badge = "A"
+                    } else if code.contains("D") {
+                        kind = .deleted
+                        badge = "D"
+                    } else {
+                        kind = .modified
+                        badge = "M"
+                    }
+                    return GitChangedFile(relativePath: path, statusBadge: badge, diffKind: kind)
                 }
                 return
             }
@@ -62,20 +94,47 @@ public final class GitService: ObservableObject {
 
         loadLocalRepoMeta(workspaceRoot: workspaceRoot)
         let currentDisk = collectWorkspaceTextFiles(at: workspaceRoot)
-        let baseline = commits.first?.snapshotFiles ?? [:]
+        let fallbackBaseline: [String: String] = {
+            if let data = try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012baseline.json")),
+               let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+                return decoded
+            }
+            return [:]
+        }()
+        let deletedGhosts: [String: String] = {
+            if let data = try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012deleted.json")),
+               let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+                return decoded
+            }
+            return [:]
+        }()
+        let baseline = commits.first?.snapshotFiles ?? fallbackBaseline
 
         var diffs: [GitChangedFile] = []
         for (path, content) in currentDisk {
-            if let old = baseline[path] {
-                if old != content {
-                    diffs.append(GitChangedFile(relativePath: path, statusBadge: "M"))
-                }
-            } else {
-                diffs.append(GitChangedFile(relativePath: path, statusBadge: "A"))
+            let status = WorkspaceFileDiffStatus.classify(baselineContent: baseline[path], currentContent: content)
+            if status != .unchanged, let badge = status.badgeText {
+                let delta = WorkspaceFileDiffStatus.lineDelta(baselineContent: baseline[path], currentContent: content)
+                diffs.append(GitChangedFile(
+                    relativePath: path,
+                    statusBadge: badge,
+                    diffKind: status,
+                    addedLines: delta.added,
+                    removedLines: delta.removed
+                ))
             }
         }
-        for (oldPath, _) in baseline where currentDisk[oldPath] == nil {
-            diffs.append(GitChangedFile(relativePath: oldPath, statusBadge: "D"))
+        let allDeleted = Set(baseline.keys).union(deletedGhosts.keys).filter { currentDisk[$0] == nil }
+        for oldPath in allDeleted {
+            let oldText = baseline[oldPath] ?? deletedGhosts[oldPath]
+            let delta = WorkspaceFileDiffStatus.lineDelta(baselineContent: oldText, currentContent: nil)
+            diffs.append(GitChangedFile(
+                relativePath: oldPath,
+                statusBadge: "D",
+                diffKind: .deleted,
+                addedLines: 0,
+                removedLines: delta.removed
+            ))
         }
         diffs.sort { $0.relativePath < $1.relativePath }
         changedFiles = diffs
@@ -119,9 +178,24 @@ public final class GitService: ObservableObject {
     }
 
     public func discardChanges(for filePath: String, workspaceRoot: URL) async {
-        guard let latest = commits.first else { return }
+        let fallbackBaseline: [String: String] = {
+            if let data = try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012baseline.json")),
+               let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+                return decoded
+            }
+            return [:]
+        }()
+        let deletedGhosts: [String: String] = {
+            if let data = try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012deleted.json")),
+               let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+                return decoded
+            }
+            return [:]
+        }()
+        let snapshot = commits.first?.snapshotFiles ?? fallbackBaseline
         let targetURL = workspaceRoot.appendingPathComponent(filePath)
-        if let oldContent = latest.snapshotFiles[filePath] {
+        if let oldContent = snapshot[filePath] ?? deletedGhosts[filePath] {
+            try? FileManager.default.createDirectory(at: targetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? oldContent.write(to: targetURL, atomically: true, encoding: .utf8)
         } else {
             try? FileManager.default.removeItem(at: targetURL)
@@ -132,7 +206,14 @@ public final class GitService: ObservableObject {
     public func diffPreview(for filePath: String, workspaceRoot: URL) -> String {
         let targetURL = workspaceRoot.appendingPathComponent(filePath)
         let newText = (try? String(contentsOf: targetURL, encoding: .utf8)) ?? ""
-        let oldText = commits.first?.snapshotFiles[filePath] ?? ""
+        let fallbackBaseline: [String: String] = {
+            if let data = try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012baseline.json")),
+               let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+                return decoded
+            }
+            return [:]
+        }()
+        let oldText = commits.first?.snapshotFiles[filePath] ?? fallbackBaseline[filePath] ?? ""
         let oldSet = Set(oldText.components(separatedBy: "\n"))
         let newSet = Set(newText.components(separatedBy: "\n"))
         var lines: [String] = []

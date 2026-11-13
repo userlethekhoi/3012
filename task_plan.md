@@ -1,10 +1,18 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.1.0 CI VERIFIED GREEN (GitHub Actions Run `#43378626235`, Artifact `14015852326` ~11.87 MB ✅)** — Nâng cấp nhận diện toàn diện **64 ngôn ngữ lập trình** (48 bộ ngữ pháp `Tree-sitter` native + 3 tầng nhận diện), **Tự động Format Code theo ngôn ngữ** (`CodeFormatterService` + Format-on-Save/Run), và **VS Code Smart IntelliSense** (Fuzzy/CamelCase, gợi ý sau dấu `.` / `->` / `::` / `#include <`, Emmet HTML, đặt con trỏ thông minh `$0`, gợi ý tham số hàm trực tiếp & Auto-Indent khi nhấn Enter).
+> **Trạng thái hiện tại:** **v3.2.0 (Build 6) — Đang chạy xác minh CI & tự động xuất bản Release trên GitHub Actions** — Tự động đính kèm trực tiếp `3012-Unsigned.ipa` vào **GitHub Releases** sau mỗi lần build, bổ sung hệ thống **Màu sắc Trạng thái File chuẩn VS Code (`U` / `A` xanh lá, `M` vàng hổ phách, `D` đỏ gạch ngang + Khôi phục 1 chạm)** và tài liệu `README.md` chuẩn dự án lớn.
 
 ---
 
-## Tổng kết Toàn bộ 6 Giai Đoạn Triển Khai
+## Tổng kết Toàn bộ 7 Giai Đoạn Triển Khai
+
+### Phase 7 (v3.2.0): Tự Động Xuất Bản GitHub Release `.ipa`, Màu Trạng Thái File VS Code & `README.md` Chuyên Nghiệp (`in_progress`)
+- [x] **Tự động phát hành `3012-Unsigned.ipa` vào GitHub Releases (`.github/workflows/build-ipa.yml`):** Tự động tạo bản Release mới nhất (`--latest`) kèm mã kiểm tra `SHA256SUMS.txt` và đường dẫn tải trực tiếp `releases/latest/download/3012-Unsigned.ipa` ngay sau mỗi lần build xanh.
+- [x] **Màu sắc Trạng thái File chuẩn VS Code (`WorkspaceFileDiffStatus` — `U` / `A` / `M` / `D`):** Đồng bộ xuyên suốt trên cây thư mục **Explorer**, thanh **Tab đang mở** và **Source Control**:
+  - **Màu Đỏ (`D` + gạch ngang):** File vừa bị xóa vẫn hiển thị trực quan tại thư mục gốc kèm nút **Khôi phục 1 chạm** (`restoreDeletedFile`) hoặc ẩn đi (`dismissDeletedGhost`).
+  - **Màu Xanh lá (`U` / `A`):** File mới tạo (`U`) hoặc file hiện có được bổ sung thêm dòng code mới (`A`).
+  - **Màu Vàng hổ phách (`M`):** File sửa đổi nội dung tại chỗ mà không bổ sung thêm dòng mới (`M`), kèm chấm màu tổng hợp trạng thái trên các thư mục cha.
+- [x] **Tài liệu `README.md` chuẩn Open-Source / Enterprise:** Thiết kế tinh gọn không lạm dụng biểu tượng AI, tích hợp huy hiệu CI/Release tải nhanh, sơ đồ kiến trúc hệ thống, bảng hướng dẫn ký `.p12`, bảng màu trạng thái file và hướng dẫn tự biên dịch từ mã nguồn.
 
 ### Phase 6 (v3.1.0): Nhận Diện Toàn Bộ 64 Ngôn Ngữ, Tự Động Format Code & VS Code Smart IntelliSense (`completed` ✅)
 - [x] **Universal Programming Language Recognition (64 Ngôn ngữ + 48 `TreeSitter*Runestone` AST):** Nhận diện 3 tầng (tên file đặc biệt `Dockerfile`/`Makefile`/`CMakeLists.txt`/`Cargo.toml` + hơn 145 đuôi mở rộng + quét nội dung/shebang `#!/usr/bin/env ...`), mở rộng thực thi **1-Tap Run cho 30+ ngôn ngữ** (Zero-Config Wandbox + SSH VPS) và thanh chọn **Language Mode (`Auto-Detect` + ghi đè thủ công)** chuẩn VS Code (`WorkspaceModels.swift`, `SymbolAndTimelineSheets.swift`).

@@ -7,6 +7,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-ipa:
     name: Build Unsigned iOS IPA (3012)
@@ -72,3 +75,44 @@ jobs:
           path: 3012-Unsigned.ipa
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish 3012-Unsigned.ipa to GitHub Releases
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APP_VERSION=$(grep 'MARKETING_VERSION:' project.yml | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
+          TAG_NAME="v${APP_VERSION}-b${{ github.run_number }}"
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          COMMIT_MSG=$(git log -1 --pretty=%s)
+          IPA_SIZE=$(du -h 3012-Unsigned.ipa | cut -f1 | tr -d ' ')
+          shasum -a 256 3012-Unsigned.ipa > SHA256SUMS.txt
+          SHA256_VAL=$(cut -d ' ' -f1 SHA256SUMS.txt)
+
+          cat <<EOF > RELEASE_NOTES.md
+          ## 3012 Mobile IDE — v${APP_VERSION} (Build #${{ github.run_number }})
+
+          Direct unsigned iOS/iPadOS application package ready for external certificate signing (\`.p12\` / \`.mobileprovision\` via Feather, ESign, AltStore, SideStore, Sideloadly, or TrollStore).
+
+          | Property | Value |
+          | :--- | :--- |
+          | **Version** | \`${APP_VERSION}\` (Build \`#${{ github.run_number }}\`) |
+          | **Bundle Identifier** | \`com.dev.app3012\` |
+          | **Target Platform** | \`iOS 17.0+\` / \`iPadOS 17.0+\` (arm64) |
+          | **Package Size** | \`${IPA_SIZE}\` |
+          | **Commit** | \`${SHORT_SHA}\` — ${COMMIT_MSG} |
+          | **SHA-256** | \`${SHA256_VAL}\` |
+
+          ### Direct Download
+          - **[Download 3012-Unsigned.ipa](https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/3012-Unsigned.ipa)**
+          EOF
+
+          if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" 3012-Unsigned.ipa SHA256SUMS.txt --clobber --repo "${{ github.repository }}"
+          else
+            gh release create "${TAG_NAME}" 3012-Unsigned.ipa SHA256SUMS.txt \
+              --repo "${{ github.repository }}" \
+              --title "3012 v${APP_VERSION} (Build #${{ github.run_number }})" \
+              --notes-file RELEASE_NOTES.md \
+              --latest
+          fi
