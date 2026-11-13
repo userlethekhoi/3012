@@ -428,7 +428,7 @@ public final class LocalDaemonService: ObservableObject {
         }
 
         let botURL = root.appendingPathComponent("telegram_bot.js")
-        let botTemplate = """
+        let botTemplate = #"""
         // 3012 On-Device 24/7 Telegram Bot (Runs locally on your iPhone/iPad — No VPS required)
         // Enable "Keep Terminal & Bot Alive 24/7" so it keeps running even when the screen is off.
 
@@ -476,7 +476,7 @@ public final class LocalDaemonService: ObservableObject {
 
         bot.startPolling(1200);
         console.log('Bot polling loop active on device. Safe to lock screen when Keep-Alive is ON.');
-        """
+        """#
         try? botTemplate.write(to: botURL, atomically: true, encoding: .utf8)
         workspace.reloadTree()
         workspace.openFile(at: botURL)
