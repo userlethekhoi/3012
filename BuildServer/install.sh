@@ -94,11 +94,16 @@ if systemctl is-active --quiet cloudflared 2>/dev/null; then
 else
     TOKEN="${CF_TUNNEL_TOKEN:-}"
     if [ -z "$TOKEN" ] && [ -r /dev/tty ]; then
-        printf '\033[1;36m[3012]\033[0m Dán Cloudflare Tunnel Token (ký tự sẽ được ẩn, Enter để bỏ qua): ' > /dev/tty
+        printf '\033[1;36m[3012]\033[0m Dán Cloudflare Tunnel Token hoặc cả câu lệnh install (ký tự sẽ được ẩn, Enter để bỏ qua): ' > /dev/tty
         read -rs TOKEN < /dev/tty || true
         printf '\n' > /dev/tty
     fi
+    # Extract eyJ... token automatically if the user pasted the full "sudo cloudflared service install ..." line
+    if printf '%s' "$TOKEN" | grep -qE 'eyJ[A-Za-z0-9_=-]+'; then
+        TOKEN="$(printf '%s' "$TOKEN" | grep -oE 'eyJ[A-Za-z0-9_=-]+' | head -n 1)"
+    fi
     if [ -n "$TOKEN" ]; then
+        cloudflared service uninstall >/dev/null 2>&1 || true
         cloudflared service install "$TOKEN" >/dev/null 2>&1 || die "Không cài được tunnel — kiểm tra lại token."
         unset TOKEN
         say "Đã kết nối Cloudflare Tunnel."
