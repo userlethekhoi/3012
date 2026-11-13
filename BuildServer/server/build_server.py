@@ -424,10 +424,61 @@ class Handler(BaseHTTPRequestHandler):
             "elapsed": round((job.finished or time.time()) - (job.started or time.time()), 1),
         }
 
+    def send_html(self, status: int, html_body: str) -> None:
+        data = html_body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     # Routes ------------------------------------------------------------------
     def do_GET(self):
         url = urlparse(self.path)
         parts = [p for p in url.path.split("/") if p]
+        if parts == []:
+            stats = QUEUE.stats()
+            if "text/html" in self.headers.get("Accept", "").lower():
+                html_doc = f"""<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>3012 Theos Build Server</title>
+<style>
+  body{{margin:0;background:#0A0D12;color:#F1F5F9;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;display:grid;place-items:center;min-height:100vh;padding:24px}}
+  .card{{max-width:540px;width:100%;background:#141A22;border:1px solid #263040;border-radius:12px;padding:24px;box-sizing:border-box}}
+  .badge{{display:inline-block;padding:4px 10px;border-radius:6px;background:rgba(16,185,129,.16);color:#10B981;font-size:12px;font-weight:700;letter-spacing:.04em}}
+  h1{{margin:14px 0 8px;font-size:20px}}
+  p{{color:#94A3B8;font-size:13px;line-height:1.55}}
+  .grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}}
+  .stat{{background:#0D1117;border:1px solid #1E293B;border-radius:8px;padding:10px}}
+  .stat b{{display:block;font-size:18px;color:#F8FAFC;margin-top:4px}}
+  .stat span{{font-size:11px;color:#64748B;text-transform:uppercase}}
+  code{{background:#0D1117;padding:2px 6px;border-radius:4px;color:#E2E8F0}}
+</style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">3012 BUILD SERVER v{VERSION} — ONLINE</span>
+    <h1>Theos Remote Compiler Sandbox</h1>
+    <p>Máy chủ biên dịch <code>.deb</code> / <code>.dylib</code> cách ly bằng Docker cho ứng dụng iOS <strong>3012</strong>.</p>
+    <div class="grid">
+      <div class="stat"><span>Đang build</span><b>{stats["running"]} / {stats["capacity"]}</b></div>
+      <div class="stat"><span>Hàng đợi</span><b>{stats["queued"]}</b></div>
+      <div class="stat"><span>Timeout</span><b>{CFG["timeout"]}s</b></div>
+    </div>
+    <p>Sandbox: <code>--network none</code> • <code>--read-only</code> • <code>uid 1000</code><br/>Endpoint API: <code>/v1/health</code> • <code>POST /v1/builds</code></p>
+  </div>
+</body>
+</html>"""
+                return self.send_html(200, html_doc)
+            body = {"ok": True, "version": VERSION, **stats,
+                    "limits": {"maxUploadMB": CFG["max_upload"] // (1024 * 1024),
+                               "timeoutSec": CFG["timeout"],
+                               "perDeviceHour": CFG["rate_device"]}}
+            return self.send_json(200, body)
         if parts == ["v1", "health"]:
             body = {"ok": True, "version": VERSION, **QUEUE.stats(),
                     "limits": {"maxUploadMB": CFG["max_upload"] // (1024 * 1024),

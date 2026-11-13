@@ -297,7 +297,7 @@ public final class CodeIntelligenceService: ObservableObject {
             let ch = nsText.character(at: start - 1)
             guard let scalar = UnicodeScalar(ch) else { break }
             let isIdent = CharacterSet.alphanumerics.contains(scalar)
-                || scalar == "_" || scalar == "#" || scalar == "@" || scalar == "$"
+                || scalar == "_" || scalar == "#" || scalar == "@" || scalar == "$" || scalar == "%"
             if isIdent {
                 start -= 1
             } else {
@@ -306,7 +306,7 @@ public final class CodeIntelligenceService: ObservableObject {
         }
 
         let prefixLen = cursor - start
-        let triggersOnSingleChar = (prefixLen == 1 && ["#", "@", "$"].contains(nsText.substring(with: NSRange(location: start, length: 1))))
+        let triggersOnSingleChar = (prefixLen == 1 && ["#", "@", "$", "%"].contains(nsText.substring(with: NSRange(location: start, length: 1))))
         guard prefixLen >= 1 && (prefixLen >= 2 || triggersOnSingleChar) else {
             if !completions.isEmpty { completions = [] }
             return
@@ -1104,6 +1104,8 @@ public final class CodeIntelligenceService: ObservableObject {
             ]
         case .c, .cpp, .objectiveC, .zig, .dlang:
             patterns = [
+                (#"^\s*%hook\s+([A-Za-z_][A-Za-z0-9_]*)"#, 1, "%hook", "cube"),
+                (#"^\s*[-+]\s*\([^)]+\)\s*([A-Za-z_][A-Za-z0-9_:]*)"#, 1, "Method", "function"),
                 (#"\b(class|struct|namespace|enum)\s+([A-Za-z_][A-Za-z0-9_]*)"#, 2, "Type", "cube"),
                 (#"^\s*(?:[A-Za-z_][A-Za-z0-9_:<>\*\s&]+)\s+([A-Za-z_~][A-Za-z0-9_:]*)\s*\([^;]*\)\s*(?:const)?\s*\{"#, 1, "Function", "function")
             ]
@@ -1217,7 +1219,18 @@ public final class CodeIntelligenceService: ObservableObject {
                 ("nullptr", "nullptr", "Null Pointer", .keyword),
                 ("struct", "struct $0 {\n    \n};", "Struct Definition", .keyword),
                 ("class", "class $0 {\npublic:\n    \n};", "Class Definition", .keyword),
-                ("return", "return $0;", "Return Statement", .keyword)
+                ("return", "return $0;", "Return Statement", .keyword),
+                ("%hook", "%hook $0\n\n%end", "Logos Hook Class", .snippet),
+                ("%orig", "%orig($0);", "Call Original IMP", .function),
+                ("%ctor", "%ctor {\n    $0\n}", "Tweak Constructor", .snippet),
+                ("%dtor", "%dtor {\n    $0\n}", "Tweak Destructor", .snippet),
+                ("%group", "%group $0\n\n%end", "Logos Hook Group", .snippet),
+                ("%init", "%init($0);", "Initialize Group", .function),
+                ("%property", "%property (nonatomic, strong) $0;", "Logos Dynamic Property", .keyword),
+                ("%new", "%new\n- (void)$0 {\n    \n}", "Add Method to Class", .snippet),
+                ("%c()", "%c($0)", "Runtime Class Lookup", .function),
+                ("MSHookFunction", "MSHookFunction((void *)$0, (void *)new_fn, (void **)&orig_fn);", "CydiaSubstrate Hook C", .function),
+                ("MSHookMessageEx", "MSHookMessageEx(objc_getClass(\"$0\"), @selector(), (IMP)new_imp, (IMP *)&orig_imp);", "Substrate Hook ObjC", .function)
             ]
 
         case .python:

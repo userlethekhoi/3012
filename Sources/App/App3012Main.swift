@@ -21,6 +21,7 @@ struct App3012Main: App {
     @StateObject private var extStore = ExtensionStoreService()
     @StateObject private var intelligence = CodeIntelligenceService()
     @StateObject private var timelineService = FileTimelineAndArchiveService()
+    @StateObject private var theosService = TheosBuildService()
 
     var body: some Scene {
         WindowGroup {
@@ -34,7 +35,8 @@ struct App3012Main: App {
                 sshService: sshService,
                 extStore: extStore,
                 intelligence: intelligence,
-                timelineService: timelineService
+                timelineService: timelineService,
+                theosService: theosService
             )
             .preferredColorScheme(preferences.activePalette.isDark ? .dark : .light)
         }
@@ -52,6 +54,7 @@ public struct MainIDEWorkspaceView: View {
     @ObservedObject var extStore: ExtensionStoreService
     @ObservedObject var intelligence: CodeIntelligenceService
     @ObservedObject var timelineService: FileTimelineAndArchiveService
+    @ObservedObject var theosService: TheosBuildService
 
     @State private var showLeftExplorer: Bool = false
     @State private var showRightAIPanel: Bool = false
@@ -64,6 +67,7 @@ public struct MainIDEWorkspaceView: View {
     @State private var showLanguagePickerSheet: Bool = false
     @State private var showTimelineSheet: Bool = false
     @State private var showThemeStudioDirect: Bool = false
+    @State private var showTheosBuilderSheet: Bool = false
     @State private var shareZipItem: ShareableZipFile? = nil
 
     @State private var markdownMode: MarkdownDisplayMode = .editor
@@ -172,6 +176,10 @@ public struct MainIDEWorkspaceView: View {
                         onInsertSnippet: { snippetBody in
                             insertTextIntoActiveTab(snippetBody)
                         },
+                        onOpenTheosBuilder: {
+                            showLeftExplorer = false
+                            showTheosBuilderSheet = true
+                        },
                         onOpenSettings: {
                             showLeftExplorer = false
                             showSettingsSheet = true
@@ -273,6 +281,15 @@ public struct MainIDEWorkspaceView: View {
         }
         .sheet(isPresented: $showThemeStudioDirect) {
             ThemeStudioEditorSheet(preferences: preferences)
+        }
+        .sheet(isPresented: $showTheosBuilderSheet) {
+            TheosBuilderSheet(
+                theosService: theosService,
+                workspace: workspace,
+                sshService: sshService,
+                runner: runner,
+                preferences: preferences
+            )
         }
         .sheet(isPresented: $showCommandPalette) {
             CommandPaletteSheet(
@@ -625,6 +642,30 @@ public struct MainIDEWorkspaceView: View {
             }
             .buttonStyle(.plain)
 
+            // 4.5 Theos Build Pill (when inside a Theos project or Logos/control file)
+            if isTheosBuildContext(activeTab: activeTab) {
+                Button {
+                    showTheosBuilderSheet = true
+                } label: {
+                    HStack(spacing: 3) {
+                        if theosService.isBuilding {
+                            ProgressView().scaleEffect(0.55)
+                        } else {
+                            Image(systemName: "hammer.fill")
+                                .font(.system(size: 9.5, weight: .semibold))
+                        }
+                        Text("Theos .deb")
+                            .font(.system(size: 9.5, weight: .bold))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color(hex: palette.accent).opacity(0.18))
+                    .foregroundColor(Color(hex: palette.accent))
+                    .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+            }
+
             // 5. Quick Smart Autocomplete Status Pill (1-Tap Toggle)
             Button {
                 preferences.enableCodeCompletion.toggle()
@@ -906,6 +947,12 @@ public struct MainIDEWorkspaceView: View {
                 Divider()
 
                 Button {
+                    showTheosBuilderSheet = true
+                } label: {
+                    Label("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", systemImage: "hammer.fill")
+                }
+
+                Button {
                     exportWorkspaceAsZipAndShare()
                 } label: {
                     Label("Xuất Dự án ra File .zip", systemImage: "doc.zipper")
@@ -1147,10 +1194,38 @@ public struct MainIDEWorkspaceView: View {
         }
     }
 
+    private func isTheosBuildContext(activeTab: OpenTab) -> Bool {
+        let ext = activeTab.fileURL.pathExtension.lowercased()
+        let lowerName = activeTab.fileURL.lastPathComponent.lowercased()
+        if ["x", "xm", "xi", "xmi"].contains(ext) || lowerName == "control" || lowerName == "makefile" {
+            return theosService.isTheosWorkspace(workspace.rootURL) || ["x", "xm", "xi", "xmi"].contains(ext)
+        }
+        return theosService.isTheosWorkspace(workspace.rootURL)
+    }
+
     private func triggerSmartRun() {
         applyFormatOnSaveIfEnabled()
         workspace.saveActiveTab()
         guard let active = workspace.activeTab else { return }
+
+        if isTheosBuildContext(activeTab: active) {
+            if theosService.buildMode == .communityServer && !theosService.hasAcceptedPrivacyConsent {
+                showTheosBuilderSheet = true
+                return
+            }
+            workspace.saveAllTabs()
+            bottomTab = .output
+            withAnimation { showBottomPanel = true }
+            theosService.startBuild(
+                workspaceRoot: workspace.rootURL,
+                sshService: sshService,
+                runner: runner,
+                onWorkspaceChanged: { [weak workspace] in
+                    workspace?.reloadTree()
+                }
+            )
+            return
+        }
 
         if active.language == .markdown {
             markdownMode = (markdownMode == .preview) ? .editor : .preview
@@ -1242,6 +1317,7 @@ public struct MainIDEWorkspaceView: View {
                 preferences.formatOnSave.toggle()
             }),
             ("Show Problems & Inline Diagnostics", "checklist", { checkSyntaxAndLSPDiagnostics() }),
+            ("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "hammer.fill", { showTheosBuilderSheet = true }),
             ("Export Project Workspace as .zip", "doc.zipper", { exportWorkspaceAsZipAndShare() }),
             ("Open Live Server localhost:\(liveServer.port) in Safari", "safari", {
                 if !liveServer.isRunning {

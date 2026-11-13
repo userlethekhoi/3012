@@ -41,6 +41,7 @@ public struct LeftExplorerDrawer: View {
     @ObservedObject var extStore: ExtensionStoreService
     @ObservedObject var timelineService: FileTimelineAndArchiveService
     var onInsertSnippet: (String) -> Void
+    var onOpenTheosBuilder: () -> Void
     var onOpenSettings: () -> Void
     var onCloseDrawer: () -> Void
 
@@ -84,6 +85,7 @@ public struct LeftExplorerDrawer: View {
         extStore: ExtensionStoreService,
         timelineService: FileTimelineAndArchiveService,
         onInsertSnippet: @escaping (String) -> Void,
+        onOpenTheosBuilder: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void,
         onCloseDrawer: @escaping () -> Void
     ) {
@@ -95,6 +97,7 @@ public struct LeftExplorerDrawer: View {
         self.extStore = extStore
         self.timelineService = timelineService
         self.onInsertSnippet = onInsertSnippet
+        self.onOpenTheosBuilder = onOpenTheosBuilder
         self.onOpenSettings = onOpenSettings
         self.onCloseDrawer = onCloseDrawer
     }
@@ -219,6 +222,12 @@ public struct LeftExplorerDrawer: View {
                             exportedZipURL = timelineService.exportProjectZip(workspaceRoot: workspace.rootURL)
                         } label: {
                             Label("Đóng gói Dự án ra .zip", systemImage: "doc.zipper")
+                        }
+                        Divider()
+                        Button {
+                            onOpenTheosBuilder()
+                        } label: {
+                            Label("Theos Tweak / Mod Menu (.deb/.dylib)", systemImage: "hammer.fill")
                         }
                     } label: {
                         Label("Dự án / .zip", systemImage: "folder.badge.gearshape")
@@ -391,6 +400,11 @@ public struct LeftExplorerDrawer: View {
                     showNewFolderAlert = true
                 } label: {
                     Image(systemName: "folder.badge.plus").font(.system(size: 12.5)).foregroundColor(Color(hex: palette.foreground))
+                }
+                Button {
+                    onOpenTheosBuilder()
+                } label: {
+                    Image(systemName: "hammer").font(.system(size: 12)).foregroundColor(Color(hex: palette.accent))
                 }
                 Button {
                     workspace.reloadTree()

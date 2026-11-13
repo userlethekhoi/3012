@@ -352,7 +352,7 @@ public enum CodeLanguage: String, CaseIterable, Identifiable, Codable {
         if ["gemfile", "rakefile", "podfile", "fastfile", "appfile", "vagrantfile", "brewfile"].contains(lowerName) {
             return .ruby
         }
-        if lowerName.hasPrefix(".env") || [".editorconfig", ".gitconfig", ".npmrc", "nginx.conf"].contains(lowerName) {
+        if lowerName.hasPrefix(".env") || [".editorconfig", ".gitconfig", ".npmrc", "nginx.conf", "control"].contains(lowerName) {
             return .ini
         }
         if [".bashrc", ".zshrc", ".bash_profile", ".zprofile", ".profile"].contains(lowerName) {
@@ -380,7 +380,7 @@ public enum CodeLanguage: String, CaseIterable, Identifiable, Codable {
 
         case "c", "h": return .c
         case "cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++", "ipp", "tpp", "ino", "cu", "cuh": return .cpp
-        case "m", "mm": return .objectiveC
+        case "m", "mm", "x", "xm", "xi", "xmi": return .objectiveC
         case "rs": return .rust
         case "go": return .go
         case "zig", "zon": return .zig
@@ -478,6 +478,7 @@ public enum CodeLanguage: String, CaseIterable, Identifiable, Codable {
         if lowerPrefix.hasPrefix("<?xml") || lowerPrefix.hasPrefix("<svg") { return .xml }
         if lowerPrefix.hasPrefix("<?php") { return .php }
         if (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")) && trimmed.contains("\":") { return .json }
+        if trimmed.contains("%hook ") || trimmed.contains("%ctor") || trimmed.contains("%orig") { return .objectiveC }
         if trimmed.contains("#include <iostream>") || trimmed.contains("std::") || trimmed.contains("using namespace std") { return .cpp }
         if trimmed.contains("#include <stdio.h>") || trimmed.contains("#include <stdlib.h>") { return .c }
         if trimmed.hasPrefix("package main") && trimmed.contains("func ") { return .go }
