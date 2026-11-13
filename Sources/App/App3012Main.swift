@@ -353,7 +353,7 @@ public struct MainIDEWorkspaceView: View {
                 },
                 onTextChange: { updatedCode, range in
                     workspace.updateActiveContent(updatedCode, selectedRange: range, autoSave: preferences.enableAutoSave)
-                    let allSnips = ExtensionStoreService.builtInSnippets + extStore.customSnippets
+                    let allSnips = extStore.snippets
                     intelligence.updateCompletions(
                         in: updatedCode,
                         selectedRange: range,
