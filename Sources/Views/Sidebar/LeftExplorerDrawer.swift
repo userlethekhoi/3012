@@ -23,9 +23,9 @@ public enum SidebarActivityTab: Int, CaseIterable, Identifiable {
 
     public var title: String {
         switch self {
-        case .explorer: return "EXPLORER"
-        case .search: return "SEARCH"
-        case .git: return "SOURCE CONTROL"
+        case .explorer: return L10n.tr("TRÌNH DUYỆT FILE", "EXPLORER", zh: "文件管理器", ja: "エクスプローラー", ko: "탐색기", ru: "ПРОВОДНИК", es: "EXPLORADOR")
+        case .search: return L10n.tr("TÌM KIẾM", "SEARCH", zh: "搜索", ja: "検索", ko: "검색", ru: "ПОИСК", es: "BUSCAR")
+        case .git: return L10n.tr("QUẢN LÝ NGUỒN (GIT)", "SOURCE CONTROL", zh: "源代码管理", ja: "ソース管理", ko: "소스 제어", ru: "СИСТЕМА ВЕРСИЙ", es: "CONTROL DE CÓDIGO")
         case .ssh: return "REMOTE - SSH & SFTP"
         case .extensions: return "OPEN VSX EXTENSIONS"
         }
@@ -211,26 +211,26 @@ public struct LeftExplorerDrawer: View {
                         Button {
                             showFolderPicker = true
                         } label: {
-                            Label("Mở Thư mục ngoài (Files)", systemImage: "folder")
+                            Label(preferences.tr("Mở Thư mục ngoài (Files)", "Open External Folder (Files)"), systemImage: "folder")
                         }
                         Button {
                             showZipImporter = true
                         } label: {
-                            Label("Nhập Dự án từ File .zip", systemImage: "arrow.down.doc")
+                            Label(preferences.tr("Nhập Dự án từ File .zip", "Import Project from .zip"), systemImage: "arrow.down.doc")
                         }
                         Button {
                             exportedZipURL = timelineService.exportProjectZip(workspaceRoot: workspace.rootURL)
                         } label: {
-                            Label("Đóng gói Dự án ra .zip", systemImage: "doc.zipper")
+                            Label(preferences.tr("Đóng gói Dự án ra .zip", "Export Project as .zip"), systemImage: "doc.zipper")
                         }
                         Divider()
                         Button {
                             onOpenTheosBuilder()
                         } label: {
-                            Label("Theos Tweak / Mod Menu (.deb/.dylib)", systemImage: "hammer.fill")
+                            Label(preferences.tr("Theos Tweak / Mod Menu (.deb/.dylib)", "Theos Tweak / Mod Menu (.deb/.dylib)"), systemImage: "hammer.fill")
                         }
                     } label: {
-                        Label("Dự án / .zip", systemImage: "folder.badge.gearshape")
+                        Label(preferences.tr("Dự án / .zip", "Project / .zip"), systemImage: "folder.badge.gearshape")
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundColor(Color(hex: palette.foreground))
                     }
@@ -276,41 +276,41 @@ public struct LeftExplorerDrawer: View {
             .background(Color(hex: palette.sidebarBackground))
         }
         // Alerts & Sheets
-        .alert("Tạo File Mới", isPresented: $showNewFileAlert) {
-            TextField("Ví dụ: main.cpp, index.html, app.py", text: $newItemName)
+        .alert(preferences.tr("Tạo File Mới", "New File"), isPresented: $showNewFileAlert) {
+            TextField(preferences.tr("Ví dụ: main.cpp, index.html, app.py", "e.g. main.cpp, index.html, app.py"), text: $newItemName)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
-            Button("Tạo") {
+            Button(preferences.tr("Tạo", "Create")) {
                 workspace.createFile(named: newItemName, in: targetParentDir)
                 newItemName = ""
                 onCloseDrawer()
             }
-            Button("Hủy", role: .cancel) { newItemName = "" }
+            Button(preferences.tr("Hủy", "Cancel"), role: .cancel) { newItemName = "" }
         }
-        .alert("Tạo Thư Mục Mới", isPresented: $showNewFolderAlert) {
-            TextField("Tên thư mục", text: $newItemName)
+        .alert(preferences.tr("Tạo Thư Mục Mới", "New Folder"), isPresented: $showNewFolderAlert) {
+            TextField(preferences.tr("Tên thư mục", "Folder name"), text: $newItemName)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
-            Button("Tạo") {
+            Button(preferences.tr("Tạo", "Create")) {
                 workspace.createFolder(named: newItemName, in: targetParentDir)
                 newItemName = ""
             }
-            Button("Hủy", role: .cancel) { newItemName = "" }
+            Button(preferences.tr("Hủy", "Cancel"), role: .cancel) { newItemName = "" }
         }
-        .alert("Đổi Tên", isPresented: Binding(
+        .alert(preferences.tr("Đổi Tên", "Rename"), isPresented: Binding(
             get: { renameTargetURL != nil },
             set: { if !$0 { renameTargetURL = nil } }
         )) {
-            TextField("Tên mới", text: $renameText)
+            TextField(preferences.tr("Tên mới", "New name"), text: $renameText)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
-            Button("Lưu") {
+            Button(preferences.tr("Lưu", "Save")) {
                 if let url = renameTargetURL {
                     workspace.renameItem(at: url, to: renameText)
                 }
                 renameTargetURL = nil
             }
-            Button("Hủy", role: .cancel) { renameTargetURL = nil }
+            Button(preferences.tr("Hủy", "Cancel"), role: .cancel) { renameTargetURL = nil }
         }
         .alert("Tạo File Trên VPS (SFTP)", isPresented: $showNewRemoteFileAlert) {
             TextField("Ví dụ: server.cpp, app.py", text: $remoteNewName)

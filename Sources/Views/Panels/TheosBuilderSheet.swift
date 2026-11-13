@@ -44,7 +44,9 @@ public struct TheosBuilderSheet: View {
                             .foregroundColor(hasTheosProject ? .green : .orange)
 
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(hasTheosProject ? "Đã nhận diện dự án Theos" : "Chưa có Makefile / control Theos")
+                            Text(hasTheosProject
+                                 ? preferences.tr("Đã nhận diện dự án Theos", "Theos Project Detected")
+                                 : preferences.tr("Chưa có Makefile / control Theos", "No Theos Makefile / control Yet"))
                                 .font(.system(size: 14, weight: .bold))
                             Text(theosService.buildStatusText)
                                 .font(.system(size: 11.5, design: .monospaced))
@@ -59,7 +61,7 @@ public struct TheosBuilderSheet: View {
                         } label: {
                             HStack {
                                 ProgressView().padding(.trailing, 4)
-                                Text("Đang biên dịch — Bấm để huỷ")
+                                Text(preferences.tr("Đang biên dịch — Bấm để huỷ", "Compiling — Tap to Cancel"))
                                     .fontWeight(.semibold)
                             }
                         }
@@ -67,13 +69,13 @@ public struct TheosBuilderSheet: View {
                         Button {
                             triggerBuildWithConsentCheck()
                         } label: {
-                            Label("Build .deb / .dylib Ngay", systemImage: "play.fill")
+                            Label(preferences.tr("Build .deb / .dylib Ngay", "Build .deb / .dylib Now"), systemImage: "play.fill")
                                 .fontWeight(.bold)
                         }
                         .disabled(!hasTheosProject && theosService.buildMode != .offlineExport)
                     }
                 } header: {
-                    Text("Trình Biên Dịch Theos (Không Cần Máy Jailbreak)")
+                    Text(preferences.tr("Trình Biên Dịch Theos (Không Cần Máy Jailbreak)", "Theos Compiler (No Jailbreak Required)"))
                 }
 
                 // MARK: - 2. 1-Tap Theos Tweak & Mod Menu Template Generator
@@ -82,7 +84,7 @@ public struct TheosBuilderSheet: View {
                         get: { showTemplateCreator || !hasTheosProject },
                         set: { showTemplateCreator = $0 }
                     )) {
-                        Picker("Loại mẫu", selection: $selectedTemplate) {
+                        Picker(preferences.tr("Loại mẫu", "Template Type"), selection: $selectedTemplate) {
                             ForEach(TheosTemplateKind.allCases) { kind in
                                 Text(kind.title).tag(kind)
                             }
@@ -92,11 +94,11 @@ public struct TheosBuilderSheet: View {
                             .font(.footnote)
                             .foregroundColor(.secondary)
 
-                        TextField("Tên Tweak (ví dụ: ModMenu3012)", text: $tweakNameInput)
+                        TextField(preferences.tr("Tên Tweak (ví dụ: ModMenu3012)", "Tweak Name (e.g. ModMenu3012)"), text: $tweakNameInput)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
 
-                        TextField("Bundle ID gói .deb", text: $packageIDInput)
+                        TextField(preferences.tr("Bundle ID gói .deb", ".deb Package Bundle ID"), text: $packageIDInput)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
 
@@ -114,11 +116,14 @@ public struct TheosBuilderSheet: View {
                                 in: workspace
                             )
                             if opened != nil {
-                                templateCreatedNotice = "Đã tạo bộ khung \(tweakNameInput) trong \(workspace.rootURL.lastPathComponent)."
+                                templateCreatedNotice = preferences.tr(
+                                    "Đã tạo bộ khung \(tweakNameInput) trong \(workspace.rootURL.lastPathComponent).",
+                                    "Created \(tweakNameInput) scaffold in \(workspace.rootURL.lastPathComponent)."
+                                )
                                 theosService.refreshLocalPackages(in: workspace.rootURL)
                             }
                         } label: {
-                            Label("Khởi Tạo Dự Án Theos 1 Chạm", systemImage: "doc.badge.plus")
+                            Label(preferences.tr("Khởi Tạo Dự Án Theos 1 Chạm", "1-Tap Scaffold Theos Project"), systemImage: "doc.badge.plus")
                                 .fontWeight(.semibold)
                         }
 
@@ -128,20 +133,20 @@ public struct TheosBuilderSheet: View {
                                 .foregroundColor(.green)
                         }
                     } label: {
-                        Label("Tạo Mẫu Tweak / Mod Menu Mới", systemImage: "plus.square.on.square")
+                        Label(preferences.tr("Tạo Mẫu Tweak / Mod Menu Mới", "New Tweak / Mod Menu Template"), systemImage: "plus.square.on.square")
                             .font(.system(size: 13.5, weight: .semibold))
                     }
                 }
 
                 // MARK: - 3. Package Scheme & Build Environment
-                Section("Kiến Trúc & Môi Trường Biên Dịch") {
-                    Picker("Chuẩn gói (.deb)", selection: $theosService.packageScheme) {
+                Section(preferences.tr("Kiến Trúc & Môi Trường Biên Dịch", "Package Scheme & Build Environment")) {
+                    Picker(preferences.tr("Chuẩn gói (.deb)", "Package Scheme (.deb)"), selection: $theosService.packageScheme) {
                         ForEach(TheosPackageScheme.allCases) { scheme in
                             Text(scheme.title).tag(scheme)
                         }
                     }
 
-                    Picker("Phương thức build", selection: $theosService.buildMode) {
+                    Picker(preferences.tr("Phương thức build", "Build Method"), selection: $theosService.buildMode) {
                         ForEach(TheosBuildMode.allCases) { mode in
                             Text(mode.title).tag(mode)
                         }
@@ -153,7 +158,7 @@ public struct TheosBuilderSheet: View {
 
                     if theosService.buildMode == .communityServer {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Địa chỉ Build Server")
+                            Text(preferences.tr("Địa chỉ Build Server", "Build Server URL"))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             TextField("https://build.kaydus.xyz", text: $theosService.serverURL)
@@ -177,7 +182,7 @@ public struct TheosBuilderSheet: View {
 
                                 Spacer()
 
-                                Button("Kiểm tra") {
+                                Button(preferences.tr("Kiểm tra", "Check")) {
                                     Task { await theosService.checkServerHealth() }
                                 }
                                 .font(.system(size: 11.5, weight: .bold))
@@ -191,24 +196,24 @@ public struct TheosBuilderSheet: View {
                                 .foregroundColor(health.hasPrefix("Online") ? .green : .orange)
                         }
 
-                        Toggle("Tôi đồng ý gửi tạm mã nguồn tới sandbox để biên dịch", isOn: $theosService.hasAcceptedPrivacyConsent)
+                        Toggle(preferences.tr("Tôi đồng ý gửi tạm mã nguồn tới sandbox để biên dịch", "I consent to send temporary source code to sandbox for compilation"), isOn: $theosService.hasAcceptedPrivacyConsent)
                             .font(.system(size: 12.5))
                     } else if theosService.buildMode == .privateSSHVPS {
                         HStack {
                             Image(systemName: sshService.isConnected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                                 .foregroundColor(sshService.isConnected ? .green : .orange)
                             Text(sshService.isConnected
-                                 ? "Đã nối SSH: \(sshService.connectedProfile?.host ?? "VPS")"
-                                 : "Chưa kết nối SSH — mở tab Remote SSH bên trái để đăng nhập VPS")
+                                 ? preferences.tr("Đã nối SSH: \(sshService.connectedProfile?.host ?? "VPS")", "SSH Connected: \(sshService.connectedProfile?.host ?? "VPS")")
+                                 : preferences.tr("Chưa kết nối SSH — mở tab Remote SSH bên trái để đăng nhập VPS", "SSH Disconnected — open Remote SSH tab on the left to sign in"))
                                 .font(.system(size: 12))
                         }
                     }
                 }
 
                 // MARK: - 4. Compiled Artifacts (.deb / .dylib)
-                Section("Sản Phẩm Đã Biên Dịch (packages/)") {
+                Section(preferences.tr("Sản Phẩm Đã Biên Dịch (packages/)", "Compiled Artifacts (packages/)")) {
                     if theosService.downloadedArtifacts.isEmpty {
-                        Text("Chưa có file .deb hoặc .dylib nào trong thư mục packages/.")
+                        Text(preferences.tr("Chưa có file .deb hoặc .dylib nào trong thư mục packages/.", "No .deb or .dylib artifacts in packages/ yet."))
                             .font(.footnote)
                             .foregroundColor(.secondary)
                     } else {
@@ -225,7 +230,7 @@ public struct TheosBuilderSheet: View {
                                 }
                                 Spacer()
                                 ShareLink(item: item.localURL) {
-                                    Label("Xuất", systemImage: "square.and.arrow.up")
+                                    Label(preferences.tr("Xuất", "Export"), systemImage: "square.and.arrow.up")
                                         .font(.system(size: 12, weight: .bold))
                                 }
                                 .buttonStyle(.bordered)
@@ -236,7 +241,7 @@ public struct TheosBuilderSheet: View {
 
                 // MARK: - 5. Live Build Log
                 if !theosService.buildLog.isEmpty {
-                    Section("Nhật Ký Biên Dịch") {
+                    Section(preferences.tr("Nhật Ký Biên Dịch", "Build Log")) {
                         ScrollView {
                             Text(theosService.buildLog)
                                 .font(.system(size: 10.5, design: .monospaced))
@@ -251,22 +256,25 @@ public struct TheosBuilderSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Đóng") { dismiss() }
+                    Button(preferences.tr("Đóng", "Done")) { dismiss() }
                 }
             }
             .onAppear {
                 theosService.refreshLocalPackages(in: workspace.rootURL)
             }
-            .alert("Quyền Riêng Tư Khi Build Từ Xa", isPresented: $showPrivacyAlert) {
-                Button("Đồng ý & Build") {
+            .alert(preferences.tr("Quyền Riêng Tư Khi Build Từ Xa", "Remote Build Privacy Notice"), isPresented: $showPrivacyAlert) {
+                Button(preferences.tr("Đồng ý & Build", "Agree & Build")) {
                     theosService.hasAcceptedPrivacyConsent = true
                     executeBuild()
                 }
-                Button("Chuyển sang Offline .zip", role: .cancel) {
+                Button(preferences.tr("Chuyển sang Offline .zip", "Switch to Offline .zip"), role: .cancel) {
                     theosService.buildMode = .offlineExport
                 }
             } message: {
-                Text("Mã nguồn dự án Theos của bạn sẽ được nén tạm thời và gửi qua HTTPS tới container Docker cách ly (--network none, không có Internet, tự xoá hoàn toàn sau khi biên dịch và giữ kết quả tối đa 15 phút). Bạn có thể chuyển sang VPS SSH cá nhân hoặc Offline GitHub Actions bất kỳ lúc nào.")
+                Text(preferences.tr(
+                    "Mã nguồn dự án Theos của bạn sẽ được nén tạm thời và gửi qua HTTPS tới container Docker cách ly (--network none, không có Internet, tự xoá hoàn toàn sau khi biên dịch và giữ kết quả tối đa 15 phút). Bạn có thể chuyển sang VPS SSH cá nhân hoặc Offline GitHub Actions bất kỳ lúc nào.",
+                    "Your Theos project source will be temporarily archived and sent over HTTPS to an isolated Docker container (--network none, no Internet access, source deleted immediately after build, artifacts auto-expire in 15 minutes). You can switch to Private SSH VPS or Offline GitHub Actions anytime."
+                ))
             }
         }
     }

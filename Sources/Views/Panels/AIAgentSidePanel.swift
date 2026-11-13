@@ -40,7 +40,7 @@ public struct AIAgentSidePanel: View {
 
                 Menu {
                     if !aiService.profiles.isEmpty {
-                        Section("Nhà cung cấp") {
+                        Section(preferences.tr("Nhà cung cấp", "Providers")) {
                             ForEach(aiService.profiles) { profile in
                                 Button {
                                     aiService.setActiveProfile(profile.id)
@@ -58,13 +58,13 @@ public struct AIAgentSidePanel: View {
                         Button {
                             Task { await aiService.refreshModels(for: active.id) }
                         } label: {
-                            Label("Kiểm tra model mới nhất", systemImage: "arrow.clockwise")
+                            Label(preferences.tr("Kiểm tra model mới nhất", "Check Latest Models"), systemImage: "arrow.clockwise")
                         }
                     }
                     Button {
                         showConfigSheet = true
                     } label: {
-                        Label("Cấu hình AI...", systemImage: "slider.horizontal.3")
+                        Label(preferences.tr("Cấu hình AI...", "Configure AI..."), systemImage: "slider.horizontal.3")
                     }
                 } label: {
                     HStack(spacing: 3) {
@@ -139,9 +139,9 @@ public struct AIAgentSidePanel: View {
                     }
 
                     ForEach([
-                        ("Sửa lỗi", "Kiểm tra lỗi và sửa trực tiếp file đang mở giúp tôi."),
-                        ("Tối ưu", "Tối ưu hiệu năng và làm sạch code của file đang mở."),
-                        ("Giải thích", "Giải thích ngắn gọn logic của đoạn code đang mở.")
+                        (preferences.tr("Sửa lỗi", "Fix Bug", zh: "修复错误", ja: "バグ修正", ko: "버그 수정", ru: "Исправить", es: "Corregir"), "Kiểm tra lỗi và sửa trực tiếp file đang mở giúp tôi."),
+                        (preferences.tr("Tối ưu", "Optimize", zh: "优化", ja: "最適化", ko: "최적화", ru: "Оптимизировать", es: "Optimizar"), "Tối ưu hiệu năng và làm sạch code của file đang mở."),
+                        (preferences.tr("Giải thích", "Explain", zh: "解释", ja: "解説", ko: "설명", ru: "Объяснить", es: "Explicar"), "Giải thích ngắn gọn logic của đoạn code đang mở.")
                     ], id: \.0) { label, fullPrompt in
                         Button {
                             submitPrompt(fullPrompt)
@@ -175,7 +175,7 @@ public struct AIAgentSidePanel: View {
                             HStack(spacing: 8) {
                                 ProgressView()
                                     .scaleEffect(0.8)
-                                Text("Đang chuẩn bị model...")
+                                Text(preferences.tr("Đang chuẩn bị model...", "Preparing model..."))
                                     .font(.system(size: 11))
                                     .foregroundColor(Color(hex: palette.gutterForeground))
                             }
@@ -201,7 +201,7 @@ public struct AIAgentSidePanel: View {
 
             // Composer Input
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("Giao việc cho AI (tạo/sửa file, fix bug)...", text: $promptInput, axis: .vertical)
+                TextField(preferences.tr("Giao việc cho AI (tạo/sửa file, fix bug)...", "Ask AI (create/edit files, fix bugs)..."), text: $promptInput, axis: .vertical)
                     .lineLimit(1...4)
                     .font(.system(size: 13))
                     .padding(8)

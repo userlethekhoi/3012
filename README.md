@@ -272,7 +272,7 @@ zip -qry 3012-Unsigned.ipa Payload
 
 ## Bản quyền, Quyền Tác giả & Giấy phép Mã nguồn (GNU AGPLv3)
 
-**Copyright (c) 2026 Le The Khoi ([@userlethekhoi](https://github.com/userlethekhoi)).**
+**Copyright (c) 2026 Le The Khoi (Sinh năm 2009 • GitHub: [@userlethekhoi](https://github.com/userlethekhoi) • Telegram: [@coder_009](https://t.me/coder_009)).**
 
 Mã nguồn, kiến trúc hệ thống và bộ nhận diện thương hiệu của dự án **3012** được phát hành theo giấy phép [**GNU Affero General Public License v3.0 (AGPL-3.0)**](LICENSE) — giấy phép Copyleft mạnh nhất được công nhận quốc tế nhằm bảo vệ quyền tác giả và đảm bảo tính minh bạch tuyệt đối của mã nguồn.
 

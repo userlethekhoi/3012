@@ -39,6 +39,7 @@ struct App3012Main: App {
                 theosService: theosService
             )
             .preferredColorScheme(preferences.activePalette.isDark ? .dark : .light)
+            .environment(\.locale, Locale(identifier: preferences.appLanguage.localeIdentifier))
         }
     }
 }
@@ -631,7 +632,7 @@ public struct MainIDEWorkspaceView: View {
                 HStack(spacing: 3) {
                     Image(systemName: "text.alignleft")
                         .font(.system(size: 9.5, weight: .semibold))
-                    Text("Format")
+                    Text(preferences.tr("Format", "Format"))
                         .font(.system(size: 9.5, weight: .semibold))
                 }
                 .padding(.horizontal, 6)
@@ -673,7 +674,9 @@ public struct MainIDEWorkspaceView: View {
                 HStack(spacing: 3) {
                     Image(systemName: "text.cursor")
                         .font(.system(size: 9.5, weight: .semibold))
-                    Text(preferences.enableCodeCompletion ? "Gợi ý: ON" : "Gợi ý: OFF")
+                    Text(preferences.enableCodeCompletion
+                         ? preferences.tr("Gợi ý: ON", "Hint: ON", zh: "提示: 开", ja: "補完: ON", ko: "자동완성: ON", ru: "Подсказки: ВКЛ", es: "Sugerir: ON")
+                         : preferences.tr("Gợi ý: OFF", "Hint: OFF", zh: "提示: 关", ja: "補完: OFF", ko: "자동완성: OFF", ru: "Подсказки: ВЫКЛ", es: "Sugerir: OFF"))
                         .font(.system(size: 9.5, weight: .semibold))
                 }
                 .padding(.horizontal, 6)
@@ -699,22 +702,22 @@ public struct MainIDEWorkspaceView: View {
                     if !preferences.enableLiveDiagnostics {
                         Image(systemName: "eye.slash")
                             .font(.system(size: 9.5))
-                        Text("Báo lỗi: OFF")
+                        Text(preferences.tr("Báo lỗi: OFF", "Lint: OFF", zh: "诊断: 关", ja: "診断: OFF", ko: "진단: OFF", ru: "Ошибки: ВЫКЛ", es: "Errores: OFF"))
                             .font(.system(size: 9.5, weight: .semibold))
                     } else if intelligence.errorCount > 0 {
                         Image(systemName: "xmark.octagon")
                             .font(.system(size: 9.5, weight: .bold))
-                        Text("\(intelligence.errorCount) lỗi")
+                        Text("\(intelligence.errorCount) \(preferences.tr("lỗi", "err", zh: "错", ja: "エラー", ko: "오류", ru: "ош.", es: "err"))")
                             .font(.system(size: 9.5, weight: .bold))
                     } else if intelligence.warningCount > 0 {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.system(size: 9.5, weight: .bold))
-                        Text("\(intelligence.warningCount) cảnh báo")
+                        Text("\(intelligence.warningCount) \(preferences.tr("cảnh báo", "warn", zh: "警", ja: "警告", ko: "경고", ru: "пред.", es: "aviso"))")
                             .font(.system(size: 9.5, weight: .bold))
                     } else {
                         Image(systemName: "checkmark.circle")
                             .font(.system(size: 9.5, weight: .semibold))
-                        Text("0 lỗi")
+                        Text("0 \(preferences.tr("lỗi", "err", zh: "错", ja: "エラー", ko: "오류", ru: "ош.", es: "err"))")
                             .font(.system(size: 9.5, weight: .semibold))
                     }
                 }
@@ -865,51 +868,51 @@ public struct MainIDEWorkspaceView: View {
                 Button {
                     showCommandPalette = true
                 } label: {
-                    Label("Command Palette & Quick Open", systemImage: "command")
+                    Label(preferences.tr("Command Palette & Mở nhanh", "Command Palette & Quick Open"), systemImage: "command")
                 }
 
                 Button {
                     saveActiveTabWithCheckpoint()
                 } label: {
-                    Label("Lưu File & Tạo Mốc Lịch Sử", systemImage: "externaldrive.badge.checkmark")
+                    Label(preferences.tr("Lưu File & Tạo Mốc Lịch Sử", "Save File & Record Snapshot"), systemImage: "externaldrive.badge.checkmark")
                 }
 
                 Button {
                     showSymbolOutlineSheet = true
                 } label: {
-                    Label("Danh sách Hàm / Class (Symbol Outline)", systemImage: "list.bullet.indent")
+                    Label(preferences.tr("Danh sách Hàm / Class (Symbol Outline)", "Symbol Outline (Functions / Classes)"), systemImage: "list.bullet.indent")
                 }
 
                 Button {
                     showTimelineSheet = true
                 } label: {
-                    Label("Lịch sử Phiên bản File (Timeline)", systemImage: "clock.arrow.circlepath")
+                    Label(preferences.tr("Lịch sử Phiên bản File (Timeline)", "File Version Timeline"), systemImage: "clock.arrow.circlepath")
                 }
 
                 Divider()
 
                 Toggle(isOn: $preferences.enableCodeCompletion) {
-                    Label("Gợi ý Code thông minh (Smart IntelliSense)", systemImage: "text.cursor")
+                    Label(preferences.tr("Gợi ý Code thông minh (Smart IntelliSense)", "Smart Code IntelliSense"), systemImage: "text.cursor")
                 }
 
                 Toggle(isOn: $preferences.enableLiveDiagnostics) {
-                    Label("Báo lỗi trực tiếp trên Editor", systemImage: "exclamationmark.triangle")
+                    Label(preferences.tr("Báo lỗi trực tiếp trên Editor", "Inline Error Diagnostics"), systemImage: "exclamationmark.triangle")
                 }
 
                 Toggle(isOn: $preferences.formatOnSave) {
-                    Label("Tự động Format khi Lưu / Chạy", systemImage: "arrow.triangle.2.circlepath")
+                    Label(preferences.tr("Tự động Format khi Lưu / Chạy", "Auto-Format on Save / Run"), systemImage: "arrow.triangle.2.circlepath")
                 }
 
                 Button {
                     showLanguagePickerSheet = true
                 } label: {
-                    Label("Chọn Ngôn ngữ (\(workspace.activeTab?.language.shortBadgeName ?? "Auto"))", systemImage: "chevron.left.forwardslash.chevron.right")
+                    Label(preferences.tr("Chọn Ngôn ngữ Code", "Code Language Mode") + " (\(workspace.activeTab?.language.shortBadgeName ?? "Auto"))", systemImage: "chevron.left.forwardslash.chevron.right")
                 }
 
                 Button {
                     formatActiveFile()
                 } label: {
-                    Label("Format Document theo Ngôn ngữ", systemImage: "text.alignleft")
+                    Label(preferences.tr("Format Document theo Ngôn ngữ", "Format Document by Language"), systemImage: "text.alignleft")
                 }
 
                 Divider()
@@ -921,27 +924,29 @@ public struct MainIDEWorkspaceView: View {
                     let rel = (workspace.activeTab?.language == .html) ? workspace.relativePath(for: workspace.activeTab!.fileURL) : "index.html"
                     liveServer.openInSafari(relativePath: rel)
                 } label: {
-                    Label("Mở localhost:\(liveServer.port) trên Safari", systemImage: "safari")
+                    Label(preferences.tr("Mở localhost:\(liveServer.port) trên Safari", "Open localhost:\(liveServer.port) in Safari"), systemImage: "safari")
                 }
 
                 Button {
                     bottomTab = .livePreview
                     withAnimation { showBottomPanel = true }
                 } label: {
-                    Label("Xem Split Preview & Web F12", systemImage: "rectangle.split.1x2")
+                    Label(preferences.tr("Xem Split Preview & Web F12", "Open Split Preview & Web F12"), systemImage: "rectangle.split.1x2")
                 }
 
                 Button {
                     bottomTab = .terminal
                     withAnimation { showBottomPanel.toggle() }
                 } label: {
-                    Label(sshService.isConnected ? "Mở SSH PTY Terminal (SwiftTerm)" : "Mở Terminal (SwiftTerm)", systemImage: "terminal")
+                    Label(sshService.isConnected
+                          ? preferences.tr("Mở SSH PTY Terminal (SwiftTerm)", "Open SSH PTY Terminal (SwiftTerm)")
+                          : preferences.tr("Mở Terminal (SwiftTerm)", "Open Terminal (SwiftTerm)"), systemImage: "terminal")
                 }
 
                 Button {
                     findTriggerToken += 1
                 } label: {
-                    Label("Tìm kiếm & Thay thế", systemImage: "magnifyingglass")
+                    Label(preferences.tr("Tìm kiếm & Thay thế", "Find & Replace"), systemImage: "magnifyingglass")
                 }
 
                 Divider()
@@ -949,25 +954,56 @@ public struct MainIDEWorkspaceView: View {
                 Button {
                     showTheosBuilderSheet = true
                 } label: {
-                    Label("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", systemImage: "hammer.fill")
+                    Label(preferences.tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)"), systemImage: "hammer.fill")
                 }
 
                 Button {
                     exportWorkspaceAsZipAndShare()
                 } label: {
-                    Label("Xuất Dự án ra File .zip", systemImage: "doc.zipper")
+                    Label(preferences.tr("Xuất Dự án ra File .zip", "Export Project Workspace as .zip"), systemImage: "doc.zipper")
                 }
 
                 Button {
                     showThemeStudioDirect = true
                 } label: {
-                    Label("Theme Studio (Tự chỉnh màu Code & App)", systemImage: "slider.horizontal.below.square.filled.and.square")
+                    Label(preferences.tr("Theme Studio (Tự chỉnh màu Code & App)", "Theme Studio (Customize Code & App Colors)"), systemImage: "slider.horizontal.below.square.filled.and.square")
+                }
+
+                Menu {
+                    ForEach(AppLanguage.allCases) { lang in
+                        Button {
+                            preferences.appLanguage = lang
+                        } label: {
+                            if preferences.appLanguage == lang {
+                                Label("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))", systemImage: "checkmark")
+                            } else {
+                                Text("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))")
+                            }
+                        }
+                    }
+                } label: {
+                    Label(
+                        preferences.tr("Ngôn ngữ App", "App Language", zh: "应用语言", ja: "アプリ言語", ko: "앱 언어", ru: "Язык приложения", es: "Idioma de la app") + " (\(preferences.appLanguage.shortBadge))",
+                        systemImage: "globe"
+                    )
                 }
 
                 Button {
                     showSettingsSheet = true
                 } label: {
-                    Label("Theme, Font & Cài đặt", systemImage: "slider.horizontal.3")
+                    Label(preferences.tr("Theme, Font & Cài đặt", "Themes, Fonts & Settings"), systemImage: "slider.horizontal.3")
+                }
+
+                Button {
+                    showSettingsSheet = true
+                } label: {
+                    Label(
+                        preferences.tr(
+                            "Tác giả: \(IDEAuthorInfo.fullName) (\(String(IDEAuthorInfo.birthYear))) • \(IDEAuthorInfo.telegramHandle)",
+                            "Author: \(IDEAuthorInfo.fullName) (\(String(IDEAuthorInfo.birthYear))) • \(IDEAuthorInfo.telegramHandle)"
+                        ),
+                        systemImage: "person.text.rectangle"
+                    )
                 }
             } label: {
                 Image(systemName: liveServer.isRunning ? "antenna.radiowaves.left.and.right" : "ellipsis.circle")
@@ -1057,17 +1093,25 @@ public struct MainIDEWorkspaceView: View {
                     .foregroundColor(Color(hex: palette.gutterForeground))
             }
 
-            Text("Vuốt mép trái: Explorer • Git • SSH SFTP • OpenVSX\nVuốt mép phải: Coding Agent   |   Cmd+P: Command Palette")
-                .font(.system(size: 12))
-                .foregroundColor(Color(hex: palette.gutterForeground))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
+            Text(preferences.tr(
+                "Vuốt mép trái: Explorer • Git • SSH SFTP • OpenVSX\nVuốt mép phải: Coding Agent   |   Cmd+P: Command Palette",
+                "Swipe left edge: Explorer • Git • SSH SFTP • OpenVSX\nSwipe right edge: Coding Agent   |   Cmd+P: Command Palette",
+                zh: "左边缘右滑：Explorer • Git • SSH SFTP • OpenVSX\n右边缘左滑：Coding Agent   |   Cmd+P：命令面板",
+                ja: "左端スワイプ：Explorer • Git • SSH SFTP • OpenVSX\n右端スワイプ：Coding Agent   |   Cmd+P：コマンドパレット",
+                ko: "왼쪽 스와이프: Explorer • Git • SSH SFTP • OpenVSX\n오른쪽 스와이프: Coding Agent   |   Cmd+P: 명령 팔레트",
+                ru: "Свайп слева: Explorer • Git • SSH SFTP • OpenVSX\nСвайп справа: Coding Agent   |   Cmd+P: Палитра команд",
+                es: "Deslizar izq.: Explorer • Git • SSH SFTP • OpenVSX\nDeslizar der.: Coding Agent   |   Cmd+P: Paleta de comandos"
+            ))
+            .font(.system(size: 12))
+            .foregroundColor(Color(hex: palette.gutterForeground))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 24)
 
             HStack(spacing: 12) {
                 Button {
                     showLeftExplorer = true
                 } label: {
-                    Label("Mở Sidebar", systemImage: "sidebar.left")
+                    Label(preferences.tr("Mở Sidebar", "Open Sidebar", zh: "打开侧边栏", ja: "サイドバー", ko: "사이드바 열기", ru: "Открыть панель", es: "Abrir barra"), systemImage: "sidebar.left")
                         .font(.system(size: 13, weight: .semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
@@ -1088,6 +1132,51 @@ public struct MainIDEWorkspaceView: View {
                         .cornerRadius(8)
                 }
             }
+
+            HStack(spacing: 10) {
+                Menu {
+                    ForEach(AppLanguage.allCases) { lang in
+                        Button {
+                            preferences.appLanguage = lang
+                        } label: {
+                            if preferences.appLanguage == lang {
+                                Label("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))", systemImage: "checkmark")
+                            } else {
+                                Text("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))")
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "globe")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("\(preferences.appLanguage.shortBadge) • \(preferences.appLanguage.displayName(in: preferences.appLanguage))")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color(hex: palette.currentLineBackground))
+                    .foregroundColor(Color(hex: palette.foreground))
+                    .cornerRadius(7)
+                }
+
+                Button {
+                    showSettingsSheet = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "person.text.rectangle")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("\(IDEAuthorInfo.fullName) (\(String(IDEAuthorInfo.birthYear))) • \(IDEAuthorInfo.telegramHandle)")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color(hex: palette.currentLineBackground))
+                    .foregroundColor(Color(hex: palette.accent))
+                    .cornerRadius(7)
+                }
+            }
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -1295,44 +1384,47 @@ public struct MainIDEWorkspaceView: View {
 
     private func buildPaletteCommands() -> [(title: String, icon: String, action: () -> Void)] {
         [
-            ("Run Active File (Cmd+R)", "play.fill", { triggerSmartRun() }),
-            ("Save File & Record Snapshot (Cmd+S)", "externaldrive.badge.checkmark", { saveActiveTabWithCheckpoint() }),
-            ("Go to Symbol Outline in File", "list.bullet.indent", { showSymbolOutlineSheet = true }),
-            ("Open File Version Timeline (Restore Snapshot)", "clock.arrow.circlepath", { showTimelineSheet = true }),
-            ("Toggle Line Comment (Cmd+/)", "number", { toggleCommentToken += 1 }),
-            ("Toggle Live Code Autocomplete (\(preferences.enableCodeCompletion ? "ON" : "OFF"))", "text.cursor", {
+            (preferences.tr("Chạy File hiện tại (Cmd+R)", "Run Active File (Cmd+R)"), "play.fill", { triggerSmartRun() }),
+            (preferences.tr("Lưu File & Tạo Mốc Lịch Sử (Cmd+S)", "Save File & Record Snapshot (Cmd+S)"), "externaldrive.badge.checkmark", { saveActiveTabWithCheckpoint() }),
+            (preferences.tr("Đi tới Symbol Outline trong File", "Go to Symbol Outline in File"), "list.bullet.indent", { showSymbolOutlineSheet = true }),
+            (preferences.tr("Mở Lịch sử Phiên bản File (Timeline)", "Open File Version Timeline (Restore Snapshot)"), "clock.arrow.circlepath", { showTimelineSheet = true }),
+            (preferences.tr("Bật/tắt Chú thích dòng (Cmd+/)", "Toggle Line Comment (Cmd+/)"), "number", { toggleCommentToken += 1 }),
+            (preferences.tr("Bật/tắt Gợi ý Code thông minh", "Toggle Live Code Autocomplete") + " (\(preferences.enableCodeCompletion ? "ON" : "OFF"))", "text.cursor", {
                 preferences.enableCodeCompletion.toggle()
             }),
-            ("Toggle Inline Error Highlighting (\(preferences.enableLiveDiagnostics ? "ON" : "OFF"))", "exclamationmark.triangle", {
+            (preferences.tr("Bật/tắt Báo lỗi trực tiếp", "Toggle Inline Error Highlighting") + " (\(preferences.enableLiveDiagnostics ? "ON" : "OFF"))", "exclamationmark.triangle", {
                 preferences.enableLiveDiagnostics.toggle()
             }),
-            ("Open Theme Studio (Customize Code & App Colors)", "slider.horizontal.below.square.filled.and.square", {
+            (preferences.tr("Mở Theme Studio (Tự chỉnh màu Code & App)", "Open Theme Studio (Customize Code & App Colors)"), "slider.horizontal.below.square.filled.and.square", {
                 showThemeStudioDirect = true
             }),
-            ("Select Language Mode (64 Languages / Auto-Detect)", "chevron.left.forwardslash.chevron.right", {
+            (preferences.tr("Chọn Ngôn ngữ Code (64 Ngôn ngữ / Auto)", "Select Code Language Mode (64 Languages / Auto-Detect)"), "chevron.left.forwardslash.chevron.right", {
                 showLanguagePickerSheet = true
             }),
-            ("Format Document by Language (Cmd+Shift+F)", "text.alignleft", { formatActiveFile() }),
-            ("Toggle Auto-Format on Save & Run (\(preferences.formatOnSave ? "ON" : "OFF"))", "arrow.triangle.2.circlepath", {
+            (preferences.tr("Format Document theo Ngôn ngữ (Cmd+Shift+F)", "Format Document by Language (Cmd+Shift+F)"), "text.alignleft", { formatActiveFile() }),
+            (preferences.tr("Bật/tắt Tự động Format khi Lưu & Chạy", "Toggle Auto-Format on Save & Run") + " (\(preferences.formatOnSave ? "ON" : "OFF"))", "arrow.triangle.2.circlepath", {
                 preferences.formatOnSave.toggle()
             }),
-            ("Show Problems & Inline Diagnostics", "checklist", { checkSyntaxAndLSPDiagnostics() }),
-            ("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "hammer.fill", { showTheosBuilderSheet = true }),
-            ("Export Project Workspace as .zip", "doc.zipper", { exportWorkspaceAsZipAndShare() }),
-            ("Open Live Server localhost:\(liveServer.port) in Safari", "safari", {
+            (preferences.tr("Xem Problems & Báo lỗi trực tiếp", "Show Problems & Inline Diagnostics"), "checklist", { checkSyntaxAndLSPDiagnostics() }),
+            (preferences.tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)"), "hammer.fill", { showTheosBuilderSheet = true }),
+            (preferences.tr("Xuất Dự án ra File .zip", "Export Project Workspace as .zip"), "doc.zipper", { exportWorkspaceAsZipAndShare() }),
+            (preferences.tr("Mở Live Server localhost:\(liveServer.port) trên Safari", "Open Live Server localhost:\(liveServer.port) in Safari"), "safari", {
                 if !liveServer.isRunning {
                     liveServer.start(serving: workspace.rootURL, keepAliveInBackground: preferences.keepServerInBackground)
                 }
                 liveServer.openInSafari()
             }),
-            ("Toggle Xterm / SSH PTY Terminal (Cmd+J)", "terminal", {
+            (preferences.tr("Đóng/mở Xterm / SSH PTY Terminal (Cmd+J)", "Toggle Xterm / SSH PTY Terminal (Cmd+J)"), "terminal", {
                 bottomTab = .terminal
                 withAnimation { showBottomPanel.toggle() }
             }),
-            ("Toggle Coding Agent Panel (Cmd+I)", "cpu", {
+            (preferences.tr("Đóng/mở Coding Agent Panel (Cmd+I)", "Toggle Coding Agent Panel (Cmd+I)"), "cpu", {
                 withAnimation { showRightAIPanel.toggle() }
             }),
-            ("Open Themes, Fonts & IDE Settings", "slider.horizontal.3", {
+            (preferences.tr("Ngôn ngữ Giao diện & Thông tin Tác giả (\(IDEAuthorInfo.telegramHandle))", "Interface Language & Author Info (\(IDEAuthorInfo.telegramHandle))"), "globe", {
+                showSettingsSheet = true
+            }),
+            (preferences.tr("Mở Cài đặt, Theme & Font chữ", "Open Themes, Fonts & IDE Settings"), "slider.horizontal.3", {
                 showSettingsSheet = true
             })
         ]

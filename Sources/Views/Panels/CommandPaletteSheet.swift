@@ -30,7 +30,7 @@ public struct CommandPaletteSheet: View {
         NavigationStack {
             List {
                 if !filteredCommands.isEmpty {
-                    Section("Lệnh IDE (Commands)") {
+                    Section(preferences.tr("Lệnh IDE (Commands)", "IDE Commands", zh: "IDE 命令", ja: "IDE コマンド", ko: "IDE 명령", ru: "Команды IDE", es: "Comandos del IDE")) {
                         ForEach(Array(filteredCommands.enumerated()), id: \.offset) { _, cmd in
                             Button {
                                 dismiss()
@@ -43,7 +43,7 @@ public struct CommandPaletteSheet: View {
                 }
 
                 if !filteredFiles.isEmpty {
-                    Section("Mở Nhanh File (Quick Open)") {
+                    Section(preferences.tr("Mở Nhanh File (Quick Open)", "Quick Open Files", zh: "快速打开文件", ja: "クイックオープン", ko: "빠른 파일 열기", ru: "Быстрое открытие", es: "Apertura Rápida")) {
                         ForEach(filteredFiles, id: \.path) { url in
                             Button {
                                 workspace.openFile(at: url)
@@ -55,12 +55,12 @@ public struct CommandPaletteSheet: View {
                     }
                 }
             }
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Gõ tên lệnh hoặc tên file...")
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: preferences.tr("Gõ tên lệnh hoặc tên file...", "Type a command or file name..."))
             .navigationTitle("Command Palette")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Đóng") { dismiss() }
+                    Button(preferences.tr("Đóng", "Close", zh: "关闭", ja: "閉じる", ko: "닫기", ru: "Закрыть", es: "Cerrar")) { dismiss() }
                 }
             }
         }

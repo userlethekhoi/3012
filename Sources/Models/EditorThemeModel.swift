@@ -614,6 +614,11 @@ public final class EditorPreferences: ObservableObject {
         ("Rose", "#F43F5E")
     ]
 
+    @Published public var appLanguage: AppLanguage {
+        didSet {
+            AppLanguage.current = appLanguage
+        }
+    }
     @Published public var selectedThemeID: String {
         didSet { UserDefaults.standard.set(selectedThemeID, forKey: "3012.themeID") }
     }
@@ -692,6 +697,10 @@ public final class EditorPreferences: ObservableObject {
     }
 
     public init() {
+        let savedLang = UserDefaults.standard.string(forKey: AppLanguage.storageKey)
+            .flatMap(AppLanguage.init(rawValue:)) ?? .vietnamese
+        self.appLanguage = savedLang
+        AppLanguage.current = savedLang
         self.selectedThemeID = UserDefaults.standard.string(forKey: "3012.themeID") ?? "tokyo-night"
         self.customAccentHex = UserDefaults.standard.string(forKey: "3012.customAccentHex") ?? ""
         self.fontName = UserDefaults.standard.string(forKey: "3012.fontName") ?? "Menlo-Regular"
@@ -713,6 +722,18 @@ public final class EditorPreferences: ObservableObject {
         self.showBreadcrumbs = UserDefaults.standard.object(forKey: "3012.showBreadcrumbs") as? Bool ?? true
         self.keepServerInBackground = UserDefaults.standard.object(forKey: "3012.keepServerBg") as? Bool ?? true
         loadCustomThemes()
+    }
+
+    public func tr(
+        _ vi: String,
+        _ en: String,
+        zh: String? = nil,
+        ja: String? = nil,
+        ko: String? = nil,
+        ru: String? = nil,
+        es: String? = nil
+    ) -> String {
+        appLanguage.tr(vi, en, zh: zh, ja: ja, ko: ko, ru: ru, es: es)
     }
 
     public func makeRunestoneTheme() -> IDERunestoneTheme {

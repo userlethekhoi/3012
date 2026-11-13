@@ -254,9 +254,10 @@ public struct BottomConsolePreviewPanel: View {
             return sshService.isConnected ? "SSH PTY" : "Terminal"
         case .problems:
             let count = intelligence.diagnostics.count
-            return count > 0 ? "Problems (\(count))" : "Problems"
+            let title = preferences.tr("Vấn đề", "Problems", zh: "问题", ja: "問題", ko: "문제", ru: "Проблемы", es: "Problemas")
+            return count > 0 ? "\(title) (\(count))" : title
         case .output:
-            return "Output"
+            return preferences.tr("Kết quả", "Output", zh: "输出", ja: "出力", ko: "출력", ru: "Вывод", es: "Salida")
         case .livePreview:
             if let customPort = selectedPreviewPort {
                 return "Tunnel :\(customPort)"
@@ -289,10 +290,10 @@ public struct BottomConsolePreviewPanel: View {
                 Image(systemName: "eye.slash")
                     .font(.system(size: 24))
                     .foregroundColor(Color(hex: palette.gutterForeground))
-                Text("Tính năng báo lỗi trực tiếp đang tắt.")
+                Text(preferences.tr("Tính năng báo lỗi trực tiếp đang tắt.", "Inline error diagnostics is currently disabled."))
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundColor(Color(hex: palette.foreground))
-                Button("Bật lại Báo lỗi trực tiếp") {
+                Button(preferences.tr("Bật lại Báo lỗi trực tiếp", "Enable Inline Diagnostics")) {
                     preferences.enableLiveDiagnostics = true
                 }
                 .font(.system(size: 12, weight: .bold))
@@ -308,7 +309,7 @@ public struct BottomConsolePreviewPanel: View {
                 Image(systemName: "checkmark.seal")
                     .font(.system(size: 26))
                     .foregroundColor(.green)
-                Text("Không phát hiện lỗi cú pháp trong file đang mở.")
+                Text(preferences.tr("Không phát hiện lỗi cú pháp trong file đang mở.", "No syntax issues found in the active file."))
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundColor(Color(hex: palette.gutterForeground))
             }

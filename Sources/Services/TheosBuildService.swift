@@ -11,17 +11,17 @@ public enum TheosBuildMode: String, CaseIterable, Identifiable, Codable {
 
     public var title: String {
         switch self {
-        case .communityServer: return "Máy chủ Cộng đồng (Không cần JB / VPS)"
-        case .privateSSHVPS: return "VPS SSH Cá nhân (Qua kết nối SSH)"
-        case .offlineExport: return "Ngoại tuyến (.zip + GitHub Actions)"
+        case .communityServer: return L10n.tr("Máy chủ Cộng đồng (Không cần JB / VPS)", "Community Build Server (No JB / VPS Needed)")
+        case .privateSSHVPS: return L10n.tr("VPS SSH Cá nhân (Qua kết nối SSH)", "Private SSH VPS (Via SSH Connection)")
+        case .offlineExport: return L10n.tr("Ngoại tuyến (.zip + GitHub Actions)", "Offline Export (.zip + GitHub Actions)")
         }
     }
 
     public var subtitle: String {
         switch self {
-        case .communityServer: return "Biên dịch cách ly trong container Docker (--network none, không lưu code)"
-        case .privateSSHVPS: return "Chạy make package trực tiếp trên VPS Linux riêng qua SSH"
-        case .offlineExport: return "Tạo sẵn GitHub Actions workflow & đóng gói .zip sạch để tự build"
+        case .communityServer: return L10n.tr("Biên dịch cách ly trong container Docker (--network none, không lưu code)", "Isolated Docker sandbox (--network none, ephemeral RAM build)")
+        case .privateSSHVPS: return L10n.tr("Chạy make package trực tiếp trên VPS Linux riêng qua SSH", "Runs make package directly on your private Linux VPS via SSH")
+        case .offlineExport: return L10n.tr("Tạo sẵn GitHub Actions workflow & đóng gói .zip sạch để tự build", "Generates GitHub Actions workflow & clean .zip archive")
         }
     }
 }
@@ -35,9 +35,9 @@ public enum TheosPackageScheme: String, CaseIterable, Identifiable, Codable {
 
     public var title: String {
         switch self {
-        case .rootless: return "Rootless (/var/jb — iOS 15+ Dopamine/Palera1n)"
-        case .roothide: return "RootHide (Ẩn Jailbreak)"
-        case .rootful: return "Rootful (iOS 14 trở xuống)"
+        case .rootless: return L10n.tr("Rootless (/var/jb — iOS 15+ Dopamine/Palera1n)", "Rootless (/var/jb — iOS 15+ Dopamine/Palera1n)")
+        case .roothide: return L10n.tr("RootHide (Ẩn Jailbreak)", "RootHide (Hide Jailbreak)")
+        case .rootful: return L10n.tr("Rootful (iOS 14 trở xuống)", "Rootful (Legacy iOS 14 & below)")
         }
     }
 }
@@ -50,17 +50,23 @@ public enum TheosTemplateKind: String, CaseIterable, Identifiable {
 
     public var title: String {
         switch self {
-        case .standardTweak: return "Logos Tweak (.x -> .deb / .dylib)"
-        case .modMenuDylib: return "Floating Mod Menu HUD (.xm + Objective-C++ UI -> .dylib / .deb)"
+        case .standardTweak: return L10n.tr("Logos Tweak (.x -> .deb / .dylib)", "Logos Tweak (.x -> .deb / .dylib)")
+        case .modMenuDylib: return L10n.tr("Floating Mod Menu HUD (.xm + Objective-C++ UI -> .dylib / .deb)", "Floating Mod Menu HUD (.xm + Objective-C++ UI -> .dylib / .deb)")
         }
     }
 
     public var summary: String {
         switch self {
         case .standardTweak:
-            return "Makefile + Tweak.x + control + plist chuẩn Theos. Phù hợp tweak hệ thống hoặc app."
+            return L10n.tr(
+                "Makefile + Tweak.x + control + plist chuẩn Theos. Phù hợp tweak hệ thống hoặc app.",
+                "Standard Theos Makefile + Tweak.x + control + plist. Ideal for system or app tweaks."
+            )
         case .modMenuDylib:
-            return "Kèm cửa sổ HUD nổi kéo thả được (MenuOverlayView.h/.mm) với công tắc lưu trạng thái."
+            return L10n.tr(
+                "Kèm cửa sổ HUD nổi kéo thả được (MenuOverlayView.h/.mm) với công tắc lưu trạng thái.",
+                "Includes draggable floating HUD window (MenuOverlayView.h/.mm) with persistent toggles."
+            )
         }
     }
 }
