@@ -74,6 +74,7 @@ public struct MainIDEWorkspaceView: View {
     @State private var showTheosBuilderSheet: Bool = false
     @State private var showDaemonManagerSheet: Bool = false
     @State private var shareZipItem: ShareableZipFile? = nil
+    @State private var rootDocumentPickerMode: WorkspaceDocumentPickerMode? = nil
 
     @State private var markdownMode: MarkdownDisplayMode = .editor
     @State private var findTriggerToken: Int = 0
@@ -190,6 +191,12 @@ public struct MainIDEWorkspaceView: View {
                         onOpenTheosBuilder: {
                             showLeftExplorer = false
                             showTheosBuilderSheet = true
+                        },
+                        onRequestOpenFolder: {
+                            rootDocumentPickerMode = .folder
+                        },
+                        onRequestImportZip: {
+                            rootDocumentPickerMode = .zip
                         },
                         onOpenSettings: {
                             showLeftExplorer = false
@@ -361,6 +368,23 @@ public struct MainIDEWorkspaceView: View {
                         refreshIntelligenceForActiveTab()
                     }
                 )
+            }
+        }
+        .onOpenURL { url in
+            workspace.handleIncomingURL(url)
+            liveServer.updateRootDirectory(workspace.rootURL)
+        }
+        .sheet(item: $rootDocumentPickerMode) { mode in
+            SystemDocumentPickerSheet(mode: mode) { pickedURL in
+                switch mode {
+                case .folder:
+                    workspace.switchWorkspaceFolder(to: pickedURL)
+                    liveServer.updateRootDirectory(workspace.rootURL)
+                case .zip:
+                    if workspace.importAndOpenZip(from: pickedURL) {
+                        liveServer.updateRootDirectory(workspace.rootURL)
+                    }
+                }
             }
         }
         .sheet(item: $shareZipItem) { item in
@@ -996,9 +1020,21 @@ public struct MainIDEWorkspaceView: View {
                 }
 
                 Button {
+                    rootDocumentPickerMode = .folder
+                } label: {
+                    Label(preferences.tr("Mở Thư mục trên máy (Files)...", "Open Folder on Device (Files)..."), systemImage: "folder.badge.gearshape")
+                }
+
+                Button {
+                    rootDocumentPickerMode = .zip
+                } label: {
+                    Label(preferences.tr("Nhập & Tự giải nén File .zip...", "Import & Auto-Extract .zip File..."), systemImage: "doc.zipper")
+                }
+
+                Button {
                     exportWorkspaceAsZipAndShare()
                 } label: {
-                    Label(preferences.tr("Xuất Dự án ra File .zip", "Export Project Workspace as .zip"), systemImage: "doc.zipper")
+                    Label(preferences.tr("Xuất Dự án ra File .zip", "Export Project Workspace as .zip"), systemImage: "square.and.arrow.up")
                 }
 
                 Button {
@@ -1156,6 +1192,32 @@ public struct MainIDEWorkspaceView: View {
                         .background(Color(hex: palette.accent))
                         .foregroundColor(.white)
                         .cornerRadius(8)
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    rootDocumentPickerMode = .folder
+                } label: {
+                    Label(preferences.tr("Mở Thư mục (Files)", "Open Folder (Files)"), systemImage: "folder")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Color(hex: palette.currentLineBackground))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .cornerRadius(7)
+                }
+
+                Button {
+                    rootDocumentPickerMode = .zip
+                } label: {
+                    Label(preferences.tr("Nhập & Giải nén .zip", "Import & Extract .zip"), systemImage: "doc.zipper")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Color(hex: palette.accent).opacity(0.18))
+                        .foregroundColor(Color(hex: palette.accent))
+                        .cornerRadius(7)
                 }
             }
 
@@ -1434,7 +1496,17 @@ public struct MainIDEWorkspaceView: View {
             (preferences.tr("Xem Problems & Báo lỗi trực tiếp", "Show Problems & Inline Diagnostics"), "checklist", { checkSyntaxAndLSPDiagnostics() }),
             (preferences.tr("Treo Bot Telegram & Chạy Ngầm Terminal 24/7 (Trên Máy)", "24/7 Background Terminal & Telegram Bot Runner (On-Device)"), "waveform.path.ecg", { showDaemonManagerSheet = true }),
             (preferences.tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)"), "hammer.fill", { showTheosBuilderSheet = true }),
-            (preferences.tr("Xuất Dự án ra File .zip", "Export Project Workspace as .zip"), "doc.zipper", { exportWorkspaceAsZipAndShare() }),
+            (preferences.tr("Mở Thư mục trên máy (Files)...", "Open Folder on Device (Files)..."), "folder.badge.gearshape", {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    rootDocumentPickerMode = .folder
+                }
+            }),
+            (preferences.tr("Nhập & Tự giải nén File .zip...", "Import & Auto-Extract .zip Archive..."), "doc.zipper", {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    rootDocumentPickerMode = .zip
+                }
+            }),
+            (preferences.tr("Xuất Dự án ra File .zip", "Export Project Workspace as .zip"), "square.and.arrow.up", { exportWorkspaceAsZipAndShare() }),
             (preferences.tr("Mở Live Server localhost:\(liveServer.port) trên Safari", "Open Live Server localhost:\(liveServer.port) in Safari"), "safari", {
                 if !liveServer.isRunning {
                     liveServer.start(serving: workspace.rootURL, keepAliveInBackground: preferences.keepServerInBackground)

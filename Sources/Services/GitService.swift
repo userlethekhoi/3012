@@ -48,8 +48,22 @@ public final class GitService: ObservableObject {
 
     public init() {}
 
+    private func workspaceMetaDirectory(for workspaceRoot: URL) -> URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let rawKey = workspaceRoot.standardizedFileURL.path.data(using: .utf8)?
+            .base64EncodedString()
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "") ?? "default"
+        let safeKey = String(rawKey.suffix(64))
+        let dir = appSupport
+            .appendingPathComponent("3012WorkspaceMeta", isDirectory: true)
+            .appendingPathComponent(safeKey, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     private func metaFileURL(for workspaceRoot: URL) -> URL {
-        workspaceRoot.appendingPathComponent(".3012git.json")
+        workspaceMetaDirectory(for: workspaceRoot).appendingPathComponent("git.json")
     }
 
     private struct StoredRepoMeta: Codable {
@@ -94,15 +108,18 @@ public final class GitService: ObservableObject {
 
         loadLocalRepoMeta(workspaceRoot: workspaceRoot)
         let currentDisk = collectWorkspaceTextFiles(at: workspaceRoot)
+        let metaDir = workspaceMetaDirectory(for: workspaceRoot)
         let fallbackBaseline: [String: String] = {
-            if let data = try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012baseline.json")),
+            if let data = (try? Data(contentsOf: metaDir.appendingPathComponent("baseline.json")))
+                ?? (try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012baseline.json"))),
                let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
                 return decoded
             }
             return [:]
         }()
         let deletedGhosts: [String: String] = {
-            if let data = try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012deleted.json")),
+            if let data = (try? Data(contentsOf: metaDir.appendingPathComponent("deleted.json")))
+                ?? (try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012deleted.json"))),
                let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
                 return decoded
             }
@@ -400,7 +417,8 @@ public final class GitService: ObservableObject {
 
     private func loadLocalRepoMeta(workspaceRoot: URL) {
         let metaURL = metaFileURL(for: workspaceRoot)
-        if let data = try? Data(contentsOf: metaURL),
+        let legacyURL = workspaceRoot.appendingPathComponent(".3012git.json")
+        if let data = (try? Data(contentsOf: metaURL)) ?? (try? Data(contentsOf: legacyURL)),
            let decoded = try? JSONDecoder().decode(StoredRepoMeta.self, from: data) {
             self.currentBranch = decoded.branch
             self.remoteOriginURL = decoded.remoteURL

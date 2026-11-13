@@ -91,6 +91,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         private var commandHistory: [String] = []
         private var historyCursor: Int = 0
         private var localCWD: URL?
+        private var lastSyncedWorkspaceRoot: URL?
         private var activeREPL: String? = nil
         private var isExecutingAsyncCommand: Bool = false
         private var sessionEnv: [String: String] = [
@@ -108,6 +109,8 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         @MainActor
         func bindStreams() {
             wasConnectedSSH = parent.sshService.isConnected
+            lastSyncedWorkspaceRoot = parent.workspace.rootURL.standardizedFileURL
+            localCWD = parent.workspace.rootURL
             parent.sshService.onPTYOutput = { [weak self] bytes in
                 guard let self, let tv = self.terminalView else { return }
                 tv.feed(byteArray: bytes[...])
@@ -134,6 +137,16 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     terminalView?.feed(text: "\r\n\u{001B}[1;32m[SSH] Connected to Remote PTY (\(parent.sshService.connectedProfile?.host ?? "VPS"))\u{001B}[0m\r\n")
                 } else {
                     terminalView?.feed(text: "\r\n\u{001B}[1;33m[LOCAL] Switched back to 3012 Full Workstation Shell\u{001B}[0m\r\n")
+                    printLocalPrompt()
+                }
+            }
+
+            let currentRoot = parent.workspace.rootURL.standardizedFileURL
+            if lastSyncedWorkspaceRoot?.standardizedFileURL != currentRoot {
+                lastSyncedWorkspaceRoot = currentRoot
+                localCWD = parent.workspace.rootURL
+                if !nowSSH {
+                    terminalView?.feed(text: "\r\n\u{001B}[1;36m[WORKSPACE]\u{001B}[0m Switched directory -> \u{001B}[1;33m\(parent.workspace.rootURL.lastPathComponent)\u{001B}[0m\r\n")
                     printLocalPrompt()
                 }
             }

@@ -2,6 +2,64 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 
+public enum WorkspaceDocumentPickerMode: String, Identifiable {
+    case folder
+    case zip
+
+    public var id: String { rawValue }
+}
+
+public struct SystemDocumentPickerSheet: UIViewControllerRepresentable {
+    public let mode: WorkspaceDocumentPickerMode
+    public let onPickURL: (URL) -> Void
+
+    public init(mode: WorkspaceDocumentPickerMode, onPickURL: @escaping (URL) -> Void) {
+        self.mode = mode
+        self.onPickURL = onPickURL
+    }
+
+    public func makeCoordinator() -> Coordinator {
+        Coordinator(onPickURL: onPickURL)
+    }
+
+    public func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let types: [UTType]
+        let asCopy: Bool
+        switch mode {
+        case .folder:
+            types = [.folder]
+            asCopy = false
+        case .zip:
+            types = [.zip, .archive, .data]
+            asCopy = true
+        }
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: asCopy)
+        picker.allowsMultipleSelection = false
+        picker.shouldShowFileExtensions = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    public func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    public final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPickURL: (URL) -> Void
+
+        init(onPickURL: @escaping (URL) -> Void) {
+            self.onPickURL = onPickURL
+        }
+
+        public func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let picked = urls.first else { return }
+            DispatchQueue.main.async { [onPickURL] in
+                onPickURL(picked)
+            }
+        }
+
+        public func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {}
+    }
+}
+
 public enum SidebarActivityTab: Int, CaseIterable, Identifiable {
     case explorer = 0
     case search = 1
@@ -42,18 +100,21 @@ public struct LeftExplorerDrawer: View {
     @ObservedObject var timelineService: FileTimelineAndArchiveService
     var onInsertSnippet: (String) -> Void
     var onOpenTheosBuilder: () -> Void
+    var onRequestOpenFolder: (() -> Void)?
+    var onRequestImportZip: (() -> Void)?
     var onOpenSettings: () -> Void
     var onCloseDrawer: () -> Void
 
     @State private var activeActivity: SidebarActivityTab = .explorer
     @State private var showNewFileAlert: Bool = false
     @State private var showNewFolderAlert: Bool = false
+    @State private var showNewProjectAlert: Bool = false
     @State private var newItemName: String = ""
+    @State private var newProjectName: String = ""
     @State private var targetParentDir: URL?
     @State private var renameTargetURL: URL?
     @State private var renameText: String = ""
-    @State private var showFolderPicker: Bool = false
-    @State private var showZipImporter: Bool = false
+    @State private var fallbackPickerMode: WorkspaceDocumentPickerMode? = nil
     @State private var exportedZipURL: URL? = nil
 
     // Git UI state
@@ -86,6 +147,8 @@ public struct LeftExplorerDrawer: View {
         timelineService: FileTimelineAndArchiveService,
         onInsertSnippet: @escaping (String) -> Void,
         onOpenTheosBuilder: @escaping () -> Void = {},
+        onRequestOpenFolder: (() -> Void)? = nil,
+        onRequestImportZip: (() -> Void)? = nil,
         onOpenSettings: @escaping () -> Void,
         onCloseDrawer: @escaping () -> Void
     ) {
@@ -98,8 +161,26 @@ public struct LeftExplorerDrawer: View {
         self.timelineService = timelineService
         self.onInsertSnippet = onInsertSnippet
         self.onOpenTheosBuilder = onOpenTheosBuilder
+        self.onRequestOpenFolder = onRequestOpenFolder
+        self.onRequestImportZip = onRequestImportZip
         self.onOpenSettings = onOpenSettings
         self.onCloseDrawer = onCloseDrawer
+    }
+
+    private func triggerOpenFolder() {
+        if let onRequestOpenFolder {
+            onRequestOpenFolder()
+        } else {
+            fallbackPickerMode = .folder
+        }
+    }
+
+    private func triggerImportZip() {
+        if let onRequestImportZip {
+            onRequestImportZip()
+        } else {
+            fallbackPickerMode = .zip
+        }
     }
 
     public var body: some View {
@@ -209,14 +290,20 @@ public struct LeftExplorerDrawer: View {
                 HStack(spacing: 6) {
                     Menu {
                         Button {
-                            showFolderPicker = true
+                            triggerOpenFolder()
                         } label: {
-                            Label(preferences.tr("Mở Thư mục ngoài (Files)", "Open External Folder (Files)"), systemImage: "folder")
+                            Label(preferences.tr("Mở Thư mục trên máy (Files)", "Open Device Folder (Files)"), systemImage: "folder")
                         }
                         Button {
-                            showZipImporter = true
+                            triggerImportZip()
                         } label: {
-                            Label(preferences.tr("Nhập Dự án từ File .zip", "Import Project from .zip"), systemImage: "arrow.down.doc")
+                            Label(preferences.tr("Nhập & Tự giải nén .zip", "Import & Auto-Extract .zip"), systemImage: "arrow.down.doc")
+                        }
+                        Button {
+                            newProjectName = ""
+                            showNewProjectAlert = true
+                        } label: {
+                            Label(preferences.tr("Tạo Project Mới...", "New Project Workspace..."), systemImage: "folder.badge.plus")
                         }
                         Button {
                             exportedZipURL = timelineService.exportProjectZip(workspaceRoot: workspace.rootURL)
@@ -339,26 +426,27 @@ public struct LeftExplorerDrawer: View {
             }
             Button("Hủy", role: .cancel) { remoteNewName = "" }
         }
-        .fileImporter(
-            isPresented: $showFolderPicker,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
-        ) { result in
-            if case .success(let urls) = result, let picked = urls.first {
-                workspace.switchWorkspaceFolder(to: picked)
-                liveServer.updateRootDirectory(picked)
+        .alert(preferences.tr("Tạo Project Mới", "New Project Workspace"), isPresented: $showNewProjectAlert) {
+            TextField(preferences.tr("Tên dự án (ví dụ: MyWebApp)", "Project name (e.g. MyWebApp)"), text: $newProjectName)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            Button(preferences.tr("Tạo & Mở", "Create & Open")) {
+                workspace.createNewProjectWorkspace(named: newProjectName)
+                liveServer.updateRootDirectory(workspace.rootURL)
+                newProjectName = ""
             }
+            Button(preferences.tr("Hủy", "Cancel"), role: .cancel) { newProjectName = "" }
         }
-        .fileImporter(
-            isPresented: $showZipImporter,
-            allowedContentTypes: [.zip],
-            allowsMultipleSelection: false
-        ) { result in
-            if case .success(let urls) = result, let picked = urls.first {
-                let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                if let importedDir = timelineService.importProjectZip(from: picked, into: docs) {
-                    workspace.switchWorkspaceFolder(to: importedDir)
-                    liveServer.updateRootDirectory(importedDir)
+        .sheet(item: $fallbackPickerMode) { mode in
+            SystemDocumentPickerSheet(mode: mode) { pickedURL in
+                switch mode {
+                case .folder:
+                    workspace.switchWorkspaceFolder(to: pickedURL)
+                    liveServer.updateRootDirectory(workspace.rootURL)
+                case .zip:
+                    if workspace.importAndOpenZip(from: pickedURL) {
+                        liveServer.updateRootDirectory(workspace.rootURL)
+                    }
                 }
             }
         }
@@ -371,12 +459,63 @@ public struct LeftExplorerDrawer: View {
     @ViewBuilder
     private func explorerSection(palette: IDEColorPalette) -> some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(workspace.rootURL.lastPathComponent.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(Color(hex: palette.accent))
-                    .lineLimit(1)
+            // Project Switcher + Quick File/Folder Actions
+            HStack(spacing: 6) {
+                Menu {
+                    if !workspace.availableWorkspaces.isEmpty {
+                        Section(preferences.tr("Dự án trên máy", "Device Projects")) {
+                            ForEach(workspace.availableWorkspaces, id: \.self) { folderURL in
+                                Button {
+                                    workspace.switchWorkspaceFolder(to: folderURL)
+                                    liveServer.updateRootDirectory(workspace.rootURL)
+                                } label: {
+                                    if folderURL.standardizedFileURL == workspace.rootURL.standardizedFileURL {
+                                        Label(folderURL.lastPathComponent, systemImage: "checkmark")
+                                    } else {
+                                        Label(folderURL.lastPathComponent, systemImage: "folder")
+                                    }
+                                }
+                            }
+                        }
+                        Divider()
+                    }
+                    Button {
+                        triggerOpenFolder()
+                    } label: {
+                        Label(preferences.tr("Mở Thư mục trên máy (Files)...", "Open Folder from Files..."), systemImage: "folder.badge.gearshape")
+                    }
+                    Button {
+                        triggerImportZip()
+                    } label: {
+                        Label(preferences.tr("Nhập & Tự giải nén .zip...", "Import & Auto-Extract .zip..."), systemImage: "doc.zipper")
+                    }
+                    Button {
+                        newProjectName = ""
+                        showNewProjectAlert = true
+                    } label: {
+                        Label(preferences.tr("Tạo Project Mới...", "Create New Project..."), systemImage: "plus.rectangle.on.folder")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(Color(hex: palette.accent))
+                        Text(workspace.rootURL.lastPathComponent.uppercased())
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Color(hex: palette.accent))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundColor(Color(hex: palette.gutterForeground))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color(hex: palette.currentLineBackground))
+                    .cornerRadius(5)
+                }
+
                 Spacer()
+
                 if workspace.totalDecoratedFilesCount > 0 {
                     Button {
                         workspace.resetDiffBaselineToCurrentDisk()
@@ -408,12 +547,78 @@ public struct LeftExplorerDrawer: View {
                 }
                 Button {
                     workspace.reloadTree()
+                    workspace.refreshAvailableWorkspaces()
                 } label: {
                     Image(systemName: "arrow.clockwise").font(.system(size: 11.5)).foregroundColor(Color(hex: palette.gutterForeground))
                 }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
+
+            // Prominent 1-Tap Import / Open Folder Strip
+            HStack(spacing: 6) {
+                Button {
+                    triggerOpenFolder()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10.5, weight: .semibold))
+                        Text(preferences.tr("Mở Folder", "Open Folder"))
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(Color(hex: palette.currentLineBackground))
+                    .foregroundColor(Color(hex: palette.foreground))
+                    .cornerRadius(6)
+                }
+
+                Button {
+                    triggerImportZip()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.zipper")
+                            .font(.system(size: 10.5, weight: .semibold))
+                        Text(preferences.tr("Nhập .zip", "Import .zip"))
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(Color(hex: palette.accent).opacity(0.18))
+                    .foregroundColor(Color(hex: palette.accent))
+                    .cornerRadius(6)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
+
+            if let banner = workspace.statusBannerMessage, !banner.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(.green)
+                    Text(banner)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .lineLimit(2)
+                    Spacer()
+                    Button {
+                        workspace.statusBannerMessage = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(Color(hex: palette.gutterForeground))
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.green.opacity(0.14))
+                .cornerRadius(6)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+            }
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
@@ -425,8 +630,15 @@ public struct LeftExplorerDrawer: View {
                             activeURL: workspace.activeTabID,
                             palette: palette,
                             onSelectFile: { url in
-                                workspace.openFile(at: url)
-                                onCloseDrawer()
+                                if url.pathExtension.lowercased() == "zip" {
+                                    workspace.extractZipAtURL(url)
+                                } else {
+                                    workspace.openFile(at: url)
+                                    onCloseDrawer()
+                                }
+                            },
+                            onExtractZip: { url in
+                                workspace.extractZipAtURL(url)
                             },
                             onNewFileInDir: { dir in
                                 targetParentDir = dir
@@ -1151,6 +1363,7 @@ private struct FileNodeRow: View {
     let activeURL: URL?
     let palette: IDEColorPalette
     let onSelectFile: (URL) -> Void
+    let onExtractZip: (URL) -> Void
     let onNewFileInDir: (URL) -> Void
     let onNewFolderInDir: (URL) -> Void
     let onRename: (URL) -> Void
@@ -1256,6 +1469,8 @@ private struct FileNodeRow: View {
                     if node.isDirectory {
                         Button { onNewFileInDir(node.url) } label: { Label("Tạo File trong này", systemImage: "doc.badge.plus") }
                         Button { onNewFolderInDir(node.url) } label: { Label("Tạo Thư mục con", systemImage: "folder.badge.plus") }
+                    } else if node.url.pathExtension.lowercased() == "zip" {
+                        Button { onExtractZip(node.url) } label: { Label("Giải nén .zip tại đây", systemImage: "archivebox.fill") }
                     }
                     Button { onRename(node.url) } label: { Label("Đổi tên", systemImage: "pencil") }
                     Button(role: .destructive) { onDelete(node.url) } label: { Label("Xóa", systemImage: "trash") }
@@ -1271,6 +1486,7 @@ private struct FileNodeRow: View {
                         activeURL: activeURL,
                         palette: palette,
                         onSelectFile: onSelectFile,
+                        onExtractZip: onExtractZip,
                         onNewFileInDir: onNewFileInDir,
                         onNewFolderInDir: onNewFolderInDir,
                         onRename: onRename,

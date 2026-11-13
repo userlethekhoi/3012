@@ -46,8 +46,8 @@ targets:
         PRODUCT_NAME: "3012"
         PRODUCT_MODULE_NAME: App3012
         PRODUCT_BUNDLE_IDENTIFIER: com.dev.app3012
-        MARKETING_VERSION: "3.7.1"
-        CURRENT_PROJECT_VERSION: "13"
+        MARKETING_VERSION: "3.7.2"
+        CURRENT_PROJECT_VERSION: "14"
         SWIFT_VERSION: "5.10"
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
@@ -87,6 +87,25 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UISupportsDocumentBrowser: false
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: "ZIP Archive & Project Package"
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.zip-archive
+              - com.pkware.zip-archive
+              - public.archive
+          - CFBundleTypeName: "Source Code & Text Files"
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.source-code
+              - public.plain-text
+              - public.script
+              - public.json
+              - public.xml
+              - public.data
+              - public.folder
         UIBackgroundModes:
           - audio
         NSAppTransportSecurity:

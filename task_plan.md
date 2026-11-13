@@ -1,10 +1,17 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.7.1 CI & GITHUB RELEASE VERIFIED GREEN (IPA Run `#43447481279` • Release `v3.7.1-b20` 13.43 MB ✅)** — Tinh gọn giao diện Settings & Header: xóa các đoạn mô tả lặp lại về tác giả & ghi chú mặc định Tiếng Việt, chỉ giữ 1 mục Thông tin Tác giả & Nhà Phát triển gọn sạch.
+> **Trạng thái hiện tại:** **v3.7.2 Đang hoàn tất & Build CI (`Build 14`)** — Khắc phục triệt để lỗi không mở được thư mục trên máy (`Files`), lỗi nhập & không tự giải nén file `.zip`, bổ sung chia sẻ mở file/zip trực tiếp từ `Files` / `Safari` / `Telegram` (`CFBundleDocumentTypes` + `.onOpenURL`), chuyển tệp metadata sang `Application Support` và đồng bộ `pwd` của Terminal + Live Server khi chuyển dự án.
 
 ---
 
-## Tổng kết Toàn bộ 14 Giai Đoạn Triển Khai
+## Tổng kết Toàn bộ 15 Giai Đoạn Triển Khai
+
+### Phase 15 (v3.7.2): Sửa lỗi Mở Thư Mục, Nhập & Tự Giải Nén `.zip`, và Đồng Bộ Toàn Diện Workspace (`in_progress`)
+- [x] **Bộ chọn Tệp & Thư mục UIKit (`SystemDocumentPickerSheet` trong `LeftExplorerDrawer.swift` & `App3012Main.swift`):** Thay thế 2 `.fileImporter` xung đột bằng `UIDocumentPickerViewController` gắn tại `MainIDEWorkspaceView`, đảm bảo bấm **Mở Thư mục (Files)** và **Nhập & Giải nén .zip** hoạt động 100% từ Sidebar, màn hình chào mừng, Menu header và Command Palette (`Cmd+P`).
+- [x] **Tự Động Giải Nén `.zip` & Hỗ Trợ Đa Bảng Mã (`FileTimelineAndArchiveService.swift`, `WorkspaceManager.swift`):** Tự sao chép file `.zip` từ `Files`/`iCloud Drive` về vùng tạm cục bộ qua `NSFileCoordinator`, giải nén dự phòng `UTF-8` -> `ISO-Latin-1`, tự loại bỏ `__MACOSX` / `.DS_Store` để mở thẳng thư mục dự án, và tự giải nén khi chạm trực tiếp hoặc giữ chọn **"Giải nén .zip tại đây"** trong cây thư mục.
+- [x] **Mở Thư Mục Ngoài & Chuyển Đổi Dự Án (`WorkspaceManager.swift`, `LeftExplorerDrawer.swift`):** Bảo toàn quyền R/W đầy đủ (đồng bộ an toàn vào `Documents/` kèm security-scoped bookmark tự đồng bộ ngược khi lưu file), thêm Menu chuyển đổi nhanh giữa các dự án ngay trên đầu Explorer và nút mở/nhập nổi bật 1 chạm.
+- [x] **Hỗ Trợ "Mở bằng 3012" từ iOS (`project.yml` & `App3012Main.swift`) & Đồng Bộ Workspace:** Bổ sung `CFBundleDocumentTypes` + `.onOpenURL`, chuyển `.3012baseline.json`/`.3012deleted.json`/`.3012git.json` về `Application Support/3012WorkspaceMeta/`, đồng bộ `localCWD` của `SwiftTermTerminalContainer` và `LiveServer` ngay khi đổi thư mục hoặc giải nén `.zip`.
+- [ ] Bump version `3.7.2` (Build 14) & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100%.
 
 ### Phase 14 (v3.7.1): Tinh gọn Nội dung Hiển thị Tác giả & Ngôn ngữ (`completed` ✅)
 - [x] Xóa dòng lặp `Le The Khoi (2009) • Telegram @coder_009` dưới `Native Code Editor & Remote Workstation` trong `SettingsAndThemesSheet.swift` và màn hình chờ + Menu trong `App3012Main.swift`.

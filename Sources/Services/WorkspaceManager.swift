@@ -4,6 +4,8 @@ import SwiftUI
 @MainActor
 public final class WorkspaceManager: ObservableObject {
     @Published public private(set) var rootURL: URL
+    @Published public private(set) var availableWorkspaces: [URL] = []
+    @Published public var statusBannerMessage: String? = nil
     @Published public private(set) var fileTree: [FileNode] = []
     @Published public var openTabs: [OpenTab] = []
     @Published public var activeTabID: URL?
@@ -13,9 +15,15 @@ public final class WorkspaceManager: ObservableObject {
 
     private var baselineSnapshots: [String: String] = [:]
     private var deletedGhostContents: [String: String] = [:]
+    private var externalMirroredFolderURL: URL? = nil
+    private var externalMirrorHasSecurityScope: Bool = false
 
     public var onFileSavedOrChanged: (() -> Void)?
     public var onAnyTabSavedWithURL: ((URL, String) -> Void)?
+
+    public var documentsDirectory: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
 
     public var activeTab: OpenTab? {
         guard let activeTabID else { return nil }
@@ -33,12 +41,70 @@ public final class WorkspaceManager: ObservableObject {
         bootstrapDefaultWorkspaceIfNeeded(at: defaultWorkspace)
         loadOrInitializeBaseline(at: defaultWorkspace)
         reloadTree()
-        let indexFile = defaultWorkspace.appendingPathComponent("index.html")
-        if FileManager.default.fileExists(atPath: indexFile.path) {
-            openFile(at: indexFile)
-        } else if let firstFile = flattenFiles(in: fileTree).first {
-            openFile(at: firstFile)
+        refreshAvailableWorkspaces()
+        openPreferredEntryFile()
+    }
+
+    public func refreshAvailableWorkspaces() {
+        let fm = FileManager.default
+        let docs = documentsDirectory
+        let defaultWorkspace = docs.appendingPathComponent("Workspace", isDirectory: true)
+        if !fm.fileExists(atPath: defaultWorkspace.path) {
+            try? fm.createDirectory(at: defaultWorkspace, withIntermediateDirectories: true)
         }
+        let items = (try? fm.contentsOfDirectory(
+            at: docs,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        var folders: [URL] = []
+        for url in items {
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDir {
+                folders.append(url)
+            }
+        }
+        folders.sort { a, b in
+            if a.lastPathComponent == "Workspace" { return true }
+            if b.lastPathComponent == "Workspace" { return false }
+            return a.lastPathComponent.localizedCaseInsensitiveCompare(b.lastPathComponent) == .orderedAscending
+        }
+        availableWorkspaces = folders
+    }
+
+    public func createNewProjectWorkspace(named rawName: String) {
+        let clean = rawName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: "\\", with: "-")
+        let folderName = clean.isEmpty ? "Project_\(Int(Date().timeIntervalSince1970) % 10000)" : clean
+        let target = documentsDirectory.appendingPathComponent(folderName, isDirectory: true)
+        try? FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        let readme = target.appendingPathComponent("README.md")
+        if !FileManager.default.fileExists(atPath: readme.path) {
+            try? "# \(folderName)\n\nCreated in 3012 Mobile IDE.\n".write(to: readme, atomically: true, encoding: .utf8)
+        }
+        switchWorkspaceFolder(to: target)
+    }
+
+    private func openPreferredEntryFile() {
+        let flat = flattenFiles(in: fileTree)
+        let preferredNames = ["index.html", "main.cpp", "main.c", "main.py", "app.py", "index.js", "main.js", "Tweak.xm", "Tweak.x", "Main.swift", "Package.swift", "README.md"]
+        for name in preferredNames {
+            if let match = flat.first(where: { $0.lastPathComponent.caseInsensitiveCompare(name) == .orderedSame }) {
+                openFile(at: match)
+                return
+            }
+        }
+        let nonArchiveFiles = flat.filter { !isArchiveOrBinaryExtension($0.pathExtension.lowercased()) }
+        if let first = nonArchiveFiles.first ?? flat.first {
+            openFile(at: first)
+        }
+    }
+
+    private func isArchiveOrBinaryExtension(_ ext: String) -> Bool {
+        ["zip", "rar", "7z", "tar", "gz", "deb", "ipa", "dylib", "o", "a", "so", "png", "jpg", "jpeg", "gif", "webp", "ico", "pdf", "woff", "woff2", "ttf", "otf", "mp3", "mp4", "mov", "sqlite", "db"].contains(ext)
     }
 
     private func bootstrapDefaultWorkspaceIfNeeded(at root: URL) {
@@ -258,14 +324,42 @@ public final class WorkspaceManager: ObservableObject {
     }
 
     public func openFile(at url: URL) {
+        let ext = url.pathExtension.lowercased()
+        if ext == "zip" {
+            extractZipAtURL(url)
+            return
+        }
+        let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+        if isDir {
+            switchWorkspaceFolder(to: url)
+            return
+        }
         if let existing = openTabs.first(where: { $0.fileURL.standardizedFileURL == url.standardizedFileURL }) {
             activeTabID = existing.id
             return
         }
-        let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let text: String
+        if isArchiveOrBinaryExtension(ext) {
+            text = "// [Binary / Archive File: \(url.lastPathComponent)]\n// Không thể hiển thị trực tiếp dưới dạng văn bản."
+        } else {
+            text = readTextWithEncodingFallback(from: url) ?? ""
+        }
         let tab = OpenTab(fileURL: url, content: text)
         openTabs.append(tab)
         activeTabID = tab.id
+    }
+
+    private func readTextWithEncodingFallback(from url: URL) -> String? {
+        if let utf8 = try? String(contentsOf: url, encoding: .utf8) {
+            return utf8
+        }
+        if let utf16 = try? String(contentsOf: url, encoding: .utf16) {
+            return utf16
+        }
+        if let latin1 = try? String(contentsOf: url, encoding: .isoLatin1) {
+            return latin1
+        }
+        return nil
     }
 
     public func updateActiveContent(_ newText: String, selectedRange: NSRange? = nil, autoSave: Bool = true) {
@@ -278,6 +372,7 @@ public final class WorkspaceManager: ObservableObject {
         }
         if autoSave {
             try? newText.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
+            syncFileChangeBackToExternalMirror(localFileURL: openTabs[idx].fileURL, content: newText)
             openTabs[idx].savedContent = newText
             onFileSavedOrChanged?()
             onAnyTabSavedWithURL?(openTabs[idx].fileURL, newText)
@@ -313,6 +408,7 @@ public final class WorkspaceManager: ObservableObject {
         guard let activeTabID,
               let idx = openTabs.firstIndex(where: { $0.id == activeTabID }) else { return }
         try? openTabs[idx].content.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
+        syncFileChangeBackToExternalMirror(localFileURL: openTabs[idx].fileURL, content: openTabs[idx].content)
         openTabs[idx].savedContent = openTabs[idx].content
         updateSingleFileStatus(for: openTabs[idx].fileURL, liveContent: openTabs[idx].content)
         onFileSavedOrChanged?()
@@ -322,6 +418,7 @@ public final class WorkspaceManager: ObservableObject {
     public func saveAllTabs() {
         for idx in openTabs.indices {
             try? openTabs[idx].content.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
+            syncFileChangeBackToExternalMirror(localFileURL: openTabs[idx].fileURL, content: openTabs[idx].content)
             openTabs[idx].savedContent = openTabs[idx].content
         }
         recomputeAllFileStatuses()
@@ -331,6 +428,7 @@ public final class WorkspaceManager: ObservableObject {
     public func closeTab(_ tabID: URL) {
         guard let idx = openTabs.firstIndex(where: { $0.id == tabID }) else { return }
         try? openTabs[idx].content.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
+        syncFileChangeBackToExternalMirror(localFileURL: openTabs[idx].fileURL, content: openTabs[idx].content)
         openTabs.remove(at: idx)
         if activeTabID == tabID {
             activeTabID = openTabs.last?.id
@@ -351,6 +449,7 @@ public final class WorkspaceManager: ObservableObject {
         let body = initialContent ?? lang.starterTemplate
         do {
             try body.write(to: target, atomically: true, encoding: .utf8)
+            syncFileChangeBackToExternalMirror(localFileURL: target, content: body)
             reloadTree()
             openFile(at: target)
             onFileSavedOrChanged?()
@@ -367,6 +466,7 @@ public final class WorkspaceManager: ObservableObject {
         let parent = targetURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         try? newContent.write(to: targetURL, atomically: true, encoding: .utf8)
+        syncFileChangeBackToExternalMirror(localFileURL: targetURL, content: newContent)
 
         if let idx = openTabs.firstIndex(where: { $0.fileURL.standardizedFileURL == targetURL.standardizedFileURL }) {
             openTabs[idx].content = newContent
@@ -459,34 +559,257 @@ public final class WorkspaceManager: ObservableObject {
     }
 
     public func switchWorkspaceFolder(to externalURL: URL) {
-        _ = externalURL.startAccessingSecurityScopedResource()
-        self.rootURL = externalURL
+        if externalURL.pathExtension.lowercased() == "zip" {
+            importAndOpenZip(from: externalURL)
+            return
+        }
+
+        if let prevMirror = externalMirroredFolderURL, externalMirrorHasSecurityScope {
+            prevMirror.stopAccessingSecurityScopedResource()
+            externalMirroredFolderURL = nil
+            externalMirrorHasSecurityScope = false
+        }
+
+        let fm = FileManager.default
+        let docsStd = documentsDirectory.standardizedFileURL.path
+        let targetStd = externalURL.standardizedFileURL.path
+
+        if targetStd == docsStd || targetStd.hasPrefix(docsStd + "/") {
+            // Already inside Documents/ container -> full direct R/W
+            try? fm.createDirectory(at: externalURL, withIntermediateDirectories: true)
+            self.rootURL = externalURL
+            self.externalMirroredFolderURL = nil
+            self.externalMirrorHasSecurityScope = false
+        } else {
+            // External folder picked from Files.app / iCloud Drive / Downloads:
+            // Coordinate-mirror into Documents/<FolderName> for 100% reliable LiveServer/Terminal/Theos R/W
+            // while holding security scope + bookmark to sync file edits back on save.
+            let hasScope = externalURL.startAccessingSecurityScopedResource()
+            if let bookmark = try? externalURL.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil) {
+                UserDefaults.standard.set(bookmark, forKey: "3012.lastExternalFolderBookmark")
+            }
+
+            let rawFolderName = externalURL.lastPathComponent
+            let safeFolderName = rawFolderName.isEmpty ? "ExternalProject" : rawFolderName
+            let localMirror = documentsDirectory.appendingPathComponent(safeFolderName, isDirectory: true)
+            let copied = mirrorExternalDirectory(from: externalURL, to: localMirror)
+            if copied {
+                self.rootURL = localMirror
+                self.externalMirroredFolderURL = externalURL
+                self.externalMirrorHasSecurityScope = hasScope
+            } else {
+                // Fallback to direct folder access if mirror copy couldn't run
+                self.rootURL = externalURL
+                self.externalMirroredFolderURL = nil
+                self.externalMirrorHasSecurityScope = hasScope
+            }
+        }
+
         self.openTabs.removeAll()
         self.activeTabID = nil
-        loadOrInitializeBaseline(at: externalURL)
+        loadOrInitializeBaseline(at: self.rootURL)
         reloadTree()
-        if let first = flattenFiles(in: fileTree).first {
-            openFile(at: first)
+        refreshAvailableWorkspaces()
+        openPreferredEntryFile()
+        statusBannerMessage = "Đã mở thư mục: \(self.rootURL.lastPathComponent)"
+        onFileSavedOrChanged?()
+    }
+
+    @discardableResult
+    public func importAndOpenZip(from zipURL: URL) -> Bool {
+        guard let importedDir = FileTimelineAndArchiveService.shared.importProjectZip(from: zipURL, into: documentsDirectory) else {
+            statusBannerMessage = FileTimelineAndArchiveService.shared.archiveStatusMessage
+            return false
+        }
+        if let prevMirror = externalMirroredFolderURL, externalMirrorHasSecurityScope {
+            prevMirror.stopAccessingSecurityScopedResource()
+            externalMirroredFolderURL = nil
+            externalMirrorHasSecurityScope = false
+        }
+        self.rootURL = importedDir
+        self.openTabs.removeAll()
+        self.activeTabID = nil
+        loadOrInitializeBaseline(at: importedDir)
+        reloadTree()
+        refreshAvailableWorkspaces()
+        openPreferredEntryFile()
+        statusBannerMessage = "Đã giải nén & mở dự án: \(importedDir.lastPathComponent)"
+        onFileSavedOrChanged?()
+        return true
+    }
+
+    public func extractZipAtURL(_ zipURL: URL) {
+        if let extractedDir = FileTimelineAndArchiveService.shared.extractZipInPlace(from: zipURL) {
+            reloadTree()
+            let flatInExtracted = flattenFiles(in: buildNodes(at: extractedDir))
+                .filter { !isArchiveOrBinaryExtension($0.pathExtension.lowercased()) }
+            if let firstFile = flatInExtracted.first {
+                openFile(at: firstFile)
+            }
+            statusBannerMessage = "Đã giải nén \(zipURL.lastPathComponent) -> \(extractedDir.lastPathComponent)/"
+            onFileSavedOrChanged?()
+        } else {
+            statusBannerMessage = FileTimelineAndArchiveService.shared.archiveStatusMessage
+        }
+    }
+
+    public func handleIncomingURL(_ url: URL) {
+        let hasScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if hasScope { url.stopAccessingSecurityScopedResource() }
+        }
+
+        let ext = url.pathExtension.lowercased()
+        let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+
+        if ext == "zip" {
+            importAndOpenZip(from: url)
+            return
+        }
+        if isDir {
+            switchWorkspaceFolder(to: url)
+            return
+        }
+
+        // Single code file shared/opened from Files / Safari / Telegram -> copy into active workspace & open
+        let docsStd = documentsDirectory.standardizedFileURL.path
+        let targetStd = url.standardizedFileURL.path
+        if targetStd.hasPrefix(docsStd + "/") {
+            reloadTree()
+            openFile(at: url)
+            statusBannerMessage = "Đã mở file: \(url.lastPathComponent)"
+        } else {
+            let dest = rootURL.appendingPathComponent(url.lastPathComponent)
+            var copied = false
+            let coordinator = NSFileCoordinator(filePresenter: nil)
+            var coordErr: NSError?
+            coordinator.coordinate(readingItemAt: url, options: .withoutChanges, error: &coordErr) { coordURL in
+                if let data = try? Data(contentsOf: coordURL) {
+                    try? data.write(to: dest, options: .atomic)
+                    copied = FileManager.default.fileExists(atPath: dest.path)
+                }
+            }
+            if !copied, let data = try? Data(contentsOf: url) {
+                try? data.write(to: dest, options: .atomic)
+                copied = FileManager.default.fileExists(atPath: dest.path)
+            }
+            if copied {
+                reloadTree()
+                openFile(at: dest)
+                statusBannerMessage = "Đã nhập file: \(url.lastPathComponent)"
+                onFileSavedOrChanged?()
+            }
+        }
+    }
+
+    private func mirrorExternalDirectory(from externalURL: URL, to localMirror: URL) -> Bool {
+        let fm = FileManager.default
+        var success = false
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordError: NSError?
+
+        coordinator.coordinate(readingItemAt: externalURL, options: .withoutChanges, error: &coordError) { coordinatedURL in
+            let tempCopy = fm.temporaryDirectory.appendingPathComponent("mirror_\(UUID().uuidString)", isDirectory: true)
+            do {
+                try fm.copyItem(at: coordinatedURL, to: tempCopy)
+                if fm.fileExists(atPath: localMirror.path) {
+                    try? fm.removeItem(at: localMirror)
+                }
+                try fm.createDirectory(at: localMirror.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.moveItem(at: tempCopy, to: localMirror)
+                success = true
+            } catch {
+                try? fm.removeItem(at: tempCopy)
+                // Manual recursive fallback for FileProviders that disallow directory-level copyItem
+                do {
+                    if fm.fileExists(atPath: localMirror.path) {
+                        try? fm.removeItem(at: localMirror)
+                    }
+                    try fm.createDirectory(at: localMirror, withIntermediateDirectories: true)
+                    copyDirectoryContentsRecursively(from: coordinatedURL, to: localMirror)
+                    success = true
+                } catch {
+                    success = false
+                }
+            }
+        }
+        return success
+    }
+
+    private func copyDirectoryContentsRecursively(from srcDir: URL, to dstDir: URL) {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(at: srcDir, includingPropertiesForKeys: [.isDirectoryKey], options: []) else {
+            return
+        }
+        for item in items {
+            let name = item.lastPathComponent
+            if name == ".DS_Store" || name == "__MACOSX" { continue }
+            let dstItem = dstDir.appendingPathComponent(name)
+            let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDir {
+                try? fm.createDirectory(at: dstItem, withIntermediateDirectories: true)
+                copyDirectoryContentsRecursively(from: item, to: dstItem)
+            } else {
+                if let data = try? Data(contentsOf: item) {
+                    try? data.write(to: dstItem, options: .atomic)
+                } else {
+                    try? fm.copyItem(at: item, to: dstItem)
+                }
+            }
+        }
+    }
+
+    private func syncFileChangeBackToExternalMirror(localFileURL: URL, content: String) {
+        guard let externalRoot = externalMirroredFolderURL else { return }
+        let rel = relativePath(for: localFileURL)
+        guard !rel.isEmpty else { return }
+        let extTarget = externalRoot.appendingPathComponent(rel)
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordErr: NSError?
+        coordinator.coordinate(writingItemAt: extTarget, options: .forReplacing, error: &coordErr) { coordinatedURL in
+            try? FileManager.default.createDirectory(at: coordinatedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? content.write(to: coordinatedURL, atomically: true, encoding: .utf8)
         }
     }
 
     // MARK: - VS Code Working-Tree Diff Baseline & Status Decoration Engine
+    private func workspaceMetaDirectory(for root: URL) -> URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let rawKey = root.standardizedFileURL.path.data(using: .utf8)?
+            .base64EncodedString()
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "") ?? "default"
+        let safeKey = String(rawKey.suffix(64))
+        let dir = appSupport
+            .appendingPathComponent("3012WorkspaceMeta", isDirectory: true)
+            .appendingPathComponent(safeKey, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     private var baselineMetaURL: URL {
-        rootURL.appendingPathComponent(".3012baseline.json")
+        workspaceMetaDirectory(for: rootURL).appendingPathComponent("baseline.json")
     }
 
     private var deletedGhostsMetaURL: URL {
-        rootURL.appendingPathComponent(".3012deleted.json")
+        workspaceMetaDirectory(for: rootURL).appendingPathComponent("deleted.json")
     }
 
     private func loadOrInitializeBaseline(at root: URL) {
         deletedGhostContents = [:]
-        if let ghostData = try? Data(contentsOf: root.appendingPathComponent(".3012deleted.json")),
+        let metaDir = workspaceMetaDirectory(for: root)
+        let newGhostURL = metaDir.appendingPathComponent("deleted.json")
+        let legacyGhostURL = root.appendingPathComponent(".3012deleted.json")
+
+        if let ghostData = (try? Data(contentsOf: newGhostURL)) ?? (try? Data(contentsOf: legacyGhostURL)),
            let decodedGhosts = try? JSONDecoder().decode([String: String].self, from: ghostData) {
             deletedGhostContents = decodedGhosts
         }
 
-        if let data = try? Data(contentsOf: root.appendingPathComponent(".3012baseline.json")),
+        let newBaselineURL = metaDir.appendingPathComponent("baseline.json")
+        let legacyBaselineURL = root.appendingPathComponent(".3012baseline.json")
+
+        if let data = (try? Data(contentsOf: newBaselineURL)) ?? (try? Data(contentsOf: legacyBaselineURL)),
            let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
             baselineSnapshots = decoded
             return
