@@ -4,7 +4,7 @@ import JavaScriptCore
 import Runestone
 
 // MARK: - 1. VS Code-Grade IntelliSense Models
-public enum CompletionKind: String {
+public enum CompletionKind: String, Sendable {
     case emmet = "Emmet"
     case snippet = "Snippet"
     case method = "Method"
@@ -118,7 +118,7 @@ public struct DocumentSymbolItem: Identifiable, Equatable {
     }
 }
 
-public struct WorkspaceIndexedSymbol: Equatable {
+public struct WorkspaceIndexedSymbol: Equatable, Sendable {
     public let name: String
     public let signature: String
     public let kind: CompletionKind
@@ -1070,7 +1070,7 @@ public final class CodeIntelligenceService: ObservableObject {
     }
 
     // MARK: - Universal Symbol & Signature Extractor (Across Languages)
-    public static func extractSymbols(from code: String, language: CodeLanguage) -> [DocumentSymbolItem] {
+    nonisolated public static func extractSymbols(from code: String, language: CodeLanguage) -> [DocumentSymbolItem] {
         let lines = code.components(separatedBy: "\n")
         let offsets = computeLineUTF16Offsets(lines: lines)
         var items: [DocumentSymbolItem] = []
@@ -1175,7 +1175,7 @@ public final class CodeIntelligenceService: ObservableObject {
     }
 
     // MARK: - Helpers & Comprehensive Multi-Language Smart Catalog
-    private static func computeLineUTF16Offsets(lines: [String]) -> [Int] {
+    nonisolated private static func computeLineUTF16Offsets(lines: [String]) -> [Int] {
         var offsets: [Int] = []
         offsets.reserveCapacity(lines.count)
         var running = 0

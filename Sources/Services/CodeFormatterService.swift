@@ -4,6 +4,7 @@ public enum CodeFormatterService {
 
     /// Asynchronous formatter: uses native VPS formatters (clang-format, gofmt, rustfmt, black, prettier, shfmt, etc.) when SSH is connected,
     /// otherwise falls back to the zero-latency built-in language-aware offline formatter.
+    @MainActor
     public static func format(
         _ code: String,
         language: CodeLanguage,
