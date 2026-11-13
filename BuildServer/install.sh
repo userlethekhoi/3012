@@ -10,6 +10,8 @@
 #   * runs the API on 127.0.0.1:8787 via systemd (no public port is opened)
 #   * optionally installs cloudflared and connects your Cloudflare Tunnel (asks for the token)
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
 
 REPO_URL="${REPO_URL:-https://github.com/userlethekhoi/3012.git}"
 BRANCH="${BRANCH:-main}"
@@ -29,9 +31,11 @@ die()  { printf '\033[1;31m[3012] %s\033[0m\n' "$*" >&2; exit 1; }
 . /etc/os-release
 [ "${ID:-}" = "ubuntu" ] || die "Hiện chỉ hỗ trợ Ubuntu 22.04 / 24.04."
 
-say "1/6 Cài gói cần thiết (git, python3, curl)..."
-apt-get update -qq
-apt-get install -y -qq git python3 curl ca-certificates >/dev/null
+say "1/6 Kiểm tra gói cần thiết (git, python3, curl)..."
+if ! command -v git >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    apt-get update -qq
+    NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -o Dpkg::Options::="--force-confold" git python3 curl ca-certificates </dev/null >/dev/null
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
     say "Docker chưa có — đang cài Docker Engine..."
@@ -61,7 +65,7 @@ chown -R "$SVC_USER:$SVC_USER" "$DATA_DIR"
 chmod 700 "$DATA_DIR"
 
 say "4/6 Build Docker image Theos (lần đầu khoảng 5-10 phút)..."
-docker build --pull -q -t "$IMAGE" "$INSTALL_DIR/src/BuildServer/image" >/dev/null
+docker build --pull -t "$IMAGE" "$INSTALL_DIR/src/BuildServer/image"
 docker image prune -f >/dev/null 2>&1 || true
 
 say "5/6 Cấu hình dịch vụ systemd..."
