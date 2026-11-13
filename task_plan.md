@@ -1,16 +1,16 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.6.0 Đang tích hợp & Kiểm thử CI** — Bổ sung **Terminal & Treo Bot 24/7 Chạy Ngầm Trên Chính Thiết Bị** (`LocalDaemonService`, `LocalDaemonManagerSheet`, Keep-Alive khi tắt màn hình bằng Audio Background Mode, Telegram Bot Polling & Scaffolder).
+> **Trạng thái hiện tại:** **v3.6.0 CI & GITHUB RELEASE VERIFIED GREEN (IPA Run `#43434575168` • Release `v3.6.0-b18` 13.37 MB ✅)** — Bổ sung **Terminal & Treo Bot 24/7 Chạy Ngầm Trên Chính Thiết Bị** (`LocalDaemonService`, `LocalDaemonManagerSheet`, Keep-Alive khi tắt màn hình bằng Audio Background Mode, Telegram Bot Polling & Scaffolder).
 
 ---
 
 ## Tổng kết Toàn bộ 12 Giai Đoạn Triển Khai
 
-### Phase 12 (v3.6.0): Chạy Ngầm Terminal & Treo Bot 24/7 Trên Chính Thiết Bị (`in_progress`)
-- [x] `LocalDaemonService`: Engine chạy script Node.js/JS & Python Bot Adapter 100% nội bộ trên iPhone/iPad, tích hợp Keep-Alive chống iOS đóng băng khi tắt màn hình (Silent `AVAudioSession` playback + `UIApplication.beginBackgroundTask` + `NWPathMonitor` + theo dõi Pin).
+### Phase 12 (v3.6.0): Chạy Ngầm Terminal & Treo Bot 24/7 Trên Chính Thiết Bị (`completed` ✅)
+- [x] `LocalDaemonService`: Engine chạy script Node.js/JS & Python Bot Adapter 100% nội bộ trên iPhone/iPad (không phụ thuộc VPS chung), tích hợp Keep-Alive chống iOS đóng băng khi tắt màn hình (Silent `AVAudioSession` playback + `UIApplication.beginBackgroundTask` + `NWPathMonitor` + theo dõi Pin).
 - [x] `LocalDaemonManagerSheet`: Giao diện bật/tắt 24/7 Background, khởi tạo nhanh Bot Telegram kèm `.env` token, chạy ngầm file đang mở, xem PID & Stream Log trực tiếp.
 - [x] Mở rộng `SwiftTermTerminalContainer` & `BottomConsolePreviewPanel`: Hỗ trợ `node`, `python`, `bg`, `bot new`, `ps`, `logs`, `kill`, `keepalive`, `curl` và nút bật nhanh 24/7.
-- [ ] Tích hợp vào `SettingsAndThemesSheet` & `App3012Main`, bump version `3.6.0` (Build 11) và kiểm chứng GitHub Actions IPA build xanh 100%.
+- [x] Tích hợp vào `SettingsAndThemesSheet` & `App3012Main`, bump version `3.6.0` (Build 11) và kiểm chứng GitHub Actions IPA build xanh 100% (Run `#43434575168` -> Release `v3.6.0-b18`, `3012-Unsigned.ipa`).
 
 ### Phase 11 (v3.5.1): Thông tin Tác giả & Tùy chỉnh Đa Ngôn Ngữ Giao Diện (`completed` ✅)
 - [x] **Hệ thống Đa ngôn ngữ (`AppLocalization.swift`, `EditorThemeModel.swift`):** Hỗ trợ 7 ngôn ngữ (`VI - Tiếng Việt (Mặc định)`, `EN - English`, `ZH - 中文 (简体)`, `JA - 日本語`, `KO - 한국어`, `RU - Русский`, `ES - Español`), lưu vào `UserDefaults` (`3012.appLanguage`) và **mặc định Tiếng Việt** vì nhà phát triển là người Việt Nam, kèm nút chuyển nhanh và đặt lại về Tiếng Việt 1 chạm.
