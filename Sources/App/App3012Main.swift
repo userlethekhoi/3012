@@ -121,6 +121,8 @@ public struct MainIDEWorkspaceView: View {
                                     workspace: workspace,
                                     preferences: preferences,
                                     intelligence: intelligence,
+                                    aiService: aiService,
+                                    gitService: gitService,
                                     onJumpToLine: { line in
                                         triggerJumpToLine(line)
                                     },

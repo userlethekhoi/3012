@@ -237,19 +237,14 @@ public final class CodeRunnerService: ObservableObject {
         case "help":
             shellHistory.append("""
             Available commands:
-              ls              List files in current directory
-              pwd             Show current directory
-              cd <dir>        Change directory
-              cat <file>      Print file contents
-              touch <file>    Create empty file
-              mkdir <dir>     Create directory
-              rm <target>     Delete file or folder
-              js <expr>       Evaluate JavaScript expression locally
-              node <file>     Run script/bot 24/7 in on-device background daemon
-              bot new [tok]   Create & launch local Telegram bot
-              ps | logs | kill Manage running background processes on device
-              keepalive on/off Toggle screen-off 24/7 Keep-Alive
-              clear           Clear terminal history
+              claude / opencode  Run AI Coding CLI directly on project files
+              code <file>        Open or create & open file in 3012 Editor
+              dir / ls | cd | pwd | tree | type / cat | copy / cp | move / mv | del / rm
+              gcc / g++ / python / node / swift / npm / git / zip / unzip / wget / curl / ping
+              bot new [tok]      Create & launch 24/7 local Telegram bot
+              ps | logs | kill   Manage running background processes on device
+              keepalive on/off   Toggle screen-off 24/7 Keep-Alive
+              cls / clear        Clear terminal history
             """)
         case "clear":
             shellHistory.removeAll()

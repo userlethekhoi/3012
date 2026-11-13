@@ -299,6 +299,291 @@ public final class AIAgentService: ObservableObject {
         isThinking = false
     }
 
+    // MARK: - Terminal Coding Agent CLI (claude / opencode / ai)
+    public func runTerminalAgentCLI(
+        cliName: String,
+        rawArgs: String,
+        cwd: URL,
+        workspace: WorkspaceManager,
+        lastConsoleOutput: String,
+        onPrint: @escaping @MainActor (String) -> Void
+    ) async {
+        let trimmed = rawArgs.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        let firstCmd = tokens.first.map { String($0).lowercased() } ?? ""
+        let restArg = tokens.count > 1 ? String(tokens[1]).trimmingCharacters(in: .whitespacesAndNewlines) : ""
+
+        if firstCmd == "help" || firstCmd == "--help" || firstCmd == "-h" {
+            onPrint("""
+            \(cliName) — 3012 On-Device AI Coding CLI (Full Workspace Sandbox Access)
+            Usage:
+              \(cliName) "<prompt>"        Run AI task reading/writing files directly in current folder
+              \(cliName)                   Enter interactive \(cliName) REPL mode
+              \(cliName) auth <API_KEY>    Save API key to iOS Keychain (auto-detects Claude/OpenAI/Gemini/OpenRouter/DeepSeek)
+              \(cliName) models            List configured AI provider profiles & active model
+              \(cliName) model <model_id>  Pin specific model ID (or switch profile by name)
+              \(cliName) clear             Reset conversation context
+            \n
+            """)
+            return
+        }
+
+        if firstCmd == "clear" || firstCmd == "/clear" {
+            clearConversation()
+            onPrint("\u{001B}[32m[\(cliName.uppercased())]\u{001B}[0m Cleared conversation history.\n")
+            return
+        }
+
+        if firstCmd == "models" || firstCmd == "/models" {
+            if profiles.isEmpty {
+                onPrint("No AI profiles configured yet. Run: \(cliName) auth <YOUR_API_KEY>\n")
+                return
+            }
+            onPrint("Configured AI Profiles (active: *):\n")
+            for p in profiles {
+                let mark = (p.id == activeProfile?.id) ? "*" : " "
+                let mod = p.resolvedModelID.isEmpty ? "(auto-latest)" : p.resolvedModelID
+                let hasKey = !p.requiresAPIKey || !apiKey(for: p).isEmpty
+                onPrint("  \(mark) \(p.name) | model: \(mod) | key: \(hasKey ? "OK" : "MISSING")\n")
+            }
+            return
+        }
+
+        if firstCmd == "model" || firstCmd == "/model" {
+            if restArg.isEmpty {
+                onPrint("Active: \(activeProfile?.name ?? "None") -> \(modelName)\n")
+                return
+            }
+            if let matchedProfile = profiles.first(where: { $0.name.localizedCaseInsensitiveContains(restArg) || $0.presetID.localizedCaseInsensitiveContains(restArg) }) {
+                setActiveProfile(matchedProfile.id)
+                onPrint("\u{001B}[32m[\(cliName.uppercased())]\u{001B}[0m Switched profile to \(matchedProfile.name) (\(modelName)).\n")
+            } else if let current = activeProfile {
+                selectFixedModel(restArg, for: current.id)
+                onPrint("\u{001B}[32m[\(cliName.uppercased())]\u{001B}[0m Pinned model to \(restArg) on \(current.name).\n")
+            } else {
+                onPrint("No active profile. Run: \(cliName) auth <YOUR_API_KEY>\n")
+            }
+            return
+        }
+
+        if firstCmd == "auth" || firstCmd == "/key" || firstCmd == "login" {
+            guard !restArg.isEmpty else {
+                onPrint("Usage: \(cliName) auth <YOUR_API_KEY>\n")
+                return
+            }
+            var targetID = activeProfile?.id
+            if targetID == nil {
+                let detectedPresetID: String = {
+                    if restArg.hasPrefix("sk-ant-") { return "anthropic" }
+                    if restArg.hasPrefix("AIza") { return "gemini" }
+                    if restArg.hasPrefix("sk-or-") { return "openrouter" }
+                    if restArg.hasPrefix("gsk_") { return "groq" }
+                    if cliName == "claude" { return "anthropic" }
+                    return "openai"
+                }()
+                if let preset = AIProviderPreset.preset(id: detectedPresetID) {
+                    targetID = addProfile(preset: preset)
+                }
+            }
+            if let id = targetID, let p = profile(id: id) {
+                setAPIKey(restArg, for: id)
+                onPrint("\u{001B}[32m[\(cliName.uppercased())]\u{001B}[0m Saved API key securely in iOS Keychain for \(p.name).\n")
+                let ok = await refreshModels(for: id, announceChanges: false)
+                if ok {
+                    onPrint("\u{001B}[32m[\(cliName.uppercased())]\u{001B}[0m Active model ready: \(modelName)\n")
+                }
+            }
+            return
+        }
+
+        let promptText = stripSurroundingQuotes(trimmed)
+        guard !promptText.isEmpty else { return }
+
+        let relCWD = workspace.relativePath(for: cwd)
+        let displayDir = (cwd.standardizedFileURL == workspace.rootURL.standardizedFileURL) ? "." : relCWD
+        onPrint("\u{001B}[36m[SCAN]\u{001B}[0m Reading files in \(displayDir) (Full Sandbox Access)...\n")
+
+        let (scannedTree, scannedSnapshot) = collectDirectoryContext(cwd: cwd, workspace: workspace)
+
+        guard var active = activeProfile, (!active.requiresAPIKey || !apiKey(for: active).isEmpty) else {
+            await offlineSynthesizeCLIResponse(cliName: cliName, prompt: promptText, cwd: cwd, workspace: workspace, scannedTree: scannedTree, onPrint: onPrint)
+            return
+        }
+
+        let key = apiKey(for: active)
+        var model = active.resolvedModelID
+        if model.isEmpty {
+            _ = await refreshModels(for: active.id, announceChanges: false)
+            if let refreshed = profile(id: active.id) {
+                active = refreshed
+                model = refreshed.resolvedModelID
+            }
+        }
+        guard !model.isEmpty else {
+            onPrint("\u{001B}[33m[\(cliName.uppercased())]\u{001B}[0m Could not resolve model ID. Switching to built-in offline scaffolder...\n")
+            await offlineSynthesizeCLIResponse(cliName: cliName, prompt: promptText, cwd: cwd, workspace: workspace, scannedTree: scannedTree, onPrint: onPrint)
+            return
+        }
+
+        onPrint("\u{001B}[1;35m[\(cliName.uppercased()) • \(model)]\u{001B}[0m Thinking & editing files...\n")
+        messages.append(AIChatMessage(role: .user, text: "[\(cliName) CLI @ \(displayDir)] \(promptText)"))
+
+        let cliContext = PromptContext(
+            workspaceTree: scannedTree,
+            activeFilePath: workspace.activeTab.map { workspace.relativePath(for: $0.fileURL) },
+            activeFileContent: scannedSnapshot + (workspace.activeTab.map { "\n--- ACTIVE TAB ---\n\($0.content)" } ?? ""),
+            selectedSnippet: nil,
+            lastConsoleOutput: lastConsoleOutput
+        )
+        let systemPrompt = active.format == .appleOnDevice
+            ? buildCompactSystemPrompt(cliContext)
+            : buildSystemPrompt(cliContext)
+
+        isThinking = true
+        defer { isThinking = false }
+
+        let stream = AIProviderClient.streamChat(
+            format: active.format,
+            baseURL: active.baseURL,
+            apiKey: key,
+            model: model,
+            systemPrompt: systemPrompt,
+            history: [AIChatTurn(role: .user, text: promptText)],
+            temperature: active.useCustomTemperature ? active.temperature : nil,
+            maxOutputTokens: active.maxOutputTokens
+        )
+
+        var accumulated = ""
+        do {
+            for try await chunk in stream {
+                accumulated += chunk
+                onPrint(chunk)
+            }
+            let (cleaned, edits) = Self.extractFileEdits(from: accumulated) { rel in
+                let targetURL = workspace.rootURL.appendingPathComponent(rel)
+                return try? String(contentsOf: targetURL, encoding: .utf8)
+            }
+            messages.append(AIChatMessage(role: .assistant, text: cleaned.isEmpty ? accumulated : cleaned, proposedEdits: edits, modelLabel: model))
+
+            if !edits.isEmpty {
+                onPrint("\n")
+                for edit in edits {
+                    let finalRel = resolveWorkspaceRelativePath(edit.relativePath, cwd: cwd, workspace: workspace)
+                    workspace.applyAgentFileEdit(relativePath: finalRel, newContent: edit.newContent)
+                    let lines = edit.newContent.components(separatedBy: "\n").count
+                    onPrint("\u{001B}[1;32m[WRITE]\u{001B}[0m \(finalRel) (\(lines) lines) -> opened in Editor.\n")
+                }
+            } else {
+                onPrint("\n")
+            }
+        } catch {
+            onPrint("\n\u{001B}[31m[\(cliName.uppercased()) ERROR]\u{001B}[0m \(error.localizedDescription)\n")
+        }
+    }
+
+    private func collectDirectoryContext(cwd: URL, workspace: WorkspaceManager) -> (tree: String, contents: String) {
+        let tree = workspace.workspaceSummaryTree()
+        var urls: [URL] = []
+        if let items = try? FileManager.default.contentsOfDirectory(
+            at: cwd,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            for u in items {
+                let isDir = (try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                if !isDir { urls.append(u) }
+            }
+        }
+        if urls.count < 8 {
+            for u in workspace.flattenFiles(in: workspace.fileTree) where !urls.contains(u) {
+                urls.append(u)
+            }
+        }
+        var budget = 22_000
+        var blocks: [String] = []
+        for url in urls.prefix(12) {
+            guard budget > 0,
+                  let text = try? String(contentsOf: url, encoding: .utf8),
+                  !text.isEmpty else { continue }
+            let rel = workspace.relativePath(for: url)
+            let clipped = String(text.prefix(min(budget, 4_000)))
+            budget -= clipped.count
+            blocks.append("=== FILE: \(rel) ===\n\(clipped)")
+        }
+        return (tree, blocks.joined(separator: "\n\n"))
+    }
+
+    private func resolveWorkspaceRelativePath(_ rawPath: String, cwd: URL, workspace: WorkspaceManager) -> String {
+        let cleaned = rawPath.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+        if cwd.standardizedFileURL == workspace.rootURL.standardizedFileURL {
+            return cleaned
+        }
+        let relCWD = workspace.relativePath(for: cwd)
+        let rootCandidate = workspace.rootURL.appendingPathComponent(cleaned)
+        if cleaned.hasPrefix(relCWD + "/") || FileManager.default.fileExists(atPath: rootCandidate.path) {
+            return cleaned
+        }
+        return "\(relCWD)/\(cleaned)"
+    }
+
+    private func stripSurroundingQuotes(_ text: String) -> String {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.count >= 2, ((t.hasPrefix("\"") && t.hasSuffix("\"")) || (t.hasPrefix("'") && t.hasSuffix("'"))) {
+            return String(t.dropFirst().dropLast())
+        }
+        return t
+    }
+
+    private func offlineSynthesizeCLIResponse(
+        cliName: String,
+        prompt: String,
+        cwd: URL,
+        workspace: WorkspaceManager,
+        scannedTree: String,
+        onPrint: @escaping @MainActor (String) -> Void
+    ) async {
+        let lower = prompt.lowercased()
+        let explicitFile = extractFilename(from: prompt)
+        onPrint("\u{001B}[1;33m[\(cliName.uppercased()) LOCAL]\u{001B}[0m Running offline workspace assistant (no API key required)...\n")
+
+        if let fileName = explicitFile {
+            let ext = URL(fileURLWithPath: fileName).pathExtension.lowercased()
+            let codeBody: String = {
+                switch ext {
+                case "html", "htm":
+                    return "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>\(fileName)</title>\n</head>\n<body>\n  <h1>Generated by 3012 \(cliName) CLI</h1>\n  <p>Prompt: \(prompt)</p>\n</body>\n</html>\n"
+                case "js", "mjs":
+                    if lower.contains("bot") || lower.contains("telegram") {
+                        return "const token = process.env.TELEGRAM_BOT_TOKEN || '';\nconst bot = new TelegramBot(token);\nbot.onCommand('start', async (msg) => {\n  await bot.sendMessage(msg.chat.id, 'Hello from 3012 \(cliName) CLI!');\n});\nbot.startPolling(1200);\n"
+                    }
+                    return "// Generated by 3012 \(cliName) CLI\nconsole.log('Running \(fileName) on 3012!');\n"
+                case "py":
+                    return "# Generated by 3012 \(cliName) CLI\ndef main():\n    print(\"Hello from \(fileName)!\")\n\nif __name__ == \"__main__\":\n    main()\n"
+                case "cpp", "cc":
+                    return "#include <iostream>\nusing namespace std;\nint main() {\n    cout << \"Hello from \(fileName)!\" << endl;\n    return 0;\n}\n"
+                case "c":
+                    return "#include <stdio.h>\nint main(void) {\n    printf(\"Hello from \(fileName)!\\n\");\n    return 0;\n}\n"
+                default:
+                    return "// \(fileName) — generated by 3012 \(cliName) CLI\n// Task: \(prompt)\n"
+                }
+            }()
+            let finalRel = resolveWorkspaceRelativePath(fileName, cwd: cwd, workspace: workspace)
+            workspace.applyAgentFileEdit(relativePath: finalRel, newContent: codeBody)
+            onPrint("\u{001B}[1;32m[WRITE]\u{001B}[0m Created \(finalRel) and opened it in 3012 Editor.\n")
+        } else {
+            onPrint("Workspace files scanned:\n\(scannedTree)\n")
+        }
+        onPrint("\u{001B}[36m[TIP]\u{001B}[0m Run '\(cliName) auth <YOUR_API_KEY>' or configure Agent Settings to enable full LLM coding streaming.\n")
+    }
+
+    private func extractFilename(from text: String) -> String? {
+        let pattern = #"\b([A-Za-z0-9_\-./]+\.(?:html|htm|css|js|ts|py|c|cpp|h|hpp|swift|json|md|txt|sh|xm|x|lua|go|rs))\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
+        let ns = text as NSString
+        guard let m = regex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: ns.length)) else { return nil }
+        return ns.substring(with: m.range(at: 1))
+    }
+
     // MARK: - Generation Pipeline
 
     private struct PromptContext {
