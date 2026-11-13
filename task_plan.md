@@ -1,12 +1,12 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.2.0 (Build 6) — Đang chạy xác minh CI & tự động xuất bản Release trên GitHub Actions** — Tự động đính kèm trực tiếp `3012-Unsigned.ipa` vào **GitHub Releases** sau mỗi lần build, bổ sung hệ thống **Màu sắc Trạng thái File chuẩn VS Code (`U` / `A` xanh lá, `M` vàng hổ phách, `D` đỏ gạch ngang + Khôi phục 1 chạm)** và tài liệu `README.md` chuẩn dự án lớn.
+> **Trạng thái hiện tại:** **v3.2.0 CI & GITHUB RELEASE VERIFIED GREEN (Run `#43381122780` • Release `v3.2.0-b8` ~12.73 MB ✅)** — Tự động đính kèm trực tiếp `3012-Unsigned.ipa` vào **GitHub Releases** sau mỗi lần build, tích hợp hệ thống **Màu sắc Trạng thái File chuẩn VS Code (`U` / `A` xanh lá, `M` vàng hổ phách, `D` đỏ gạch ngang + Khôi phục 1 chạm)** và tài liệu `README.md` chuẩn dự án lớn.
 
 ---
 
 ## Tổng kết Toàn bộ 7 Giai Đoạn Triển Khai
 
-### Phase 7 (v3.2.0): Tự Động Xuất Bản GitHub Release `.ipa`, Màu Trạng Thái File VS Code & `README.md` Chuyên Nghiệp (`in_progress`)
+### Phase 7 (v3.2.0): Tự Động Xuất Bản GitHub Release `.ipa`, Màu Trạng Thái File VS Code & `README.md` Chuyên Nghiệp (`completed` ✅)
 - [x] **Tự động phát hành `3012-Unsigned.ipa` vào GitHub Releases (`.github/workflows/build-ipa.yml`):** Tự động tạo bản Release mới nhất (`--latest`) kèm mã kiểm tra `SHA256SUMS.txt` và đường dẫn tải trực tiếp `releases/latest/download/3012-Unsigned.ipa` ngay sau mỗi lần build xanh.
 - [x] **Màu sắc Trạng thái File chuẩn VS Code (`WorkspaceFileDiffStatus` — `U` / `A` / `M` / `D`):** Đồng bộ xuyên suốt trên cây thư mục **Explorer**, thanh **Tab đang mở** và **Source Control**:
   - **Màu Đỏ (`D` + gạch ngang):** File vừa bị xóa vẫn hiển thị trực quan tại thư mục gốc kèm nút **Khôi phục 1 chạm** (`restoreDeletedFile`) hoặc ẩn đi (`dismissDeletedGhost`).
