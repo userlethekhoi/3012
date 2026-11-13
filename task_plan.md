@@ -1,16 +1,16 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.7.0 Đang kiểm thử CI** — Nâng cấp **Full Workstation Terminal (Lệnh Windows/Linux + AI CLI `claude`/`opencode` + `code <file>` + Compiler `gcc/g++/py/node/swift` + `git` + `zip/unzip` + `wget/curl/ping`)** với toàn quyền đọc/ghi trong Workspace & Files Sandbox.
+> **Trạng thái hiện tại:** **v3.7.0 CI & GITHUB RELEASE VERIFIED GREEN (IPA Run `#43438138884` • Release `v3.7.0-b19` 13.43 MB ✅)** — Nâng cấp **Full Workstation Terminal (Lệnh Windows/Linux + AI CLI `claude`/`opencode` + `code <file>` + Compiler `gcc/g++/py/node/swift` + `git` + `zip/unzip` + `wget/curl/ping`)** với toàn quyền đọc/ghi trong Workspace & Files Sandbox.
 
 ---
 
 ## Tổng kết Toàn bộ 13 Giai Đoạn Triển Khai
 
-### Phase 13 (v3.7.0): Full Workstation Terminal (`claude` / `opencode` / Windows + Linux CLI) (`in_progress`)
+### Phase 13 (v3.7.0): Full Workstation Terminal (`claude` / `opencode` / Windows + Linux CLI) (`completed` ✅)
 - [x] **Terminal AI Coding CLI (`AIAgentService.runTerminalAgentCLI`):** Hỗ trợ gõ trực tiếp `claude "<yêu-cầu>"`, `opencode "<yêu-cầu>"` hoặc vào REPL tương tác (`claude` / `opencode`), tự quét cây file Workspace trong `pwd`, stream phản hồi, tự động ghi file qua `applyAgentFileEdit` và mở ngay lên Editor (`claude auth <key>`, `claude models`, `claude model <id>`).
 - [x] **Mở & Quản lý File Toàn Quyền Non-JB (`SwiftTermTerminalContainer`):** Thêm `code <file>` / `open` / `notepad` (mở hoặc tạo mới file lên Editor), `files` / `realpath` (hiện đường dẫn `Files.app` & Sandbox), Tab autocomplete, hỗ trợ nối lệnh `&&` / `;` và xuất file `>` / `>>`.
 - [x] **Đầy đủ bộ lệnh Windows CMD/PowerShell + Linux + Dev Tools:** `dir`/`ls`, `cd`/`chdir`, `cls`/`clear`, `tree`, `type`/`cat`, `head`/`tail`/`wc`, `stat`/`attrib`, `mkdir`/`md`, `rmdir`/`rd`, `touch`, `copy`/`cp`/`xcopy`, `move`/`mv`/`ren`, `del`/`rm`, `findstr`/`grep`, `find`/`where`/`which`, `gcc`/`g++`/`clang`/`swift`/`python`/`node`/`npm`/`run`, `git` (`status`, `init`, `add`, `commit`, `log`, `diff`, `branch`, `clone`), `zip`/`unzip`, `wget`/`curl`, `ping`, `ipconfig`, `systeminfo`, `set`/`env`, `tasklist`/`taskkill`.
-- [ ] Bump version `3.7.0` (Build 12) & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100%.
+- [x] Bump version `3.7.0` (Build 12) & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100% (Run `#43438138884` -> Release `v3.7.0-b19`, `3012-Unsigned.ipa`).
 
 ### Phase 12 (v3.6.0): Chạy Ngầm Terminal & Treo Bot 24/7 Trên Chính Thiết Bị (`completed` ✅)
 - [x] `LocalDaemonService`: Engine chạy script Node.js/JS & Python Bot Adapter 100% nội bộ trên iPhone/iPad (không phụ thuộc VPS chung), tích hợp Keep-Alive chống iOS đóng băng khi tắt màn hình (Silent `AVAudioSession` playback + `UIApplication.beginBackgroundTask` + `NWPathMonitor` + theo dõi Pin).
