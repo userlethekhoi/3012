@@ -108,9 +108,9 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             if nowSSH != wasConnectedSSH {
                 wasConnectedSSH = nowSSH
                 if nowSSH {
-                    terminalView?.feed(text: "\r\n\u{001B}[1;32m⚡ Connected to Remote SSH PTY (\(parent.sshService.connectedProfile?.host ?? "VPS"))\u{001B}[0m\r\n")
+                    terminalView?.feed(text: "\r\n\u{001B}[1;32m[SSH] Connected to Remote PTY (\(parent.sshService.connectedProfile?.host ?? "VPS"))\u{001B}[0m\r\n")
                 } else {
-                    terminalView?.feed(text: "\r\n\u{001B}[1;33mℹ️ Switched back to Local Workspace Shell\u{001B}[0m\r\n")
+                    terminalView?.feed(text: "\r\n\u{001B}[1;33m[LOCAL] Switched back to Local Workspace Shell\u{001B}[0m\r\n")
                     printLocalPrompt()
                 }
             }
@@ -153,30 +153,42 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 stack.heightAnchor.constraint(equalTo: bar.frameLayoutGuide.heightAnchor)
             ])
 
-            let keys: [(String, [UInt8])] = [
-                ("ESC", [0x1B]),
-                ("TAB", [0x09]),
-                ("CTRL+C", [0x03]),
-                ("CTRL+D", [0x04]),
-                ("CTRL+L", [0x0C]),
-                ("↑", [0x1B, 0x5B, 0x41]),
-                ("↓", [0x1B, 0x5B, 0x42]),
-                ("←", [0x1B, 0x5B, 0x44]),
-                ("→", [0x1B, 0x5B, 0x43]),
-                ("-", Array("-".utf8)),
-                ("/", Array("/".utf8)),
-                ("~", Array("~".utf8)),
-                ("|", Array("|".utf8))
+            let keys: [(label: String?, sfSymbol: String?, seq: [UInt8])] = [
+                ("ESC", nil, [0x1B]),
+                (nil, "arrow.right.to.line", [0x09]),
+                ("CTRL+C", nil, [0x03]),
+                ("CTRL+D", nil, [0x04]),
+                ("CTRL+L", nil, [0x0C]),
+                (nil, "arrow.up", [0x1B, 0x5B, 0x41]),
+                (nil, "arrow.down", [0x1B, 0x5B, 0x42]),
+                (nil, "arrow.left", [0x1B, 0x5B, 0x44]),
+                (nil, "arrow.right", [0x1B, 0x5B, 0x43]),
+                ("-", nil, Array("-".utf8)),
+                ("/", nil, Array("/".utf8)),
+                ("~", nil, Array("~".utf8)),
+                ("|", nil, Array("|".utf8))
             ]
 
-            for (label, seq) in keys {
+            for item in keys {
                 let btn = UIButton(type: .system)
-                btn.setTitle(label, for: .normal)
-                btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-                btn.setTitleColor(.white, for: .normal)
+                btn.tintColor = .white
+                if let sf = item.sfSymbol {
+                    btn.setImage(
+                        UIImage(
+                            systemName: sf,
+                            withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+                        ),
+                        for: .normal
+                    )
+                } else if let label = item.label {
+                    btn.setTitle(label, for: .normal)
+                    btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+                    btn.setTitleColor(.white, for: .normal)
+                }
                 btn.backgroundColor = UIColor.white.withAlphaComponent(0.14)
                 btn.layer.cornerRadius = 5
-                btn.contentEdgeInsets = UIEdgeInsets(top: 3, left: 8, bottom: 3, right: 8)
+                btn.contentEdgeInsets = UIEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
+                let seq = item.seq
                 btn.addAction(UIAction { [weak self] _ in
                     guard let self, let tv = self.terminalView else { return }
                     self.send(source: tv, data: seq[...])

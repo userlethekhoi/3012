@@ -84,7 +84,7 @@ public final class GitService: ObservableObject {
     public func commitAll(message: String, workspaceRoot: URL, sshService: SSHWorkspaceService?) async {
         let msg = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !msg.isEmpty else {
-            statusBanner = "⚠️ Vui lòng nhập nội dung commit."
+            statusBanner = "Vui lòng nhập nội dung commit."
             return
         }
         isBusy = true
@@ -115,7 +115,7 @@ public final class GitService: ObservableObject {
         }
         saveLocalRepoMeta(workspaceRoot: workspaceRoot)
         await refreshStatus(workspaceRoot: workspaceRoot, sshService: nil)
-        statusBanner = "✓ Committed [\(shortSHA)]: \(msg)"
+        statusBanner = "Committed [\(shortSHA)]: \(msg)"
     }
 
     public func discardChanges(for filePath: String, workspaceRoot: URL) async {
@@ -148,7 +148,7 @@ public final class GitService: ObservableObject {
     // MARK: - Clone GitHub Repository Directly on iOS (No external git binary needed!)
     public func cloneGitHubRepository(repoInput: String, into parentDocumentsURL: URL) async -> URL? {
         guard let (owner, repo) = parseGitHubOwnerRepo(repoInput) else {
-            statusBanner = "⚠️ Nhập dạng owner/repo hoặc https://github.com/owner/repo"
+            statusBanner = "Nhập dạng owner/repo hoặc https://github.com/owner/repo"
             return nil
         }
         isBusy = true
@@ -175,7 +175,7 @@ public final class GitService: ObservableObject {
             }
             let (tempZipURL, response) = try await URLSession.shared.download(for: zipReq)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                statusBanner = "❌ Không tải được repo (kiểm tra tên repo hoặc GitHub Token nếu Private)."
+                statusBanner = "Không tải được repo (kiểm tra tên repo hoặc GitHub Token nếu Private)."
                 return nil
             }
 
@@ -208,10 +208,10 @@ public final class GitService: ObservableObject {
             ]
             saveLocalRepoMeta(workspaceRoot: destination)
             await refreshStatus(workspaceRoot: destination, sshService: nil)
-            statusBanner = "✅ Đã clone \(owner)/\(repo) thành công!"
+            statusBanner = "Đã clone \(owner)/\(repo) thành công."
             return destination
         } catch {
-            statusBanner = "❌ Lỗi clone GitHub: \(error.localizedDescription)"
+            statusBanner = "Lỗi clone GitHub: \(error.localizedDescription)"
             return nil
         }
     }
@@ -220,11 +220,11 @@ public final class GitService: ObservableObject {
     public func pushToGitHubREST(workspaceRoot: URL, commitMessage: String) async {
         let pat = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !pat.isEmpty else {
-            statusBanner = "⚠️ Nhập GitHub Personal Access Token (PAT) để Push trực tiếp lên GitHub."
+            statusBanner = "Nhập GitHub Personal Access Token (PAT) để Push trực tiếp lên GitHub."
             return
         }
         guard let (owner, repo) = parseGitHubOwnerRepo(remoteOriginURL) else {
-            statusBanner = "⚠️ Chưa có Remote GitHub URL (owner/repo)."
+            statusBanner = "Chưa có Remote GitHub URL (owner/repo)."
             return
         }
 
@@ -234,7 +234,7 @@ public final class GitService: ObservableObject {
 
         let filesToPush = changedFiles.filter { $0.statusBadge != "D" }
         guard !filesToPush.isEmpty else {
-            statusBanner = "ℹ️ Không có file mới/sửa nào cần Push."
+            statusBanner = "Không có file mới/sửa nào cần Push."
             return
         }
 
@@ -277,7 +277,7 @@ public final class GitService: ObservableObject {
         }
 
         await commitAll(message: commitMessage.isEmpty ? "Sync to GitHub" : commitMessage, workspaceRoot: workspaceRoot, sshService: nil)
-        statusBanner = "🚀 Đã Push \(pushedCount)/\(filesToPush.count) file lên GitHub (\(owner)/\(repo))!"
+        statusBanner = "Đã Push \(pushedCount)/\(filesToPush.count) file lên GitHub (\(owner)/\(repo))."
     }
 
     private func parseGitHubOwnerRepo(_ raw: String) -> (String, String)? {

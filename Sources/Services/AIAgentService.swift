@@ -157,7 +157,7 @@ public final class AIAgentService: ObservableObject {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             messages.append(AIChatMessage(
                 role: .assistant,
-                text: "⚠️ Bạn chưa nhập **API Key** cho **\(provider.rawValue)**. Bấm biểu tượng ⚙️ ở góc trên khung AI để điền API Key (Gemini / OpenAI / DeepSeek / OpenRouter / Claude) rồi thử lại nhé!"
+                text: "Chưa cấu hình API Key cho \(provider.rawValue). Bấm nút tuỳ chỉnh ở góc trên khung Agent để nhập API Key (Gemini / OpenAI / DeepSeek / OpenRouter / Claude)."
             ))
             return
         }
@@ -202,7 +202,7 @@ public final class AIAgentService: ObservableObject {
         } catch {
             messages.append(AIChatMessage(
                 role: .assistant,
-                text: "❌ Lỗi kết nối AI API: \(error.localizedDescription)"
+                text: "Lỗi kết nối API: \(error.localizedDescription)"
             ))
         }
     }
@@ -357,7 +357,7 @@ public final class AIAgentService: ObservableObject {
             let existing = existingFileReader(path)
             edits.insert(AgentProposedEdit(relativePath: path, oldContent: existing, newContent: code), at: 0)
             if let swiftRange = Range(match.range, in: stripped) {
-                stripped.replaceSubrange(swiftRange, with: "\n📄 *Đề xuất cập nhật file `\(path)` (Xem bảng Diff bên dưới)*\n")
+                stripped.replaceSubrange(swiftRange, with: "\n*Đề xuất cập nhật file `\(path)` (Xem bảng Diff bên dưới)*\n")
             }
         }
 

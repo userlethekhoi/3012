@@ -57,6 +57,9 @@ jobs:
             ls -la build/Build/Products/Release-iphoneos || true
             exit 1
           fi
+          echo "Verifying compiled Asset Catalog & AppIcon in Info.plist:"
+          ls -lh "$APP_PATH/Assets.car"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIcons" "$APP_PATH/Info.plist"
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
           zip -qry 3012-Unsigned.ipa Payload

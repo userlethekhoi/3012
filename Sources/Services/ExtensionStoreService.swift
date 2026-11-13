@@ -75,13 +75,13 @@ public final class ExtensionStoreService: ObservableObject {
             }
             self.searchResults = items
         } catch {
-            self.storeMessage = "⚠️ Không kết nối được Open VSX: \(error.localizedDescription)"
+            self.storeMessage = "Không kết nối được Open VSX: \(error.localizedDescription)"
         }
     }
 
     public func installVSIXExtension(_ item: OpenVSXExtensionItem, into preferences: EditorPreferences) async {
         guard let dlString = item.downloadVSIXURL, let dlURL = URL(string: dlString) else {
-            storeMessage = "⚠️ Gói \(item.displayName) không có link tải .vsix trực tiếp."
+            storeMessage = "Gói \(item.displayName) không có link tải .vsix trực tiếp."
             return
         }
         installingID = item.id
@@ -101,7 +101,7 @@ public final class ExtensionStoreService: ObservableObject {
             let pkgJSONURL = extRoot.appendingPathComponent("package.json")
             guard let pkgData = try? Data(contentsOf: pkgJSONURL),
                   let pkg = try? JSONSerialization.jsonObject(with: pkgData) as? [String: Any] else {
-                storeMessage = "⚠️ Không tìm thấy extension/package.json trong gói .vsix."
+                storeMessage = "Không tìm thấy extension/package.json trong gói .vsix."
                 return
             }
 
@@ -172,12 +172,12 @@ public final class ExtensionStoreService: ObservableObject {
             UserDefaults.standard.set(Array(installedExtensionIDs), forKey: "3012.installedExts")
 
             if importedThemesCount > 0 || importedSnippetsCount > 0 {
-                storeMessage = "✅ Đã cài \(item.displayName): +\(importedThemesCount) Theme, +\(importedSnippetsCount) Snippets!"
+                storeMessage = "Đã cài \(item.displayName): +\(importedThemesCount) Theme, +\(importedSnippetsCount) Snippets."
             } else {
-                storeMessage = "ℹ️ Đã cài \(item.displayName) (Gói này không chứa Theme/Snippet tĩnh; các tính năng LSP chạy qua VPS SSH)."
+                storeMessage = "Đã cài \(item.displayName) (Gói này không chứa Theme/Snippet tĩnh; các tính năng LSP chạy qua VPS SSH)."
             }
         } catch {
-            storeMessage = "❌ Lỗi cài .vsix: \(error.localizedDescription)"
+            storeMessage = "Lỗi cài .vsix: \(error.localizedDescription)"
         }
     }
 
@@ -244,7 +244,7 @@ public final class ExtensionStoreService: ObservableObject {
             }
             if let cmd = remoteFormatterCmd {
                 let res = await ssh.executeCommandOnVPS(cmd)
-                if !res.isEmpty && !res.hasPrefix("[Process exited") && !res.hasPrefix("❌") {
+                if !res.isEmpty && !res.hasPrefix("[Process exited") && !res.hasPrefix("[SSH Error]") {
                     return res
                 }
             }
@@ -288,9 +288,9 @@ public final class ExtensionStoreService: ObservableObject {
         if language == .json {
             do {
                 _ = try JSONSerialization.jsonObject(with: Data(code.utf8))
-                return "✅ JSON hợp lệ 100% — không có lỗi cú pháp."
+                return "[OK] JSON hợp lệ 100% — không có lỗi cú pháp."
             } catch {
-                return "❌ Lỗi cú pháp JSON: \(error.localizedDescription)"
+                return "[Syntax Error] JSON: \(error.localizedDescription)"
             }
         }
 
@@ -310,7 +310,7 @@ public final class ExtensionStoreService: ObservableObject {
             if !cmd.isEmpty {
                 let res = await ssh.executeCommandOnVPS(cmd)
                 let trimmed = res.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? "✅ LSP / Compiler Check trên VPS: 0 lỗi, 0 cảnh báo!" : "🔍 Chẩn đoán từ VPS:\n\(trimmed)"
+                return trimmed.isEmpty ? "[OK] LSP / Compiler Check trên VPS: 0 lỗi, 0 cảnh báo." : "[Diagnostics]\n\(trimmed)"
             }
         }
 
@@ -325,14 +325,14 @@ public final class ExtensionStoreService: ObservableObject {
                     if stack.last == expected {
                         stack.removeLast()
                     } else {
-                        return "⚠️ Lệch dấu ngoặc '\(ch)' tại dòng \(lineIdx + 1)."
+                        return "[Syntax Warning] Lệch dấu ngoặc '\(ch)' tại dòng \(lineIdx + 1)."
                     }
                 }
             }
         }
         return stack.isEmpty
-            ? "✅ Kiểm tra nhanh cú pháp ngoặc: Cân bằng tốt (Kết nối VPS để bật full clangd/pyright diagnostics)."
-            : "⚠️ Còn \(stack.count) dấu ngoặc mở chưa đóng: \(String(stack))"
+            ? "[OK] Kiểm tra cú pháp ngoặc: Cân bằng tốt (Kết nối VPS để bật full clangd/pyright diagnostics)."
+            : "[Syntax Warning] Còn \(stack.count) dấu ngoặc mở chưa đóng: \(String(stack))"
     }
 
     public static let builtInSnippets: [CodeSnippetItem] = [

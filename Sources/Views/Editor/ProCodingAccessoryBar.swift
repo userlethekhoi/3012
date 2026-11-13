@@ -51,7 +51,7 @@ public final class ProCodingAccessoryBar: UIInputView {
         scrollView.addSubview(stack)
 
         // Fixed right button: dismiss keyboard
-        let hideKBButton = makeActionButton(title: "▾", systemIcon: "keyboard.chevron.compact.down", accent: false) { [weak self] in
+        let hideKBButton = makeActionButton(title: nil, systemIcon: "keyboard.chevron.compact.down", accent: false) { [weak self] in
             self?.targetTextView?.resignFirstResponder()
         }
         hideKBButton.translatesAutoresizingMaskIntoConstraints = false
@@ -80,8 +80,8 @@ public final class ProCodingAccessoryBar: UIInputView {
             stack.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
         ])
 
-        // 1. AI Quick Button
-        let aiBtn = makeActionButton(title: "✨ AI", systemIcon: nil, accent: true) { [weak self] in
+        // 1. Coding Agent Quick Button (Native iOS SF Symbol)
+        let aiBtn = makeActionButton(title: nil, systemIcon: "cpu", accent: true) { [weak self] in
             self?.feedback.impactOccurred()
             self?.onTriggerAI?()
         }
@@ -92,7 +92,7 @@ public final class ProCodingAccessoryBar: UIInputView {
         stack.addArrangedSubview(trackpadView)
 
         // 3. Select Toggle
-        let selBtn = makeActionButton(title: "Sel", systemIcon: nil, accent: false) { [weak self] in
+        let selBtn = makeActionButton(title: nil, systemIcon: "selection.pin.in.out", accent: false) { [weak self] in
             guard let self else { return }
             self.feedback.impactOccurred()
             self.isSelectionMode.toggle()
@@ -100,8 +100,8 @@ public final class ProCodingAccessoryBar: UIInputView {
         self.selectButton = selBtn
         stack.addArrangedSubview(selBtn)
 
-        // 4. Tab Key
-        let tabBtn = makeActionButton(title: "⇥", systemIcon: nil, accent: false) { [weak self] in
+        // 4. Tab Key (Apple native tab symbol)
+        let tabBtn = makeActionButton(title: nil, systemIcon: "arrow.right.to.line", accent: false) { [weak self] in
             guard let self, let tv = self.targetTextView else { return }
             self.feedback.impactOccurred()
             let spaces = String(repeating: " ", count: self.tabWidthProvider?() ?? 2)
@@ -151,23 +151,40 @@ public final class ProCodingAccessoryBar: UIInputView {
     private func makeTrackpadPill() -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
-        pill.backgroundColor = UIColor.systemIndigo.withAlphaComponent(0.32)
+        pill.backgroundColor = UIColor.systemIndigo.withAlphaComponent(0.30)
         pill.layer.cornerRadius = 8
         pill.layer.borderWidth = 1
-        pill.layer.borderColor = UIColor.systemIndigo.withAlphaComponent(0.7).cgColor
+        pill.layer.borderColor = UIColor.systemIndigo.withAlphaComponent(0.65).cgColor
+
+        let row = UIStackView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.axis = .horizontal
+        row.spacing = 4
+        row.alignment = .center
+        row.isUserInteractionEnabled = false
+
+        let iconView = UIImageView(
+            image: UIImage(
+                systemName: "dpad",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 11.5, weight: .semibold)
+            )
+        )
+        iconView.tintColor = .white
 
         let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = "✥ Trackpad"
-        label.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
+        label.text = "Trackpad"
+        label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         label.textColor = .white
-        pill.addSubview(label)
+
+        row.addArrangedSubview(iconView)
+        row.addArrangedSubview(label)
+        pill.addSubview(row)
 
         NSLayoutConstraint.activate([
-            pill.widthAnchor.constraint(equalToConstant: 86),
+            pill.widthAnchor.constraint(equalToConstant: 88),
             pill.heightAnchor.constraint(equalToConstant: 34),
-            label.centerXAnchor.constraint(equalTo: pill.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor)
+            row.centerXAnchor.constraint(equalTo: pill.centerXAnchor),
+            row.centerYAnchor.constraint(equalTo: pill.centerYAnchor)
         ])
 
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handleTrackpadPan(_:)))

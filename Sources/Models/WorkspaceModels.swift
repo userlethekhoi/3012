@@ -50,15 +50,15 @@ public enum CodeLanguage: String, CaseIterable, Identifiable, Codable {
 
     public var systemIcon: String {
         switch self {
-        case .html: return "globe"
-        case .css: return "paintbrush.fill"
-        case .javascript, .typescript: return "bolt.horizontal.circle.fill"
-        case .json: return "curlybraces"
-        case .python: return "terminal.fill"
-        case .c, .cpp, .objectiveC: return "cpu.fill"
+        case .html: return "chevron.left.forwardslash.chevron.right"
+        case .css: return "curlybraces"
+        case .javascript, .typescript: return "curlybraces.square"
+        case .json: return "ellipsis.curlybraces"
+        case .python: return "terminal"
+        case .c, .cpp, .objectiveC: return "cpu"
         case .swift: return "swift"
-        case .markdown: return "doc.richtext.fill"
-        case .shell: return "apple.terminal.fill"
+        case .markdown: return "doc.plaintext"
+        case .shell: return "terminal"
         case .plainText: return "doc.text"
         }
     }

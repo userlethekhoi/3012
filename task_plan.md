@@ -1,6 +1,6 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **FULL 4 PHASES COMPLETED & CI VERIFIED GREEN (Bản Final v2.0.0 ✅ — GitHub Actions Run `#43366655745`, Artifact `3012-Unsigned-IPA` ~7.43 MB)** — Tích hợp trọn bộ Editor 120Hz, Live Server `:5500` + Safari Background Keep-Alive, Terminal `SwiftTerm` VT100/TrueColor, Git & GitHub Clone/Push, `Citadel` SSH + SFTP + Port Tunneling, Chợ Extension `Open VSX (.vsix)` và AI Coding Agent cạnh cửa sổ code.
+> **Trạng thái hiện tại:** **v2.0.1 — Pure SVG Vector AppIcon & Native iOS SF Symbols Overhaul** — Loại bỏ 100% icon mặc định trống của iOS và loại bỏ toàn bộ emoji/icon kiểu AI (`sparkles`, `wand.and.stars`, emoji); chuyển hoàn toàn sang **AppIcon Vector/SVG chuẩn Apple HIG** (hỗ trợ Default / Dark / Tinted) và bộ **iOS System SF Symbols + SVG Vector (`IDECodeMarkVector`)**.
 
 ---
 

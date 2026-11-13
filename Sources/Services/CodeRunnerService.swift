@@ -3,7 +3,7 @@ import JavaScriptCore
 
 @MainActor
 public final class CodeRunnerService: ObservableObject {
-    @Published public var consoleOutput: String = "Ready. Tap ▶ Run to execute any file without configuring PATH or compilers.\n"
+    @Published public var consoleOutput: String = "Ready. Tap Run to execute any file without configuring PATH or compilers.\n"
     @Published public var stdinInput: String = ""
     @Published public private(set) var isRunning: Bool = false
     @Published public var shellHistory: [String] = [
@@ -25,13 +25,13 @@ public final class CodeRunnerService: ObservableObject {
     }
 
     public static let vpsBootstrapCommand: String = """
-    sudo apt-get update && sudo apt-get install -y build-essential gcc g++ gdb clang clangd cmake python3 python3-pip nodejs npm git ripgrep && echo "✅ 3012 VPS Toolchain Installed!"
+    sudo apt-get update && sudo apt-get install -y build-essential gcc g++ gdb clang clangd cmake python3 python3-pip nodejs npm git ripgrep && echo "[OK] 3012 VPS Toolchain Installed"
     """
 
     public func runCode(code: String, language: CodeLanguage, fileName: String, sshService: SSHWorkspaceService? = nil) async {
         isRunning = true
         let startTime = Date()
-        consoleOutput = "▶ Running \(fileName) (\(language.rawValue))...\n"
+        consoleOutput = "[Run] \(fileName) (\(language.rawValue))...\n"
 
         defer {
             isRunning = false
@@ -41,14 +41,14 @@ public final class CodeRunnerService: ObservableObject {
         if let ssh = sshService, ssh.isConnected {
             let vpsOut = await ssh.compileAndRunOnVPS(code: code, language: language, fileName: fileName, stdin: stdinInput)
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            consoleOutput += vpsOut + "\n\n✓ Finished in \(elapsed) ms (SSH VPS: \(ssh.connectedProfile?.host ?? "Remote"))"
+            consoleOutput += vpsOut + "\n\n[Done in \(elapsed) ms — SSH VPS: \(ssh.connectedProfile?.host ?? "Remote")]"
             return
         }
 
         if language == .javascript {
             let output = executeJavaScriptLocally(code)
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            consoleOutput += output + "\n\n✓ Finished in \(elapsed) ms (Local JavaScriptCore)"
+            consoleOutput += output + "\n\n[Done in \(elapsed) ms — Local JavaScriptCore]"
             return
         }
 
@@ -56,7 +56,7 @@ public final class CodeRunnerService: ObservableObject {
         let trimmedVPS = vpsEndpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedVPS.isEmpty, let vpsResult = await executeOnCustomVPS(endpoint: trimmedVPS, code: code, language: language, fileName: fileName, stdin: stdinInput) {
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            consoleOutput += vpsResult + "\n\n✓ Finished in \(elapsed) ms (Remote VPS)"
+            consoleOutput += vpsResult + "\n\n[Done in \(elapsed) ms — Remote VPS]"
             return
         }
 
@@ -64,9 +64,9 @@ public final class CodeRunnerService: ObservableObject {
         if let compilerName = wandboxCompiler(for: language) {
             let result = await executeViaZeroConfigSandbox(compiler: compilerName, code: code, stdin: stdinInput)
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            consoleOutput += result + "\n\n✓ Finished in \(elapsed) ms (Zero-Config Toolchain: \(compilerName))"
+            consoleOutput += result + "\n\n[Done in \(elapsed) ms — Zero-Config Toolchain: \(compilerName)]"
         } else {
-            consoleOutput += "ℹ️ Direct execution is not required for \(language.rawValue). For HTML/CSS, Live Server (:5500) handles instant preview."
+            consoleOutput += "Direct execution is not required for \(language.rawValue). For HTML/CSS, Live Server (:5500) handles instant preview."
         }
     }
 
@@ -84,12 +84,12 @@ public final class CodeRunnerService: ObservableObject {
         let errorBlock: @convention(block) () -> Void = {
             let args = JSContext.currentArguments() ?? []
             let line = args.map { "\($0)" }.joined(separator: " ")
-            logs.append("❌ Error: " + line)
+            logs.append("[Error] " + line)
         }
 
         context.exceptionHandler = { _, exception in
             if let exc = exception {
-                logs.append("⚠️ JS Exception: \(exc)")
+                logs.append("[JS Exception] \(exc)")
             }
         }
 
@@ -148,7 +148,7 @@ public final class CodeRunnerService: ObservableObject {
             }
             var pieces: [String] = []
             if let compErr = json["compiler_error"] as? String, !compErr.isEmpty {
-                pieces.append("🛠 Compiler Diagnostics:\n" + compErr)
+                pieces.append("[Compiler Diagnostics]\n" + compErr)
             }
             if let progOut = json["program_output"] as? String, !progOut.isEmpty {
                 pieces.append(progOut)
@@ -156,14 +156,14 @@ public final class CodeRunnerService: ObservableObject {
                 pieces.append(progMsg)
             }
             if let progErr = json["program_error"] as? String, !progErr.isEmpty, pieces.isEmpty {
-                pieces.append("⚠️ Runtime Error:\n" + progErr)
+                pieces.append("[Runtime Error]\n" + progErr)
             }
             if let status = json["status"] as? String, status != "0" {
                 pieces.append("[Exit code: \(status)]")
             }
             return pieces.isEmpty ? "(Program exited with 0 — no output)" : pieces.joined(separator: "\n")
         } catch {
-            return "⚠️ Network error reaching Zero-Config Compiler (\(error.localizedDescription)). Configure your VPS or check internet connection."
+            return "[Network Error] Could not reach Zero-Config Compiler (\(error.localizedDescription)). Configure your VPS or check internet connection."
         }
     }
 

@@ -255,9 +255,13 @@ public struct MainIDEWorkspaceView: View {
                         let isSelected = (workspace.activeTabID == tab.id)
                         let isRemoteSFTP = (sshService.remotePathBound(to: tab.fileURL) != nil)
                         HStack(spacing: 4) {
-                            Image(systemName: isRemoteSFTP ? "cloud.fill" : tab.language.systemIcon)
-                                .font(.system(size: 10))
-                                .foregroundColor(isRemoteSFTP ? .cyan : Color(hex: palette.accent))
+                            if isRemoteSFTP {
+                                Image(systemName: "icloud")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundColor(.cyan)
+                            } else {
+                                FileLanguageIconView(language: tab.language, size: 10.5)
+                            }
                             Text(tab.title)
                                 .font(.system(size: 12, weight: isSelected ? .bold : .regular))
                                 .foregroundColor(Color(hex: isSelected ? palette.foreground : palette.gutterForeground))
@@ -314,13 +318,13 @@ public struct MainIDEWorkspaceView: View {
                 Button {
                     formatActiveFile()
                 } label: {
-                    Label("Format Document (Làm đẹp Code)", systemImage: "wand.and.stars")
+                    Label("Format Document (Làm đẹp Code)", systemImage: "text.alignleft")
                 }
 
                 Button {
                     checkSyntaxAndLSPDiagnostics()
                 } label: {
-                    Label("Kiểm tra Lỗi Cú pháp / Remote LSP", systemImage: "checkmark.shield")
+                    Label("Kiểm tra Lỗi Cú pháp / Remote LSP", systemImage: "checklist")
                 }
 
                 Divider()
@@ -339,7 +343,7 @@ public struct MainIDEWorkspaceView: View {
                     bottomTab = .livePreview
                     withAnimation { showBottomPanel = true }
                 } label: {
-                    Label("Xem Split Preview trong App", systemImage: "rectangle.bottomhalf.inset.filled")
+                    Label("Xem Split Preview trong App", systemImage: "rectangle.split.1x2")
                 }
 
                 Button {
@@ -358,26 +362,27 @@ public struct MainIDEWorkspaceView: View {
                 Button {
                     showSettingsSheet = true
                 } label: {
-                    Label("Theme, Font & Cài đặt", systemImage: "paintbrush")
+                    Label("Theme, Font & Cài đặt", systemImage: "slider.horizontal.3")
                 }
             } label: {
-                Image(systemName: liveServer.isRunning ? "globe.badge.chevron.backward" : "ellipsis.circle")
+                Image(systemName: liveServer.isRunning ? "antenna.radiowaves.left.and.right" : "ellipsis.circle")
+                    .symbolRenderingMode(.hierarchical)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(liveServer.isRunning ? .green : Color(hex: palette.foreground))
                     .frame(width: 28, height: 30)
             }
 
-            // AI Coding Agent Button
+            // Coding Agent Button (Native iOS System SF Symbol — no AI sparkles)
             Button {
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                     showRightAIPanel.toggle()
                 }
             } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 11, weight: .bold))
-                    Text("AI")
-                        .font(.system(size: 11.5, weight: .bold))
+                HStack(spacing: 4) {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Agent")
+                        .font(.system(size: 11.5, weight: .semibold))
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
@@ -394,10 +399,14 @@ public struct MainIDEWorkspaceView: View {
     @ViewBuilder
     private func emptyEditorPlaceholder(palette: IDEColorPalette) -> some View {
         VStack(spacing: 14) {
+            IDECodeMarkVector(
+                size: 54,
+                secondaryColor: Color(hex: palette.foreground)
+            )
             Text("3012")
-                .font(.system(size: 34, weight: .black, design: .monospaced))
-                .foregroundColor(Color(hex: palette.accent))
-            Text("Vuốt mép trái: Explorer • Git • SSH SFTP • OpenVSX\nVuốt mép phải: AI Coding Agent")
+                .font(.system(size: 28, weight: .bold, design: .monospaced))
+                .foregroundColor(Color(hex: palette.foreground))
+            Text("Vuốt mép trái: Explorer • Git • SSH SFTP • OpenVSX\nVuốt mép phải: Coding Agent")
                 .font(.system(size: 12.5))
                 .foregroundColor(Color(hex: palette.gutterForeground))
                 .multilineTextAlignment(.center)
@@ -491,9 +500,9 @@ public struct MainIDEWorkspaceView: View {
 
     private func buildPaletteCommands() -> [(title: String, icon: String, action: () -> Void)] {
         [
-            ("Run Active File (▶ Run)", "play.fill", { triggerSmartRun() }),
-            ("Format Document (clang-format / prettier / built-in)", "wand.and.stars", { formatActiveFile() }),
-            ("Run Syntax & Remote LSP Diagnostics", "checkmark.shield", { checkSyntaxAndLSPDiagnostics() }),
+            ("Run Active File", "play.fill", { triggerSmartRun() }),
+            ("Format Document (clang-format / prettier / built-in)", "text.alignleft", { formatActiveFile() }),
+            ("Run Syntax & Remote LSP Diagnostics", "checklist", { checkSyntaxAndLSPDiagnostics() }),
             ("Open Live Server localhost:\(liveServer.port) in Safari", "safari", {
                 if !liveServer.isRunning {
                     liveServer.start(serving: workspace.rootURL, keepAliveInBackground: preferences.keepServerInBackground)
@@ -504,10 +513,10 @@ public struct MainIDEWorkspaceView: View {
                 bottomTab = .terminal
                 withAnimation { showBottomPanel.toggle() }
             }),
-            ("Toggle AI Coding Agent Panel", "sparkles", {
+            ("Toggle Coding Agent Panel", "cpu", {
                 withAnimation { showRightAIPanel.toggle() }
             }),
-            ("Open Themes, Fonts & IDE Settings", "paintbrush", {
+            ("Open Themes, Fonts & IDE Settings", "slider.horizontal.3", {
                 showSettingsSheet = true
             })
         ]

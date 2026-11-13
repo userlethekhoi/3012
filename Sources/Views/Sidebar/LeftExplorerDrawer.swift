@@ -13,11 +13,11 @@ public enum SidebarActivityTab: Int, CaseIterable, Identifiable {
 
     public var icon: String {
         switch self {
-        case .explorer: return "folder.fill"
+        case .explorer: return "doc.on.doc"
         case .search: return "magnifyingglass"
-        case .git: return "point.3.connected.trianglepath.dotted"
+        case .git: return "arrow.triangle.branch"
         case .ssh: return "server.rack"
-        case .extensions: return "puzzlepiece.extension.fill"
+        case .extensions: return "square.grid.2x2"
         }
     }
 
@@ -99,11 +99,13 @@ public struct LeftExplorerDrawer: View {
 
         HStack(spacing: 0) {
             // VS Code Slim Activity Bar (42pt)
-            VStack(spacing: 14) {
-                Text("30")
-                    .font(.system(size: 12, weight: .black, design: .monospaced))
-                    .foregroundColor(Color(hex: palette.accent))
-                    .padding(.top, 10)
+            VStack(spacing: 12) {
+                IDECodeMarkVector(
+                    size: 20,
+                    secondaryColor: Color(hex: palette.foreground)
+                )
+                .padding(.top, 12)
+                .padding(.bottom, 2)
 
                 ForEach(SidebarActivityTab.allCases) { tab in
                     Button {
@@ -115,14 +117,23 @@ public struct LeftExplorerDrawer: View {
                             Task { await extStore.searchOpenVSX(query: openVSXQuery) }
                         }
                     } label: {
-                        ZStack(alignment: .topTrailing) {
-                            Image(systemName: tab.icon)
-                                .font(.system(size: 16, weight: activeActivity == tab ? .bold : .regular))
-                                .foregroundColor(activeActivity == tab ? Color(hex: palette.accent) : Color(hex: palette.gutterForeground))
-                                .frame(width: 34, height: 34)
+                        ZStack(alignment: .leading) {
+                            if activeActivity == tab {
+                                RoundedRectangle(cornerRadius: 1.5)
+                                    .fill(Color(hex: palette.accent))
+                                    .frame(width: 2.5, height: 20)
+                            }
 
-                            if tab == .ssh && sshService.isConnected {
-                                Circle().fill(Color.green).frame(width: 7, height: 7).offset(x: -2, y: 2)
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: tab.icon)
+                                    .symbolRenderingMode(.hierarchical)
+                                    .font(.system(size: 15.5, weight: activeActivity == tab ? .semibold : .regular))
+                                    .foregroundColor(activeActivity == tab ? Color(hex: palette.foreground) : Color(hex: palette.gutterForeground))
+                                    .frame(width: 40, height: 34)
+
+                                if tab == .ssh && sshService.isConnected {
+                                    Circle().fill(Color.green).frame(width: 7, height: 7).offset(x: -5, y: 3)
+                                }
                             }
                         }
                     }
@@ -133,7 +144,8 @@ public struct LeftExplorerDrawer: View {
                 Button {
                     onOpenSettings()
                 } label: {
-                    Image(systemName: "gearshape.fill")
+                    Image(systemName: "gearshape")
+                        .symbolRenderingMode(.hierarchical)
                         .font(.system(size: 16))
                         .foregroundColor(Color(hex: palette.gutterForeground))
                         .frame(width: 34, height: 34)
@@ -691,8 +703,8 @@ public struct LeftExplorerDrawer: View {
                         }
                     } label: {
                         Label(
-                            isProvisioningVPS ? "Đang cài g++/python3/node trên VPS..." : "⚡ 1-Click Cài C++/Python/Node cho VPS",
-                            systemImage: "wrench.and.screwdriver.fill"
+                            isProvisioningVPS ? "Đang cài g++/python3/node trên VPS..." : "1-Click Cài C++/Python/Node cho VPS",
+                            systemImage: "wrench.and.screwdriver"
                         )
                         .font(.system(size: 10.5, weight: .bold))
                         .frame(maxWidth: .infinity)
@@ -809,9 +821,14 @@ public struct LeftExplorerDrawer: View {
                             }
                         } label: {
                             HStack(spacing: 6) {
-                                Image(systemName: entry.isDirectory ? "folder.fill" : "doc.text")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(entry.isDirectory ? Color(hex: palette.accent) : .cyan)
+                                if entry.isDirectory {
+                                    Image(systemName: "folder")
+                                        .symbolRenderingMode(.hierarchical)
+                                        .font(.system(size: 12.5, weight: .medium))
+                                        .foregroundColor(Color(hex: palette.accent))
+                                } else {
+                                    FileLanguageIconView(language: CodeLanguage.detect(from: URL(fileURLWithPath: entry.name)), size: 12)
+                                }
                                 Text(entry.name)
                                     .font(.system(size: 12))
                                     .foregroundColor(Color(hex: palette.foreground))
@@ -1047,17 +1064,16 @@ private struct FileNodeRow: View {
                 HStack(spacing: 6) {
                     if node.isDirectory {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9.5, weight: .semibold))
                             .foregroundColor(Color(hex: palette.gutterForeground))
                             .frame(width: 12)
-                        Image(systemName: "folder.fill")
-                            .font(.system(size: 13))
+                        Image(systemName: "folder")
+                            .symbolRenderingMode(.hierarchical)
+                            .font(.system(size: 12.5, weight: .medium))
                             .foregroundColor(Color(hex: palette.accent))
                     } else {
                         Spacer().frame(width: 12)
-                        Image(systemName: node.language.systemIcon)
-                            .font(.system(size: 12))
-                            .foregroundColor(Color(hex: palette.accent))
+                        FileLanguageIconView(language: node.language, size: 12)
                     }
 
                     Text(node.name)

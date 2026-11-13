@@ -30,9 +30,11 @@ public struct AIAgentSidePanel: View {
         VStack(spacing: 0) {
             // Top bar
             HStack(spacing: 8) {
-                Image(systemName: "sparkles")
+                Image(systemName: "cpu")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Color(hex: palette.accent))
-                Text("AI Agent")
+                Text("Coding Agent")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(Color(hex: palette.foreground))
                 Text(aiService.modelName)
@@ -57,7 +59,7 @@ public struct AIAgentSidePanel: View {
                 Button {
                     showConfigSheet = true
                 } label: {
-                    Image(systemName: "gearshape.fill")
+                    Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 13))
                         .foregroundColor(Color(hex: palette.foreground))
                 }
@@ -65,8 +67,8 @@ public struct AIAgentSidePanel: View {
                 Button {
                     onClose()
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15))
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12.5, weight: .semibold))
                         .foregroundColor(Color(hex: palette.gutterForeground))
                 }
             }
@@ -225,12 +227,14 @@ public struct AIAgentSidePanel: View {
     @ViewBuilder
     private func messageBubble(_ msg: AIChatMessage, palette: IDEColorPalette) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(msg.role == .user ? "Bạn" : "✨ 3012 Agent")
+            HStack(spacing: 4) {
+                Image(systemName: msg.role == .user ? "person" : "cpu")
+                    .font(.system(size: 9.5, weight: .semibold))
+                Text(msg.role == .user ? "Bạn" : "3012 Agent")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(msg.role == .user ? Color(hex: palette.accent) : .green)
                 Spacer()
             }
+            .foregroundColor(msg.role == .user ? Color(hex: palette.accent) : .green)
 
             Text(msg.text)
                 .font(.system(size: 12.5))
@@ -262,11 +266,11 @@ public struct AIAgentSidePanel: View {
                 Spacer()
                 switch edit.state {
                 case .applied:
-                    Text("✓ Đã áp dụng")
+                    Label("Đã áp dụng", systemImage: "checkmark")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.green)
                 case .rejected:
-                    Text("✕ Đã bỏ qua")
+                    Label("Đã bỏ qua", systemImage: "xmark")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.secondary)
                 case .pending:

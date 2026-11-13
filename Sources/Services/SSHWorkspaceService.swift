@@ -121,7 +121,7 @@ public final class SSHWorkspaceService: ObservableObject {
     // MARK: - Connection Lifecycle
     public func connect(to profile: VPSHostProfile, passwordOverride: String? = nil) async {
         guard !profile.host.trimmingCharacters(in: .whitespaces).isEmpty else {
-            statusMessage = "⚠️ Vui lòng nhập IP / Hostname của VPS."
+            statusMessage = "Vui lòng nhập IP / Hostname của VPS."
             return
         }
         await disconnect()
@@ -156,13 +156,13 @@ public final class SSHWorkspaceService: ObservableObject {
             self.connectedProfile = profile
             self.currentRemoteDirectory = resolvedStart
             self.isConnecting = false
-            self.statusMessage = "✓ Đã kết nối \(profile.username)@\(profile.host)"
+            self.statusMessage = "Đã kết nối \(profile.username)@\(profile.host)"
 
             await refreshRemoteDirectory()
             startInteractivePTYShell()
         } catch {
             self.isConnecting = false
-            self.statusMessage = "❌ Lỗi kết nối SSH: \(error.localizedDescription)"
+            self.statusMessage = "Lỗi kết nối SSH: \(error.localizedDescription)"
         }
     }
 
@@ -230,7 +230,7 @@ public final class SSHWorkspaceService: ObservableObject {
             self.currentRemoteDirectory = canonical
             self.remoteEntries = parsed
         } catch {
-            self.statusMessage = "⚠️ Lỗi đọc SFTP: \(error.localizedDescription)"
+            self.statusMessage = "Lỗi đọc SFTP: \(error.localizedDescription)"
         }
     }
 
@@ -258,7 +258,7 @@ public final class SSHWorkspaceService: ObservableObject {
             remoteFileBindings[localMirrorURL.standardizedFileURL] = remotePath
             return localMirrorURL
         } catch {
-            statusMessage = "❌ Không tải được file SFTP: \(error.localizedDescription)"
+            statusMessage = "Không tải được file SFTP: \(error.localizedDescription)"
             return nil
         }
     }
@@ -278,9 +278,9 @@ public final class SSHWorkspaceService: ObservableObject {
                 try await sftp.withFile(filePath: remotePath, flags: [.write, .create, .truncate]) { file in
                     try await file.write(finalBuf)
                 }
-                self.statusMessage = "☁️ Đã lưu SFTP: \((remotePath as NSString).lastPathComponent)"
+                self.statusMessage = "Đã lưu SFTP: \((remotePath as NSString).lastPathComponent)"
             } catch {
-                self.statusMessage = "⚠️ Lỗi lưu SFTP: \(error.localizedDescription)"
+                self.statusMessage = "Lỗi lưu SFTP: \(error.localizedDescription)"
             }
         }
     }
@@ -301,7 +301,7 @@ public final class SSHWorkspaceService: ObservableObject {
             await refreshRemoteDirectory()
             return await downloadRemoteFileToLocalCache(remotePath: remotePath)
         } catch {
-            statusMessage = "❌ Lỗi tạo file SFTP: \(error.localizedDescription)"
+            statusMessage = "Lỗi tạo file SFTP: \(error.localizedDescription)"
             return nil
         }
     }
@@ -315,7 +315,7 @@ public final class SSHWorkspaceService: ObservableObject {
             try await sftp.createDirectory(atPath: remotePath)
             await refreshRemoteDirectory()
         } catch {
-            statusMessage = "❌ Lỗi tạo thư mục SFTP: \(error.localizedDescription)"
+            statusMessage = "Lỗi tạo thư mục SFTP: \(error.localizedDescription)"
         }
     }
 
@@ -329,14 +329,14 @@ public final class SSHWorkspaceService: ObservableObject {
             }
             await refreshRemoteDirectory()
         } catch {
-            statusMessage = "⚠️ Lỗi xóa trên VPS: \(error.localizedDescription)"
+            statusMessage = "Lỗi xóa trên VPS: \(error.localizedDescription)"
         }
     }
 
     // MARK: - Remote Command & Zero-Config VPS Code Runner
     public func executeCommandOnVPS(_ command: String) async -> String {
         guard let client = sshClient else {
-            return "⚠️ Chưa kết nối SSH tới VPS."
+            return "Chưa kết nối SSH tới VPS."
         }
         do {
             let buffer = try await client.executeCommand(command, maxResponseSize: 2 * 1024 * 1024, mergeStreams: true, inShell: true)
@@ -344,7 +344,7 @@ public final class SSHWorkspaceService: ObservableObject {
         } catch let failed as SSHClient.CommandFailed {
             return "[Process exited with code \(failed.exitCode)]"
         } catch {
-            return "❌ SSH Exec Error: \(error.localizedDescription)"
+            return "[SSH Error] \(error.localizedDescription)"
         }
     }
 
@@ -393,7 +393,7 @@ public final class SSHWorkspaceService: ObservableObject {
         elif command -v apk >/dev/null 2>&1; then
           apk add --no-cache build-base clang python3 nodejs npm git ripgrep
         fi
-        echo "✅ Installed versions:"
+        echo "[OK] Installed versions:"
         g++ --version | head -n 1 || true
         python3 --version || true
         node --version || true
@@ -459,7 +459,7 @@ public final class SSHWorkspaceService: ObservableObject {
     // MARK: - SSH Local Port Forwarding (Expose VPS port on iPhone localhost -> Safari!)
     public func startLocalPortForward(localPort: UInt16, remoteHost: String = "127.0.0.1", remotePort: UInt16) {
         guard let client = sshClient else {
-            statusMessage = "⚠️ Hãy kết nối SSH trước khi bật Port Forwarding."
+            statusMessage = "Hãy kết nối SSH trước khi bật Port Forwarding."
             return
         }
         if tunnelListeners[localPort] != nil {
@@ -496,9 +496,9 @@ public final class SSHWorkspaceService: ObservableObject {
             listener.start(queue: tunnelQueue)
             tunnelListeners[localPort] = listener
             activeTunnels.append(ActivePortTunnel(localPort: localPort, remoteHost: remoteHost, remotePort: remotePort))
-            statusMessage = "🚇 Đã forward localhost:\(localPort) ⇄ VPS \(remoteHost):\(remotePort)"
+            statusMessage = "Đã forward localhost:\(localPort) -> VPS \(remoteHost):\(remotePort)"
         } catch {
-            statusMessage = "❌ Không mở được cổng cục bộ \(localPort): \(error.localizedDescription)"
+            statusMessage = "Không mở được cổng cục bộ \(localPort): \(error.localizedDescription)"
         }
     }
 
