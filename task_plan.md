@@ -1,16 +1,16 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.5.1 — Bổ sung Thông tin Tác giả (`Le The Khoi • 2009 • @coder_009`) & Hệ thống Tùy chỉnh Đa ngôn ngữ (Mặc định: Tiếng Việt)** (đang kiểm chứng CI Build GitHub Actions).
+> **Trạng thái hiện tại:** **v3.5.1 CI & GITHUB RELEASE VERIFIED GREEN (IPA Run `#43428410469` • Release `v3.5.1-b15` 13.25 MB ✅)** — Bổ sung Thông tin Tác giả (`Le The Khoi • 2009 • @coder_009`) & Hệ thống Tùy chỉnh Đa ngôn ngữ (Mặc định: Tiếng Việt).
 
 ---
 
 ## Tổng kết Toàn bộ 11 Giai Đoạn Triển Khai
 
-### Phase 11 (v3.5.1): Thông tin Tác giả & Tùy chỉnh Đa Ngôn Ngữ Giao Diện (`in_progress`)
+### Phase 11 (v3.5.1): Thông tin Tác giả & Tùy chỉnh Đa Ngôn Ngữ Giao Diện (`completed` ✅)
 - [x] **Hệ thống Đa ngôn ngữ (`AppLocalization.swift`, `EditorThemeModel.swift`):** Hỗ trợ 7 ngôn ngữ (`VI - Tiếng Việt (Mặc định)`, `EN - English`, `ZH - 中文 (简体)`, `JA - 日本語`, `KO - 한국어`, `RU - Русский`, `ES - Español`), lưu vào `UserDefaults` (`3012.appLanguage`) và **mặc định Tiếng Việt** vì nhà phát triển là người Việt Nam, kèm nút chuyển nhanh và đặt lại về Tiếng Việt 1 chạm.
 - [x] **Hồ sơ Tác giả (`IDEAuthorInfo`, `SettingsAndThemesSheet.swift`, `App3012Main.swift`, `NOTICE`, `README.md`):** Hiển thị đầy đủ thông tin **Tác giả: Le The Khoi**, **Năm sinh: 2009**, **Telegram: `@coder_009`** (mở trực tiếp `https://t.me/coder_009` & nút sao chép nhanh), cùng liên kết kho mã nguồn mở `GNU AGPLv3` tại Cài đặt, Menu công cụ, Command Palette và màn hình chào mừng.
 - [x] **Đồng bộ Đa ngôn ngữ trên các màn hình chính (`SettingsAndThemesSheet.swift`, `App3012Main.swift`, `LeftExplorerDrawer.swift`, `BottomConsolePreviewPanel.swift`, `AIAgentSidePanel.swift`, `TheosBuilderSheet.swift`, `TheosBuildService.swift`, `CommandPaletteSheet.swift`).**
-- [ ] **Kiểm chứng CI Build Xanh 100% & Phát hành `3012-Unsigned.ipa` (`v3.5.1`).**
+- [x] **Kiểm chứng CI Build Xanh 100% (IPA Run `#43428410469`) & Release `v3.5.1-b15` (`3012-Unsigned.ipa`, 13.25 MB).**
 
 ### Phase 10 (v3.5.0): Trình Tạo & Biên Dịch Theos Tweak / Mod Menu (`.deb` / `.dylib`) Ngay Trong `3012` (`completed` ✅)
 - [x] **Máy chủ Build Theos Docker Cách Ly (`BuildServer/`):** HTTP build queue `build_server.py` lắng nghe `127.0.0.1:8787` (chỉ mở qua Cloudflare Tunnel, không mở cổng công cộng, không cấp shell), biên dịch từng job trong container `--network none --read-only --cap-drop ALL --user 1000:1000`, giới hạn RAM/CPU/Timeout & chống quá tải, kèm trang trạng thái `GET /` và API `/v1/health`, `/v1/builds`. Kiểm chứng End-to-End Xanh trên `ubuntu-22.04` (Run `#43417271956`).
