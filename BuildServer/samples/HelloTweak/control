@@ -1,0 +1,9 @@
+Package: com.dev.app3012.hellotweak
+Name: HelloTweak
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Sample tweak built by the 3012 Theos Build Server.
+Maintainer: 3012
+Author: 3012
+Section: Tweaks
+Depends: mobilesubstrate

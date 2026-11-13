@@ -3,8 +3,13 @@ name: Build 3012 Unsigned IPA
 on:
   push:
     branches: [ main, master ]
+    paths-ignore:
+      - 'BuildServer/**'
+      - '.github/workflows/build-server.yml'
   pull_request:
     branches: [ main, master ]
+    paths-ignore:
+      - 'BuildServer/**'
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,33 @@
+[Unit]
+Description=3012 Theos Build Server
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=b3012
+Group=b3012
+SupplementaryGroups=docker
+EnvironmentFile=/etc/3012-build.env
+Environment=HOME=/var/lib/3012-build
+Environment=DOCKER_CONFIG=/var/lib/3012-build/.docker
+ExecStart=/usr/bin/python3 /opt/3012-build/src/BuildServer/server/build_server.py
+Restart=always
+RestartSec=3
+
+# Hardening: the API process can only write its own data directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/3012-build
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

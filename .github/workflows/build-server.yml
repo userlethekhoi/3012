@@ -1,0 +1,83 @@
+name: Build Server (Theos) Integration Test
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'BuildServer/**'
+      - '.github/workflows/build-server.yml'
+  pull_request:
+    paths:
+      - 'BuildServer/**'
+  workflow_dispatch:
+
+jobs:
+  integration:
+    name: Docker image + API end-to-end build (Ubuntu x86_64)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build Theos builder image
+        run: docker build -t 3012-theos-builder:latest BuildServer/image
+
+      - name: Start build server
+        run: |
+          mkdir -p "$RUNNER_TEMP/build-data"
+          BUILD_DATA_DIR="$RUNNER_TEMP/build-data" BUILD_CONCURRENCY=2 BUILD_TIMEOUT_SEC=300 \
+            nohup python3 BuildServer/server/build_server.py > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8787/v1/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8787/v1/health
+
+      - name: Submit sample tweak & wait for result
+        run: |
+          set -euo pipefail
+          DEVICE="ci-$(uuidgen)"
+          (cd BuildServer/samples && zip -qr "$RUNNER_TEMP/hello.zip" HelloTweak)
+          RESP=$(curl -fsS -X POST http://127.0.0.1:8787/v1/builds \
+                   -H "Content-Type: application/zip" -H "X-Device-ID: $DEVICE" \
+                   -H "X-Package-Scheme: rootless" --data-binary "@$RUNNER_TEMP/hello.zip")
+          echo "$RESP"
+          ID=$(echo "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+          OFFSET=0
+          for i in $(seq 1 300); do
+            S=$(curl -fsS "http://127.0.0.1:8787/v1/builds/$ID?since=$OFFSET")
+            echo "$S" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["log"],end="")'
+            OFFSET=$(echo "$S" | python3 -c 'import sys,json;print(json.load(sys.stdin)["logOffset"])')
+            STATE=$(echo "$S" | python3 -c 'import sys,json;print(json.load(sys.stdin)["state"])')
+            if [ "$STATE" != "queued" ] && [ "$STATE" != "running" ]; then break; fi
+            sleep 1
+          done
+          echo "Final state: $STATE"
+          echo "$S" | python3 -c 'import sys,json;d=json.load(sys.stdin);print("files:",d["files"])'
+          [ "$STATE" = "succeeded" ]
+          DEB=$(echo "$S" | python3 -c 'import sys,json;print([f["name"] for f in json.load(sys.stdin)["files"] if f["name"].endswith(".deb")][0])')
+          curl -fsS -H "X-Device-ID: $DEVICE" -o "$RUNNER_TEMP/$DEB" "http://127.0.0.1:8787/v1/builds/$ID/files/$DEB"
+          dpkg-deb -I "$RUNNER_TEMP/$DEB"
+          dpkg-deb -c "$RUNNER_TEMP/$DEB"
+          # Download must be refused for other devices
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Device-ID: someone-else-1234" "http://127.0.0.1:8787/v1/builds/$ID/files/$DEB")
+          [ "$CODE" = "403" ]
+
+      - name: Sandbox checks (no network, read-only, unprivileged)
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/probe.sh" <<'EOF'
+          id -u
+          (curl -m 5 -sS https://example.com >/dev/null && echo NET_OK) || echo NET_BLOCKED
+          (touch /opt/theos/x 2>/dev/null && echo RO_FAIL) || echo RO_OK
+          EOF
+          OUT=$(docker run --rm -i --network none --read-only --tmpfs /work:rw,exec,size=64m,uid=1000,gid=1000 \
+                  --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+                  --entrypoint /bin/bash 3012-theos-builder:latest < "$RUNNER_TEMP/probe.sh")
+          echo "$OUT"
+          echo "$OUT" | grep -q '^1000$'
+          echo "$OUT" | grep -q NET_BLOCKED
+          echo "$OUT" | grep -q RO_OK
+
+      - name: Server log
+        if: always()
+        run: cat "$RUNNER_TEMP/server.log" || true
