@@ -25,6 +25,32 @@ public struct SettingsAndThemesSheet: View {
     public var body: some View {
         NavigationStack {
             Form {
+                // MARK: - 0. 3012 Developer Brand Identity Header
+                Section {
+                    HStack(spacing: 14) {
+                        IDECodeMarkVector(size: 52)
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(alignment: .center, spacing: 10) {
+                                Brand3012WordmarkView(height: 19, inkColor: .primary)
+                                Text("v3.3.0")
+                                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color(red: 16 / 255, green: 185 / 255, blue: 129 / 255).opacity(0.16))
+                                    .foregroundColor(Color(red: 16 / 255, green: 185 / 255, blue: 129 / 255))
+                                    .cornerRadius(4)
+                            }
+                            Text("Native Code Editor & Remote Workstation")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.secondary)
+                            Text("Runestone 120Hz • 48 Tree-sitter AST • SSH/SFTP")
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
                 // MARK: - 1. Code Intelligence, Auto-Format & Inline Diagnostics Toggles
                 Section {
                     Toggle("Bật gợi ý code thông minh như VS Code (IntelliSense)", isOn: $preferences.enableCodeCompletion)

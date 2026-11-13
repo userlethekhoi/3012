@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="512" height="512" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="512" y1="0" x2="512" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#141A22"/>
+      <stop offset="100%" stop-color="#0A0D12"/>
+    </linearGradient>
+    <clipPath id="iosSquircle">
+      <rect x="0" y="0" width="1024" height="1024" rx="228" ry="228"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#iosSquircle)">
+    <rect width="1024" height="1024" fill="url(#bgGrad)"/>
+
+    <!-- Architectural 128-unit Engineering Grid -->
+    <g stroke="#1A222D" stroke-width="2">
+      <line x1="128" y1="0" x2="128" y2="1024"/><line x1="256" y1="0" x2="256" y2="1024"/>
+      <line x1="384" y1="0" x2="384" y2="1024"/><line x1="512" y1="0" x2="512" y2="1024"/>
+      <line x1="640" y1="0" x2="640" y2="1024"/><line x1="768" y1="0" x2="768" y2="1024"/>
+      <line x1="896" y1="0" x2="896" y2="1024"/>
+      <line x1="0" y1="128" x2="1024" y2="128"/><line x1="0" y1="256" x2="1024" y2="256"/>
+      <line x1="0" y1="384" x2="1024" y2="384"/><line x1="0" y1="512" x2="1024" y2="512"/>
+      <line x1="0" y1="640" x2="1024" y2="640"/><line x1="0" y1="768" x2="1024" y2="768"/>
+      <line x1="0" y1="896" x2="1024" y2="896"/>
+    </g>
+
+    <!-- Corner Registration Ticks -->
+    <path d="M828 148 H868 V188 M828 876 H868 V836" stroke="#2A3646" stroke-width="6" stroke-linecap="square"/>
+
+    <!-- Left Active Editor Gutter Rail (Terminal Emerald) -->
+    <rect x="176" y="190" width="28" height="644" rx="14" fill="#10B981"/>
+
+    <!-- Programmer's Slashed Zero Diagonal (behind the 0 ring) -->
+    <line x1="618" y1="418" x2="770" y2="266" stroke="#10B981" stroke-width="38" stroke-linecap="round"/>
+
+    <!-- Bespoke Monospace Numerals: 3 0 / 1 2 -->
+    <g stroke="#F1F5F9" stroke-width="52" stroke-linecap="round" stroke-linejoin="round">
+      <!-- '3' -->
+      <path d="M 304 216 H 484 L 378 326 H 418 C 498 326 502 468 394 468 C 338 468 308 450 296 426"/>
+      <!-- '0' -->
+      <rect x="602" y="216" width="184" height="252" rx="92"/>
+      <!-- '1' -->
+      <path d="M 326 612 L 396 556 V 808 M 312 808 H 480"/>
+      <!-- '2' -->
+      <path d="M 604 620 C 614 556 664 556 696 556 C 772 556 800 616 752 676 L 602 808 H 790"/>
+    </g>
+
+    <!-- Machined Squircle Inner Border (visible cleanly against both dark & light GitHub backgrounds) -->
+    <rect x="4" y="4" width="1016" height="1016" rx="224" ry="224" stroke="#2E3B4E" stroke-width="8"/>
+  </g>
+</svg>

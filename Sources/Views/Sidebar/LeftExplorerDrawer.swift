@@ -105,11 +105,13 @@ public struct LeftExplorerDrawer: View {
         HStack(spacing: 0) {
             // VS Code Slim Activity Bar (42pt)
             VStack(spacing: 12) {
-                IDECodeMarkVector(
-                    size: 20,
-                    secondaryColor: Color(hex: palette.foreground)
-                )
-                .padding(.top, 12)
+                Button {
+                    onOpenSettings()
+                } label: {
+                    IDECodeMarkVector(size: 26)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 10)
                 .padding(.bottom, 2)
 
                 ForEach(SidebarActivityTab.allCases) { tab in

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 212" width="720" height="191" fill="none">
+  <defs>
+    <linearGradient id="cardBg" x1="0" y1="0" x2="800" y2="212" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#131922"/>
+      <stop offset="100%" stop-color="#0B0F15"/>
+    </linearGradient>
+    <linearGradient id="tileBg" x1="106" y1="32" x2="106" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#18202B"/>
+      <stop offset="100%" stop-color="#0D1219"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Architectural Banner Card -->
+  <rect x="1.5" y="1.5" width="797" height="209" rx="22" fill="url(#cardBg)" stroke="#253040" stroke-width="2"/>
+
+  <!-- Subtle Blueprint Grid Lines -->
+  <g stroke="#171F2A" stroke-width="1">
+    <line x1="206" y1="2" x2="206" y2="210"/>
+    <line x1="460" y1="2" x2="460" y2="210"/>
+    <line x1="714" y1="2" x2="714" y2="210"/>
+    <line x1="2" y1="106" x2="798" y2="106"/>
+  </g>
+
+  <!-- Left: 3012 iOS Squircle AppIcon Tile (148x148 at x=32, y=32) -->
+  <g transform="translate(32, 32) scale(0.14453125)">
+    <rect width="1024" height="1024" rx="228" fill="url(#tileBg)"/>
+    <rect x="176" y="190" width="28" height="644" rx="14" fill="#10B981"/>
+    <line x1="618" y1="418" x2="770" y2="266" stroke="#10B981" stroke-width="38" stroke-linecap="round"/>
+    <g stroke="#F1F5F9" stroke-width="54" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M 304 216 H 484 L 378 326 H 418 C 498 326 502 468 394 468 C 338 468 308 450 296 426"/>
+      <rect x="602" y="216" width="184" height="252" rx="92"/>
+      <path d="M 326 612 L 396 556 V 808 M 312 808 H 480"/>
+      <path d="M 604 620 C 614 556 664 556 696 556 C 772 556 800 616 752 676 L 602 808 H 790"/>
+    </g>
+    <rect x="6" y="6" width="1012" height="1012" rx="224" stroke="#303E52" stroke-width="12"/>
+  </g>
+
+  <!-- Right: Single-Line Bespoke Vector Wordmark '3012_' + Technical Tagline -->
+  <g transform="translate(228, 42)">
+    <!-- Emerald Slashed Zero inside the '0' of wordmark -->
+    <line x1="126" y1="78" x2="178" y2="24" stroke="#10B981" stroke-width="12" stroke-linecap="round"/>
+
+    <g stroke="#F1F5F9" stroke-width="16.5" stroke-linecap="round" stroke-linejoin="round">
+      <!-- '3' -->
+      <path d="M 10 10 H 66 L 32 46 H 46 C 72 46 74 92 38 92 C 20 92 11 86 7 78"/>
+      <!-- '0' -->
+      <rect x="120" y="10" width="64" height="82" rx="32"/>
+      <!-- '1' -->
+      <path d="M 242 28 L 266 10 V 92 M 238 92 H 294"/>
+      <!-- '2' -->
+      <path d="M 344 30 C 348 10 364 10 375 10 C 400 10 410 30 393 50 L 342 92 H 408"/>
+    </g>
+
+    <!-- Terminal Block Underscore Cursor -->
+    <rect x="430" y="80" width="38" height="14" rx="4" fill="#10B981"/>
+
+    <!-- Subtitle Pill & Technical Tagline -->
+    <rect x="4" y="116" width="6" height="6" rx="3" fill="#10B981"/>
+    <text x="19" y="123" fill="#94A3B8" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="600" letter-spacing="1.4">NATIVE CODE EDITOR &amp; REMOTE WORKSTATION FOR IOS</text>
+  </g>
+
+  <!-- Corner Registration Marks -->
+  <path d="M762 22 H776 V36 M762 190 H776 V176" stroke="#2D3A4B" stroke-width="2" stroke-linecap="square"/>
+</svg>

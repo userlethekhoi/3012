@@ -1,6 +1,7 @@
 <div align="center">
-  <img src="Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.svg" width="76" height="76" alt="3012 Logo" />
-  <h1>3012</h1>
+  <p>
+    <img src="Resources/Brand/3012-banner.svg" width="680" alt="3012 — Native Code Editor &amp; Remote Workstation for iOS" />
+  </p>
   <p><strong>Native Code Editor, Remote Development Workstation &amp; Agentic IDE for iOS and iPadOS</strong></p>
 
   <p>
@@ -205,10 +206,15 @@ zip -qry 3012-Unsigned.ipa Payload
 ├── Config/
 │   └── Info.plist                  # Khai báo quyền hệ thống, mạng cục bộ và chế độ chạy nền
 ├── Resources/
-│   └── Assets.xcassets/            # Biểu tượng ứng dụng vector SVG gốc (AppIcon)
+│   └── Brand/
+│       ├── 3012-banner.svg         # Horizontal vector brand banner cho tài liệu dự án
+│       ├── 3012-icon.svg           # Biểu tượng thương hiệu vector gốc (1024-unit grid)
+│       └── 3012-icon.png           # Biểu tượng squircle độ phân giải cao
 ├── Sources/
 │   ├── App/
 │   │   └── App3012Main.swift       # Điểm khởi chạy ứng dụng & bố cục điều phối trung tâm
+│   ├── Resources/
+│   │   └── Assets.xcassets/        # Trọn bộ AppIcon chuẩn iOS/iPadOS (@1x/@2x/@3x + 1024px)
 │   ├── Models/
 │   │   ├── AIAgentModels.swift     # Cấu trúc tin nhắn, cấu hình nhà cung cấp AI & bản vá Diff
 │   │   ├── EditorThemeModel.swift  # Hệ thống bảng màu cú pháp, trình nhập Theme VS Code & tùy chọn

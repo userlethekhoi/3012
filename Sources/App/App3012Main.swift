@@ -719,19 +719,22 @@ public struct MainIDEWorkspaceView: View {
     @ViewBuilder
     private func topHeaderBar(palette: IDEColorPalette) -> some View {
         HStack(spacing: 5) {
-            // Activity Drawer Button
+            // Brand Emblem + Activity Drawer Button
             Button {
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                     showLeftExplorer.toggle()
                 }
             } label: {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(Color(hex: palette.foreground))
-                        .frame(width: 28, height: 30)
-                    if sshService.isConnected {
-                        Circle().fill(Color.green).frame(width: 6, height: 6).offset(x: -2, y: 4)
+                HStack(spacing: 5) {
+                    IDECodeMarkVector(size: 22)
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "sidebar.left")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundColor(Color(hex: palette.foreground))
+                            .frame(width: 22, height: 30)
+                        if sshService.isConnected {
+                            Circle().fill(Color.green).frame(width: 6, height: 6).offset(x: 1, y: 4)
+                        }
                     }
                 }
             }
@@ -991,19 +994,28 @@ public struct MainIDEWorkspaceView: View {
 
     @ViewBuilder
     private func emptyEditorPlaceholder(palette: IDEColorPalette) -> some View {
-        VStack(spacing: 14) {
-            IDECodeMarkVector(
-                size: 54,
-                secondaryColor: Color(hex: palette.foreground)
-            )
-            Text("3012")
-                .font(.system(size: 28, weight: .bold, design: .monospaced))
-                .foregroundColor(Color(hex: palette.foreground))
-            Text("Vuốt mép trái: Explorer • Git • SSH SFTP • OpenVSX\nVuốt mép phải: Coding Agent")
-                .font(.system(size: 12.5))
+        VStack(spacing: 16) {
+            IDECodeMarkVector(size: 76)
+                .shadow(color: Color.black.opacity(0.28), radius: 12, x: 0, y: 6)
+
+            VStack(spacing: 8) {
+                Brand3012WordmarkView(
+                    height: 28,
+                    inkColor: Color(hex: palette.foreground)
+                )
+
+                Text("NATIVE CODE EDITOR & REMOTE WORKSTATION")
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .tracking(1.3)
+                    .foregroundColor(Color(hex: palette.gutterForeground))
+            }
+
+            Text("Vuốt mép trái: Explorer • Git • SSH SFTP • OpenVSX\nVuốt mép phải: Coding Agent   |   Cmd+P: Command Palette")
+                .font(.system(size: 12))
                 .foregroundColor(Color(hex: palette.gutterForeground))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
+
             HStack(spacing: 12) {
                 Button {
                     showLeftExplorer = true
