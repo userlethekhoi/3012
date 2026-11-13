@@ -15,10 +15,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-ipa:
     name: Build Unsigned iOS IPA (3012)
-    runs-on: macos-15
+    runs-on: macos-14
 
     steps:
       - name: Checkout Repository
@@ -41,8 +45,18 @@ jobs:
       - name: Generate Xcode Project via XcodeGen
         run: xcodegen generate
 
+      - name: Cache Swift Package Manager
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            build/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('project.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
       - name: Resolve Swift Package Dependencies
-        run: xcodebuild -resolvePackageDependencies -project App3012.xcodeproj -scheme App3012
+        run: xcodebuild -resolvePackageDependencies -project App3012.xcodeproj -scheme App3012 -clonedSourcePackagesDirPath build/SourcePackages
 
       - name: Build Release App (Unsigned)
         run: |
@@ -52,6 +66,8 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
+            -clonedSourcePackagesDirPath build/SourcePackages \
+            -quiet \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
