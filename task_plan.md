@@ -1,15 +1,15 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.7.1 IN PROGRESS (chuẩn bị build & verify CI)** — Tinh gọn giao diện Settings & Header: xóa các đoạn mô tả lặp lại về tác giả & ghi chú mặc định Tiếng Việt, chỉ giữ 1 mục Thông tin Tác giả & Nhà Phát triển gọn sạch.
+> **Trạng thái hiện tại:** **v3.7.1 CI & GITHUB RELEASE VERIFIED GREEN (IPA Run `#43447481279` • Release `v3.7.1-b20` 13.43 MB ✅)** — Tinh gọn giao diện Settings & Header: xóa các đoạn mô tả lặp lại về tác giả & ghi chú mặc định Tiếng Việt, chỉ giữ 1 mục Thông tin Tác giả & Nhà Phát triển gọn sạch.
 
 ---
 
 ## Tổng kết Toàn bộ 14 Giai Đoạn Triển Khai
 
-### Phase 14 (v3.7.1): Tinh gọn Nội dung Hiển thị Tác giả & Ngôn ngữ (`in_progress`)
+### Phase 14 (v3.7.1): Tinh gọn Nội dung Hiển thị Tác giả & Ngôn ngữ (`completed` ✅)
 - [x] Xóa dòng lặp `Le The Khoi (2009) • Telegram @coder_009` dưới `Native Code Editor & Remote Workstation` trong `SettingsAndThemesSheet.swift` và màn hình chờ + Menu trong `App3012Main.swift`.
 - [x] Xóa đoạn chú thích `"Mặc định ứng dụng sử dụng Tiếng Việt vì nhà phát triển..."` và đoạn lặp `"Ứng dụng 3012 được phát triển bởi Le The Khoi..."` trong `SettingsAndThemesSheet.swift`, chỉ giữ bảng Thông Tin Tác Giả gọn sạch.
-- [ ] Bump version `3.7.1` (Build 13) & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100%.
+- [x] Bump version `3.7.1` (Build 13) & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100% (Run `#43447481279` -> Release `v3.7.1-b20`, `3012-Unsigned.ipa`).
 
 ### Phase 13 (v3.7.0): Full Workstation Terminal (`claude` / `opencode` / Windows + Linux CLI) (`completed` ✅)
 - [x] **Terminal AI Coding CLI (`AIAgentService.runTerminalAgentCLI`):** Hỗ trợ gõ trực tiếp `claude "<yêu-cầu>"`, `opencode "<yêu-cầu>"` hoặc vào REPL tương tác (`claude` / `opencode`), tự quét cây file Workspace trong `pwd`, stream phản hồi, tự động ghi file qua `applyAgentFileEdit` và mở ngay lên Editor (`claude auth <key>`, `claude models`, `claude model <id>`).
