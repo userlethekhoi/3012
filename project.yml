@@ -46,8 +46,8 @@ targets:
         PRODUCT_NAME: "3012"
         PRODUCT_MODULE_NAME: App3012
         PRODUCT_BUNDLE_IDENTIFIER: com.dev.app3012
-        MARKETING_VERSION: "3.3.0"
-        CURRENT_PROJECT_VERSION: "7"
+        MARKETING_VERSION: "3.4.0"
+        CURRENT_PROJECT_VERSION: "8"
         SWIFT_VERSION: "5.10"
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
@@ -83,6 +83,7 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        NSLocalNetworkUsageDescription: "3012 kết nối tới máy chủ AI offline (Ollama, LM Studio), VPS và Live Server trong mạng Wi-Fi của bạn."
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UISupportsDocumentBrowser: false

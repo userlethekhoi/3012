@@ -4,7 +4,14 @@
 
 ---
 
-## Tổng kết Toàn bộ 8 Giai Đoạn Triển Khai
+## Tổng kết Toàn bộ 9 Giai Đoạn Triển Khai
+
+### Phase 9 (v3.4.0): AI Agent Tổng Quát — Tự Cấu Hình, Tự Cập Nhật Model Mới Nhất, Streaming Realtime, Online + Offline (`in_progress`)
+- [x] **Hồ sơ nhà cung cấp AI do người dùng tự cấu hình (`AIProviderModels.swift`, `AIProviderSettingsSheet.swift`):** Bỏ hoàn toàn model mặc định cứng; thêm không giới hạn cấu hình từ 17 preset (OpenAI, Claude, Gemini, DeepSeek, OpenRouter, xAI, Mistral, Groq, Together, Fireworks, Moonshot, Qwen, Z.ai, Custom OpenAI-compatible, Apple On-Device, Ollama, LM Studio), chuyển nhanh ngay trên đầu khung Agent. API Key chuyển từ `UserDefaults` sang **iOS Keychain** (tự động di chuyển cấu hình cũ).
+- [x] **Tự động theo dõi model mới nhất (`AIModelRanker`):** Tải danh sách model trực tiếp từ API `/models` của nhà cung cấp (mỗi 6 giờ hoặc bấm kiểm tra), xếp hạng theo ngày phát hành + số thế hệ model, loại bỏ model không phải chat; 3 chế độ **Mới nhất / Mới nhất (nhanh) / Cố định**, bộ lọc model và thông báo khi tự chuyển sang model mới.
+- [x] **Streaming realtime (`AIProviderClient.swift`):** SSE cho OpenAI-compatible, Anthropic Messages và Gemini `streamGenerateContent`, nút dừng tạo phản hồi, hiển thị Markdown và thông báo lỗi thân thiện (401/404/429/mất mạng/LAN).
+- [x] **Offline:** Apple Foundation Models on-device (iOS 26+, tự kiểm tra khả dụng) và Ollama / LM Studio qua mạng LAN (`NSLocalNetworkUsageDescription`).
+- [ ] **Kiểm chứng CI Build Xanh 100% & Release `.ipa` v3.4.0.**
 
 ### Phase 8 (v3.3.0): Thiết Kế Thương Hiệu `3012`, Trọn Bộ `AppIcon` Cho `.ipa` & Logo Vector Nội Bộ / GitHub (`completed` ✅)
 - [x] **Bộ nhận diện thương hiệu Developer `3012` thuần kỹ thuật (Không Neon Tím, Không Icon AI):** Thiết kế trên lưới kiến trúc `1024×1024` với nền *Anodized Carbon* (`#141A22 -> #0A0D12`), chữ số đơn cách *Titanium Chalk* (`#F1F5F9`) tạo hình riêng (`30` / `12`), dấu gạch chéo bên trong số `0` (*Programmer's Slashed Zero*) và thanh lề trái *Terminal Emerald* (`#10B981`).

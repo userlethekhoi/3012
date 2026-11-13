@@ -37,16 +37,56 @@ public struct AIAgentSidePanel: View {
                 Text("Coding Agent")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(Color(hex: palette.foreground))
-                Text(aiService.modelName)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+
+                Menu {
+                    if !aiService.profiles.isEmpty {
+                        Section("Nhà cung cấp") {
+                            ForEach(aiService.profiles) { profile in
+                                Button {
+                                    aiService.setActiveProfile(profile.id)
+                                } label: {
+                                    if aiService.activeProfile?.id == profile.id {
+                                        Label(profile.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(profile.name)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let active = aiService.activeProfile {
+                        Button {
+                            Task { await aiService.refreshModels(for: active.id) }
+                        } label: {
+                            Label("Kiểm tra model mới nhất", systemImage: "arrow.clockwise")
+                        }
+                    }
+                    Button {
+                        showConfigSheet = true
+                    } label: {
+                        Label("Cấu hình AI...", systemImage: "slider.horizontal.3")
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        if let active = aiService.activeProfile, active.isLocal {
+                            Image(systemName: "wifi.slash")
+                                .font(.system(size: 8.5, weight: .bold))
+                        }
+                        Text(aiService.modelName)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7.5, weight: .bold))
+                    }
                     .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 3)
                     .background(Color(hex: palette.currentLineBackground))
                     .cornerRadius(4)
                     .foregroundColor(Color(hex: palette.gutterForeground))
-                    .lineLimit(1)
+                }
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 Button {
                     aiService.clearConversation()
@@ -131,11 +171,11 @@ public struct AIAgentSidePanel: View {
                             messageBubble(msg, palette: palette)
                                 .id(msg.id)
                         }
-                        if aiService.isThinking {
+                        if aiService.isThinking && !(aiService.messages.last?.isStreaming ?? false) {
                             HStack(spacing: 8) {
                                 ProgressView()
                                     .scaleEffect(0.8)
-                                Text("Agent đang phân tích project & viết code...")
+                                Text("Đang chuẩn bị model...")
                                     .font(.system(size: 11))
                                     .foregroundColor(Color(hex: palette.gutterForeground))
                             }
@@ -148,6 +188,11 @@ public struct AIAgentSidePanel: View {
                 .onChange(of: aiService.messages.count) { _, _ in
                     if let lastID = aiService.messages.last?.id {
                         withAnimation { proxy.scrollTo(lastID, anchor: .bottom) }
+                    }
+                }
+                .onChange(of: aiService.streamRevision) { _, _ in
+                    if let lastID = aiService.messages.last?.id {
+                        proxy.scrollTo(lastID, anchor: .bottom)
                     }
                 }
             }
@@ -164,82 +209,96 @@ public struct AIAgentSidePanel: View {
                     .foregroundColor(Color(hex: palette.foreground))
                     .cornerRadius(8)
 
-                Button {
-                    let current = promptInput
-                    promptInput = ""
-                    submitPrompt(current)
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 26))
-                        .foregroundColor(promptInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || aiService.isThinking ? .gray : Color(hex: palette.accent))
+                if aiService.isThinking {
+                    Button {
+                        aiService.stopGenerating()
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.system(size: 26))
+                            .foregroundColor(.red.opacity(0.85))
+                    }
+                } else {
+                    Button {
+                        let current = promptInput
+                        promptInput = ""
+                        submitPrompt(current)
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 26))
+                            .foregroundColor(promptInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : Color(hex: palette.accent))
+                    }
+                    .disabled(promptInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .disabled(promptInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || aiService.isThinking)
             }
             .padding(8)
             .background(Color(hex: palette.headerBackground))
         }
         .background(Color(hex: palette.sidebarBackground))
+        .task {
+            await aiService.refreshStaleModelsIfNeeded()
+        }
         .sheet(isPresented: $showConfigSheet) {
-            NavigationStack {
-                Form {
-                    Section("Nhà cung cấp Model AI") {
-                        Picker("Provider", selection: $aiService.provider) {
-                            ForEach(AIProviderType.allCases) { p in
-                                Text(p.rawValue).tag(p)
-                            }
-                        }
-                        .onChange(of: aiService.provider) { _, newValue in
-                            aiService.modelName = newValue.defaultModel
-                            aiService.customBaseURL = newValue.defaultBaseURL
-                        }
-
-                        TextField("Model Name (vd: gemini-2.5-flash, gpt-4o)", text: $aiService.modelName)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-
-                        SecureField("API Key", text: $aiService.apiKey)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-
-                        TextField("API Base URL", text: $aiService.customBaseURL)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                    }
-
-                    Section("Mẹo kết nối DeepSeek / OpenRouter / VPS") {
-                        Text("Chọn 'OpenAI / DeepSeek / OpenRouter / VPS' rồi đổi Base URL thành https://api.deepseek.com/v1 hoặc https://openrouter.ai/api/v1 hoặc AI Proxy trên VPS của bạn.")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .navigationTitle("Cấu hình AI Agent")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Xong") { showConfigSheet = false }
-                    }
-                }
-            }
-            .presentationDetents([.medium, .large])
+            AIProviderSettingsSheet(aiService: aiService)
         }
     }
 
     @ViewBuilder
     private func messageBubble(_ msg: AIChatMessage, palette: IDEColorPalette) -> some View {
+        if msg.role == .system {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(msg.text)
+                    .font(.system(size: 11))
+                    .textSelection(.enabled)
+            }
+            .foregroundColor(Color(hex: palette.gutterForeground))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(hex: palette.currentLineBackground).opacity(0.6))
+            .cornerRadius(8)
+        } else {
+            chatBubble(msg, palette: palette)
+        }
+    }
+
+    private func renderedMarkdown(_ text: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+
+    @ViewBuilder
+    private func chatBubble(_ msg: AIChatMessage, palette: IDEColorPalette) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
                 Image(systemName: msg.role == .user ? "person" : "cpu")
                     .font(.system(size: 9.5, weight: .semibold))
                 Text(msg.role == .user ? "Bạn" : "3012 Agent")
                     .font(.system(size: 10, weight: .bold))
+                if let model = msg.modelLabel, msg.role == .assistant {
+                    Text(model)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(Color(hex: palette.gutterForeground))
+                        .lineLimit(1)
+                }
                 Spacer()
             }
             .foregroundColor(msg.role == .user ? Color(hex: palette.accent) : .green)
 
-            Text(msg.text)
-                .font(.system(size: 12.5))
-                .foregroundColor(Color(hex: palette.foreground))
-                .textSelection(.enabled)
+            if msg.isStreaming && msg.text.isEmpty {
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.7)
+                    Text("Đang kết nối model...")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: palette.gutterForeground))
+                }
+            } else {
+                Text(renderedMarkdown(msg.isStreaming ? msg.text + " ▍" : msg.text))
+                    .font(.system(size: 12.5))
+                    .foregroundColor(Color(hex: palette.foreground))
+                    .textSelection(.enabled)
+            }
 
             ForEach(msg.proposedEdits) { edit in
                 diffCard(messageID: msg.id, edit: edit, palette: palette)

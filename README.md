@@ -137,9 +137,21 @@ Các thư mục cha tự động tổng hợp trạng thái của tệp bên tro
   - Duyệt cây thư mục SFTP từ xa, chỉnh sửa tệp ở tốc độ 120Hz cục bộ và tự động đồng bộ ngược lên VPS khi lưu.
   - Thiết bị đầu cuối tương tác **`SwiftTerm` (`xterm-256color`)** hỗ trợ đầy đủ `vim`, `tmux`, `htop`, `git`, `gdb` và **SSH Local Port Forwarding (`localhost:<port>` ⇄ `VPS:<port>`)**.
 
-### 6. Agentic Coding Assistant & Hệ sinh thái Theme / Open VSX
-- **Coding Agent tích hợp cạnh vùng soạn thảo:** Tương thích với Google Gemini, OpenAI, Anthropic Claude, DeepSeek, OpenRouter và endpoint tự triển khai. Agent đọc ngữ cảnh toàn dự án, phân tích đầu ra lỗi biên dịch và đề xuất thay đổi qua giao diện kiểm duyệt **Diff Preview (`Accept & Save` / `Reject`)**.
+### 6. Agentic Coding Assistant (Online + Offline) & Hệ sinh thái Theme / Open VSX
+- **Kết nối AI tổng quát, do người dùng tự cấu hình:** Không mặc định cứng nhà cung cấp hay model. Người dùng tự thêm không giới hạn cấu hình (OpenAI, Anthropic Claude, Google Gemini, DeepSeek, OpenRouter, xAI Grok, Mistral, Groq, Together, Fireworks, Moonshot Kimi, Qwen, Z.ai GLM hoặc bất kỳ endpoint OpenAI-compatible nào như vLLM / LiteLLM / proxy trên VPS), chuyển đổi 1 chạm ngay trên đầu khung Agent. API Key lưu trong **iOS Keychain**.
+- **Tự động dùng model mới nhất:** Danh sách model được tải trực tiếp từ API `/models` của chính nhà cung cấp (làm mới mỗi 6 giờ hoặc khi bấm kiểm tra). Ở chế độ **Mới nhất** / **Mới nhất (nhanh)**, khi nhà cung cấp phát hành model mới, 3012 tự chuyển sang ngay mà không cần cập nhật app; chế độ **Cố định** cho phép ghim đúng model mong muốn.
+- **Phản hồi realtime:** Câu trả lời được stream từng phần (Server-Sent Events) cho mọi định dạng API, có nút dừng tạo phản hồi.
+- **Chạy offline:** **Apple On-Device** (Foundation Models, iOS 26+ trên thiết bị hỗ trợ Apple Intelligence) xử lý hoàn toàn trên iPhone; **Ollama / LM Studio** chạy trên máy tính hoặc server trong cùng mạng Wi-Fi mà không cần Internet.
+- **Agent hiểu project:** Đọc ngữ cảnh toàn dự án, phân tích đầu ra lỗi biên dịch và đề xuất thay đổi qua giao diện kiểm duyệt **Diff Preview (`Accept & Save` / `Reject`)**.
 - **Theme Studio & Open VSX (`.vsix`):** Đi kèm 14 bảng màu chuẩn (*Tokyo Night*, *Cursor Midnight*, *One Dark Pro*, *Dracula*, *Catppuccin*, *Xcode*, *GitHub*...), công cụ **Theme Studio** tùy biến từng mã màu cú pháp, và trình tải trực tiếp gói `.vsix` từ chợ **Open VSX** để cài đặt Color Themes & Snippets.
+
+---
+
+## Quyền riêng tư
+
+- **Không thu thập dữ liệu:** 3012 không tích hợp công cụ theo dõi, phân tích hay quảng cáo và không vận hành máy chủ trung gian.
+- **Thông tin xác thực:** API Key, mật khẩu VPS, khóa SSH và GitHub Token chỉ được lưu trong iOS Keychain trên thiết bị.
+- **Dữ liệu gửi đi:** Khi sử dụng Coding Agent với nhà cung cấp online, nội dung yêu cầu và ngữ cảnh code liên quan được gửi trực tiếp từ thiết bị tới nhà cung cấp do người dùng chọn, theo chính sách của nhà cung cấp đó. Cấu hình Offline (Apple On-Device, Ollama / LM Studio trong mạng LAN) không gửi dữ liệu ra Internet.
 
 ---
 
@@ -219,11 +231,13 @@ zip -qry 3012-Unsigned.ipa Payload
 │   ├── Resources/
 │   │   └── Assets.xcassets/        # Trọn bộ AppIcon chuẩn iOS/iPadOS (@1x/@2x/@3x + 1024px)
 │   ├── Models/
+│   │   ├── AIProviderModels.swift  # Hồ sơ nhà cung cấp AI, preset online/offline & thuật toán chọn model mới nhất
 │   │   ├── AIAgentModels.swift     # Cấu trúc tin nhắn, cấu hình nhà cung cấp AI & bản vá Diff
 │   │   ├── EditorThemeModel.swift  # Hệ thống bảng màu cú pháp, trình nhập Theme VS Code & tùy chọn
 │   │   └── WorkspaceModels.swift   # Định nghĩa 64 ngôn ngữ, ánh xạ Tree-sitter & trạng thái Diff U/A/M/D
 │   ├── Services/
-│   │   ├── AIAgentService.swift            # Luồng gọi API LLM đa nhà cung cấp & trích xuất chỉnh sửa tệp
+│   │   ├── AIAgentService.swift            # Quản lý hồ sơ AI, tự cập nhật model mới nhất & luồng hội thoại Agent
+│   │   ├── AIProviderClient.swift          # Khám phá model & streaming realtime (OpenAI-compatible, Claude, Gemini, Apple On-Device)
 │   │   ├── CodeFormatterService.swift      # Bộ định dạng mã nguồn theo ngôn ngữ (Offline + SSH VPS)
 │   │   ├── CodeIntelligenceService.swift   # Smart IntelliSense, Fuzzy/CamelCase, Emmet & Inline Diagnostics
 │   │   ├── CodeRunnerService.swift         # Bộ định tuyến thực thi Zero-Config cho hơn 30 ngôn ngữ
@@ -236,12 +250,13 @@ zip -qry 3012-Unsigned.ipa Payload
 │   │   ├── SSHWorkspaceService.swift       # Kết nối Citadel SSH/SFTP, cài đặt Toolchain & Port Forwarding
 │   │   └── WorkspaceManager.swift          # Quản lý cây tệp, đa tab, tìm kiếm toàn cục & theo dõi Diff cơ sở
 │   └── Views/
-│       ├── AI/AIAgentSidePanel.swift           # Giao diện hội thoại Agent & bảng duyệt thay đổi mã nguồn
 │       ├── Components/IDEVectorIcons.swift     # Hệ thống biểu tượng vector thuần khiết & SF Symbols
 │       ├── Editor/
 │       │   ├── ProCodingAccessoryBar.swift     # Thanh phím tắt lập trình, Trackpad con trỏ & Flick Keys
 │       │   └── RunestoneEditorView.swift       # Cầu nối UIKit TextView 120Hz, Auto-Indent & HighlightedRange
 │       ├── Panels/
+│       │   ├── AIAgentSidePanel.swift          # Khung hội thoại Agent streaming realtime & bảng duyệt Diff
+│       │   ├── AIProviderSettingsSheet.swift   # Quản lý nhà cung cấp AI, API Key (Keychain) & danh sách model
 │       │   ├── BottomConsolePreviewPanel.swift # Khung Terminal, Output, Problems & Live Preview DevTools
 │       │   ├── CommandPaletteSheet.swift       # Bảng điều khiển lệnh nhanh & mở tệp tức thì
 │       │   ├── MarkdownMermaidPreviewView.swift# Trình kết xuất tài liệu Markdown & sơ đồ Mermaid trực tiếp
