@@ -22,7 +22,7 @@ concurrency:
 jobs:
   build-ipa:
     name: Build Unsigned iOS IPA (3012)
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout Repository
