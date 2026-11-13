@@ -1,10 +1,15 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.7.0 CI & GITHUB RELEASE VERIFIED GREEN (IPA Run `#43438138884` • Release `v3.7.0-b19` 13.43 MB ✅)** — Nâng cấp **Full Workstation Terminal (Lệnh Windows/Linux + AI CLI `claude`/`opencode` + `code <file>` + Compiler `gcc/g++/py/node/swift` + `git` + `zip/unzip` + `wget/curl/ping`)** với toàn quyền đọc/ghi trong Workspace & Files Sandbox.
+> **Trạng thái hiện tại:** **v3.7.1 IN PROGRESS (chuẩn bị build & verify CI)** — Tinh gọn giao diện Settings & Header: xóa các đoạn mô tả lặp lại về tác giả & ghi chú mặc định Tiếng Việt, chỉ giữ 1 mục Thông tin Tác giả & Nhà Phát triển gọn sạch.
 
 ---
 
-## Tổng kết Toàn bộ 13 Giai Đoạn Triển Khai
+## Tổng kết Toàn bộ 14 Giai Đoạn Triển Khai
+
+### Phase 14 (v3.7.1): Tinh gọn Nội dung Hiển thị Tác giả & Ngôn ngữ (`in_progress`)
+- [x] Xóa dòng lặp `Le The Khoi (2009) • Telegram @coder_009` dưới `Native Code Editor & Remote Workstation` trong `SettingsAndThemesSheet.swift` và màn hình chờ + Menu trong `App3012Main.swift`.
+- [x] Xóa đoạn chú thích `"Mặc định ứng dụng sử dụng Tiếng Việt vì nhà phát triển..."` và đoạn lặp `"Ứng dụng 3012 được phát triển bởi Le The Khoi..."` trong `SettingsAndThemesSheet.swift`, chỉ giữ bảng Thông Tin Tác Giả gọn sạch.
+- [ ] Bump version `3.7.1` (Build 13) & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100%.
 
 ### Phase 13 (v3.7.0): Full Workstation Terminal (`claude` / `opencode` / Windows + Linux CLI) (`completed` ✅)
 - [x] **Terminal AI Coding CLI (`AIAgentService.runTerminalAgentCLI`):** Hỗ trợ gõ trực tiếp `claude "<yêu-cầu>"`, `opencode "<yêu-cầu>"` hoặc vào REPL tương tác (`claude` / `opencode`), tự quét cây file Workspace trong `pwd`, stream phản hồi, tự động ghi file qua `applyAgentFileEdit` và mở ngay lên Editor (`claude auth <key>`, `claude models`, `claude model <id>`).

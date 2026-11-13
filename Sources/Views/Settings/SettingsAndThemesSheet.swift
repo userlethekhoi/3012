@@ -39,7 +39,7 @@ public struct SettingsAndThemesSheet: View {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(alignment: .center, spacing: 10) {
                                 Brand3012WordmarkView(height: 19, inkColor: .primary)
-                                Text("v" + ((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "3.5.1"))
+                                Text("v" + ((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "3.7.1"))
                                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
@@ -49,9 +49,6 @@ public struct SettingsAndThemesSheet: View {
                             }
                             Text("Native Code Editor & Remote Workstation")
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.secondary)
-                            Text("\(IDEAuthorInfo.fullName) (\(String(IDEAuthorInfo.birthYear))) • Telegram \(IDEAuthorInfo.telegramHandle)")
-                                .font(.system(size: 10.5, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -140,16 +137,6 @@ public struct SettingsAndThemesSheet: View {
                         ru: "Язык интерфейса (По умолчанию: Вьетнамский)",
                         es: "Idioma de la Interfaz (Predeterminado: Vietnamita)"
                     ))
-                } footer: {
-                    Text(preferences.tr(
-                        "Mặc định ứng dụng sử dụng Tiếng Việt vì nhà phát triển (\(IDEAuthorInfo.fullName), sinh năm \(IDEAuthorInfo.birthYear)) là người Việt Nam. Thay đổi có hiệu lực ngay lập tức trên toàn bộ giao diện.",
-                        "Vietnamese is the default language because the developer (\(IDEAuthorInfo.fullName), born \(IDEAuthorInfo.birthYear)) is Vietnamese. Changes apply immediately across the app.",
-                        zh: "由于开发者（\(IDEAuthorInfo.fullName)，生于 \(IDEAuthorInfo.birthYear) 年）是越南人，应用默认使用越南语。更改后会立即生效。",
-                        ja: "開発者（\(IDEAuthorInfo.fullName)、\(IDEAuthorInfo.birthYear)年生）がベトナム人であるため、既定言語はベトナム語です。変更は即座に反映されます。",
-                        ko: "개발자(\(IDEAuthorInfo.fullName), \(IDEAuthorInfo.birthYear)년생)가 베트남인이므로 기본 언어는 베트남어입니다. 변경 사항은 즉시 적용됩니다.",
-                        ru: "По умолчанию используется вьетнамский язык, так как разработчик (\(IDEAuthorInfo.fullName), \(IDEAuthorInfo.birthYear) г.р.) — вьетнамец. Изменения применяются мгновенно.",
-                        es: "El vietnamita es el idioma predeterminado porque el desarrollador (\(IDEAuthorInfo.fullName), nacido en \(IDEAuthorInfo.birthYear)) es vietnamita. Los cambios se aplican al instante."
-                    ))
                 }
 
                 // MARK: - 2. Author & Developer Info
@@ -160,7 +147,7 @@ public struct SettingsAndThemesSheet: View {
                     )
                     authorInfoRow(
                         label: preferences.tr("Năm sinh", "Birth Year", zh: "出生年份", ja: "生年", ko: "출생 연도", ru: "Год рождения", es: "Año de nacimiento"),
-                        value: "\(String(IDEAuthorInfo.birthYear)) (\(preferences.tr(IDEAuthorInfo.countryVietnamese, IDEAuthorInfo.countryEnglish)))"
+                        value: String(IDEAuthorInfo.birthYear)
                     )
                     authorInfoRow(
                         label: "Telegram",
@@ -227,11 +214,6 @@ public struct SettingsAndThemesSheet: View {
                         ko: "작성자 및 개발자 정보",
                         ru: "Автор и разработчик",
                         es: "Autor y Desarrollador"
-                    ))
-                } footer: {
-                    Text(preferences.tr(
-                        "Ứng dụng 3012 được phát triển bởi \(IDEAuthorInfo.fullName) (sinh năm \(IDEAuthorInfo.birthYear)). Mọi góp ý hoặc báo lỗi vui lòng nhắn Telegram \(IDEAuthorInfo.telegramHandle).",
-                        "3012 is developed by \(IDEAuthorInfo.fullName) (born \(IDEAuthorInfo.birthYear)). For feedback or bug reports, reach out on Telegram \(IDEAuthorInfo.telegramHandle)."
                     ))
                 }
 

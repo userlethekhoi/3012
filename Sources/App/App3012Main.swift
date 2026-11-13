@@ -1031,18 +1031,6 @@ public struct MainIDEWorkspaceView: View {
                 } label: {
                     Label(preferences.tr("Theme, Font & Cài đặt", "Themes, Fonts & Settings"), systemImage: "slider.horizontal.3")
                 }
-
-                Button {
-                    showSettingsSheet = true
-                } label: {
-                    Label(
-                        preferences.tr(
-                            "Tác giả: \(IDEAuthorInfo.fullName) (\(String(IDEAuthorInfo.birthYear))) • \(IDEAuthorInfo.telegramHandle)",
-                            "Author: \(IDEAuthorInfo.fullName) (\(String(IDEAuthorInfo.birthYear))) • \(IDEAuthorInfo.telegramHandle)"
-                        ),
-                        systemImage: "person.text.rectangle"
-                    )
-                }
             } label: {
                 Image(systemName: liveServer.isRunning ? "antenna.radiowaves.left.and.right" : "ellipsis.circle")
                     .symbolRenderingMode(.hierarchical)
@@ -1202,10 +1190,10 @@ public struct MainIDEWorkspaceView: View {
                     showSettingsSheet = true
                 } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: "person.text.rectangle")
+                        Image(systemName: "slider.horizontal.3")
                             .font(.system(size: 11, weight: .semibold))
-                        Text("\(IDEAuthorInfo.fullName) (\(String(IDEAuthorInfo.birthYear))) • \(IDEAuthorInfo.telegramHandle)")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        Text(preferences.tr("Cài đặt & Thông tin", "Settings & Info", zh: "设置与信息", ja: "設定と情報", ko: "설정 및 정보", ru: "Настройки", es: "Ajustes"))
+                            .font(.system(size: 11, weight: .semibold))
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
