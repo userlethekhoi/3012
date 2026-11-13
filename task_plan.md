@@ -1,10 +1,19 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.4.0 CI & GITHUB RELEASE VERIFIED GREEN (Run `#43410979250` • Release `v3.4.0-b11` ~13.04 MB ✅)** — AI Agent tổng quát do người dùng tự cấu hình (17 preset online/offline, API Key trong Keychain), tự động dùng model mới nhất từ API của nhà cung cấp, streaming realtime và chạy offline qua Apple On-Device / Ollama / LM Studio.
+> **Trạng thái hiện tại:** **v3.5.0 CI & GITHUB RELEASE VERIFIED GREEN (IPA Run `#43417271944` • Release `v3.5.0-b13` 13.18 MB • Build Server Run `#43417271956` ✅)** — Tích hợp trình tạo & biên dịch **Theos Tweak / Floating Mod Menu (`.deb` / `.dylib`)** trực tiếp trong app (hỗ trợ Logos `.x`/`.xm`, 3 chế độ build: Máy chủ Cộng đồng cách ly `build.kaydus.xyz`, VPS SSH cá nhân, Ngoại tuyến `.zip` + GitHub Actions).
 
 ---
 
-## Tổng kết Toàn bộ 9 Giai Đoạn Triển Khai
+## Tổng kết Toàn bộ 10 Giai Đoạn Triển Khai
+
+### Phase 10 (v3.5.0): Trình Tạo & Biên Dịch Theos Tweak / Mod Menu (`.deb` / `.dylib`) Ngay Trong `3012` (`completed` ✅)
+- [x] **Máy chủ Build Theos Docker Cách Ly (`BuildServer/`):** HTTP build queue `build_server.py` lắng nghe `127.0.0.1:8787` (chỉ mở qua Cloudflare Tunnel, không mở cổng công cộng, không cấp shell), biên dịch từng job trong container `--network none --read-only --cap-drop ALL --user 1000:1000`, giới hạn RAM/CPU/Timeout & chống quá tải, kèm trang trạng thái `GET /` và API `/v1/health`, `/v1/builds`. Kiểm chứng End-to-End Xanh trên `ubuntu-22.04` (Run `#43417271956`).
+- [x] **Ngôn ngữ Logos Theos & IntelliSense (`WorkspaceModels.swift`, `CodeIntelligenceService.swift`):** Tự nhận diện `.x`, `.xm`, `.xi`, `.xmi` và file `control` của gói Debian; bổ sung gợi ý `%hook`, `%orig`, `%ctor`, `%dtor`, `%group`, `%init`, `%property`, `%new`, `%c()`, `MSHookFunction`, `MSHookMessageEx` và liệt kê `%hook` trong Symbol Outline.
+- [x] **Dịch vụ Build Theos 3 Chế độ & Mẫu Mod Menu 1 Chạm (`TheosBuildService.swift`, `TheosBuilderSheet.swift`):**
+  - Tạo 1 chạm bộ khung **Logos Tweak** hoặc **Floating Mod Menu HUD (`MenuOverlayView.h/.mm` + `Tweak.xm`)** kéo thả được kèm công tắc lưu `NSUserDefaults`.
+  - Hỗ trợ đầy đủ 3 chuẩn gói **`rootless` / `roothide` / `rootful`** và 3 chế độ build: **Máy chủ Cộng đồng (`https://build.kaydus.xyz`)** có hộp thoại xác nhận quyền riêng tư lần đầu, **VPS SSH Cá nhân**, và **Ngoại tuyến (`.zip` + GitHub Actions)**.
+  - Bấm nút **▶ Run (`Cmd+R`)** trong dự án Theos tự động biên dịch và tải `.deb` / `.dylib` về `packages/` để xuất/chia sẻ cài đặt 1 chạm.
+- [x] **Kiểm chứng CI Build Xanh 100% (IPA Run `#43417271944` • Build Server Run `#43417271956`) & Release `v3.5.0-b13` (13.18 MB).**
 
 ### Phase 9 (v3.4.0): AI Agent Tổng Quát — Tự Cấu Hình, Tự Cập Nhật Model Mới Nhất, Streaming Realtime, Online + Offline (`completed` ✅)
 - [x] **Hồ sơ nhà cung cấp AI do người dùng tự cấu hình (`AIProviderModels.swift`, `AIProviderSettingsSheet.swift`):** Bỏ hoàn toàn model mặc định cứng; thêm không giới hạn cấu hình từ 17 preset (OpenAI, Claude, Gemini, DeepSeek, OpenRouter, xAI, Mistral, Groq, Together, Fireworks, Moonshot, Qwen, Z.ai, Custom OpenAI-compatible, Apple On-Device, Ollama, LM Studio), chuyển nhanh ngay trên đầu khung Agent. API Key chuyển từ `UserDefaults` sang **iOS Keychain** (tự động di chuyển cấu hình cũ).
