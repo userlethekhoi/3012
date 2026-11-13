@@ -39,6 +39,7 @@ public struct LeftExplorerDrawer: View {
     @ObservedObject var gitService: GitService
     @ObservedObject var sshService: SSHWorkspaceService
     @ObservedObject var extStore: ExtensionStoreService
+    @ObservedObject var timelineService: FileTimelineAndArchiveService
     var onInsertSnippet: (String) -> Void
     var onOpenSettings: () -> Void
     var onCloseDrawer: () -> Void
@@ -51,6 +52,8 @@ public struct LeftExplorerDrawer: View {
     @State private var renameTargetURL: URL?
     @State private var renameText: String = ""
     @State private var showFolderPicker: Bool = false
+    @State private var showZipImporter: Bool = false
+    @State private var exportedZipURL: URL? = nil
 
     // Git UI state
     @State private var commitMessageInput: String = ""
@@ -79,6 +82,7 @@ public struct LeftExplorerDrawer: View {
         gitService: GitService,
         sshService: SSHWorkspaceService,
         extStore: ExtensionStoreService,
+        timelineService: FileTimelineAndArchiveService,
         onInsertSnippet: @escaping (String) -> Void,
         onOpenSettings: @escaping () -> Void,
         onCloseDrawer: @escaping () -> Void
@@ -89,6 +93,7 @@ public struct LeftExplorerDrawer: View {
         self.gitService = gitService
         self.sshService = sshService
         self.extStore = extStore
+        self.timelineService = timelineService
         self.onInsertSnippet = onInsertSnippet
         self.onOpenSettings = onOpenSettings
         self.onCloseDrawer = onCloseDrawer
@@ -193,14 +198,36 @@ public struct LeftExplorerDrawer: View {
 
                 Divider().overlay(Color.white.opacity(0.08))
 
-                // Bottom Status Strip
+                // Bottom Status Strip (Open Folder / Import-Export .zip / Go Live)
                 HStack(spacing: 6) {
-                    Button {
-                        showFolderPicker = true
+                    Menu {
+                        Button {
+                            showFolderPicker = true
+                        } label: {
+                            Label("Mở Thư mục ngoài (Files)", systemImage: "folder")
+                        }
+                        Button {
+                            showZipImporter = true
+                        } label: {
+                            Label("Nhập Dự án từ File .zip", systemImage: "arrow.down.doc")
+                        }
+                        Button {
+                            exportedZipURL = timelineService.exportProjectZip(workspaceRoot: workspace.rootURL)
+                        } label: {
+                            Label("Đóng gói Dự án ra .zip", systemImage: "doc.zipper")
+                        }
                     } label: {
-                        Label("Mở Folder", systemImage: "folder.badge.gearshape")
+                        Label("Dự án / .zip", systemImage: "folder.badge.gearshape")
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundColor(Color(hex: palette.foreground))
+                    }
+
+                    if let zipURL = exportedZipURL {
+                        ShareLink(item: zipURL) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 11.5, weight: .bold))
+                                .foregroundColor(Color(hex: palette.accent))
+                        }
                     }
 
                     Spacer()
@@ -307,6 +334,19 @@ public struct LeftExplorerDrawer: View {
             if case .success(let urls) = result, let picked = urls.first {
                 workspace.switchWorkspaceFolder(to: picked)
                 liveServer.updateRootDirectory(picked)
+            }
+        }
+        .fileImporter(
+            isPresented: $showZipImporter,
+            allowedContentTypes: [.zip],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let picked = urls.first {
+                let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                if let importedDir = timelineService.importProjectZip(from: picked, into: docs) {
+                    workspace.switchWorkspaceFolder(to: importedDir)
+                    liveServer.updateRootDirectory(importedDir)
+                }
             }
         }
         .sheet(isPresented: $showAddVPSSheet) {

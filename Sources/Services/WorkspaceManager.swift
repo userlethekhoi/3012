@@ -145,6 +145,21 @@ public final class WorkspaceManager: ObservableObject {
         """
 
         let swiftSample = CodeLanguage.swift.starterTemplate
+        let readmeSample = """
+        # 3012 Mobile IDE Workspace
+
+        Chào mừng bạn đến với **3012** — AI-Native Mobile IDE trên iOS.
+
+        ## Kiến trúc thực thi nhanh
+        ```mermaid
+        flowchart LR
+            Editor["3012 Code Editor"] --> Live["Live Server :5500"]
+            Editor --> Runner["Zero-Config Runner / SSH VPS"]
+            Editor --> Agent["Coding Agent + Diff Review"]
+        ```
+
+        - Bấm biểu tượng **Preview** trên thanh công cụ khi mở file `.md` để xem trực tiếp tài liệu và sơ đồ Mermaid.
+        """
 
         try? html.write(to: root.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
         try? css.write(to: root.appendingPathComponent("style.css"), atomically: true, encoding: .utf8)
@@ -152,6 +167,7 @@ public final class WorkspaceManager: ObservableObject {
         try? cpp.write(to: root.appendingPathComponent("main.cpp"), atomically: true, encoding: .utf8)
         try? py.write(to: root.appendingPathComponent("script.py"), atomically: true, encoding: .utf8)
         try? swiftSample.write(to: root.appendingPathComponent("Main.swift"), atomically: true, encoding: .utf8)
+        try? readmeSample.write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
     }
 
     public func reloadTree() {
@@ -226,7 +242,7 @@ public final class WorkspaceManager: ObservableObject {
         activeTabID = tab.id
     }
 
-    public func updateActiveContent(_ newText: String, selectedRange: NSRange? = nil) {
+    public func updateActiveContent(_ newText: String, selectedRange: NSRange? = nil, autoSave: Bool = true) {
         guard let activeTabID,
               let idx = openTabs.firstIndex(where: { $0.id == activeTabID }) else { return }
         openTabs[idx].content = newText
@@ -234,11 +250,12 @@ public final class WorkspaceManager: ObservableObject {
             openTabs[idx].selectedRangeLocation = selectedRange.location
             openTabs[idx].selectedRangeLength = selectedRange.length
         }
-        // Auto-save quietly for instant Live Server hot-reload & SFTP sync
-        try? newText.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
-        openTabs[idx].savedContent = newText
-        onFileSavedOrChanged?()
-        onAnyTabSavedWithURL?(openTabs[idx].fileURL, newText)
+        if autoSave {
+            try? newText.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
+            openTabs[idx].savedContent = newText
+            onFileSavedOrChanged?()
+            onAnyTabSavedWithURL?(openTabs[idx].fileURL, newText)
+        }
     }
 
     public func updateSelectionOnly(_ range: NSRange) {

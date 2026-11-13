@@ -4,6 +4,7 @@ import UIKit
 
 public enum BottomPanelTab: String, CaseIterable, Identifiable {
     case terminal = "Terminal"
+    case problems = "Problems"
     case output = "Output"
     case livePreview = "Live :5500"
 
@@ -18,8 +19,8 @@ public enum BottomPanelDetent: CaseIterable {
     public func height(in totalHeight: CGFloat) -> CGFloat {
         switch self {
         case .compact: return min(max(totalHeight * 0.28, 175), 230)
-        case .half: return min(max(totalHeight * 0.45, 250), 380)
-        case .expanded: return max(totalHeight * 0.76, 400)
+        case .half: return min(max(totalHeight * 0.46, 260), 390)
+        case .expanded: return max(totalHeight * 0.76, 410)
         }
     }
 
@@ -32,6 +33,31 @@ public enum BottomPanelDetent: CaseIterable {
     }
 }
 
+public enum WebViewportPreset: String, CaseIterable, Identifiable {
+    case auto = "Auto"
+    case mobile = "390px"
+    case tablet = "768px"
+    case desktop = "1280px"
+
+    public var id: String { rawValue }
+
+    public var targetWidth: CGFloat? {
+        switch self {
+        case .auto: return nil
+        case .mobile: return 390
+        case .tablet: return 768
+        case .desktop: return 1280
+        }
+    }
+}
+
+public struct WebDevToolsLogEntry: Identifiable, Equatable {
+    public let id = UUID()
+    public let level: String // "log", "warn", "error", "result"
+    public let message: String
+    public let timestamp: Date = Date()
+}
+
 public struct BottomConsolePreviewPanel: View {
     @Binding var selectedTab: BottomPanelTab
     @Binding var detent: BottomPanelDetent
@@ -40,9 +66,17 @@ public struct BottomConsolePreviewPanel: View {
     @ObservedObject var sshService: SSHWorkspaceService
     @ObservedObject var workspace: WorkspaceManager
     @ObservedObject var preferences: EditorPreferences
+    @ObservedObject var intelligence: CodeIntelligenceService
+    var onJumpToLine: (Int) -> Void
+    var onFixDiagnosticWithAgent: (EditorDiagnostic) -> Void
     var onClose: () -> Void
 
     @State private var selectedPreviewPort: UInt16? = nil
+    @State private var viewportPreset: WebViewportPreset = .auto
+    @State private var showWebConsoleDrawer: Bool = false
+    @State private var webConsoleLogs: [WebDevToolsLogEntry] = []
+    @State private var jsEvalInput: String = ""
+    @State private var jsEvalTrigger: (token: Int, script: String)? = nil
 
     public init(
         selectedTab: Binding<BottomPanelTab>,
@@ -52,6 +86,9 @@ public struct BottomConsolePreviewPanel: View {
         sshService: SSHWorkspaceService,
         workspace: WorkspaceManager,
         preferences: EditorPreferences,
+        intelligence: CodeIntelligenceService,
+        onJumpToLine: @escaping (Int) -> Void,
+        onFixDiagnosticWithAgent: @escaping (EditorDiagnostic) -> Void,
         onClose: @escaping () -> Void
     ) {
         self._selectedTab = selectedTab
@@ -61,6 +98,9 @@ public struct BottomConsolePreviewPanel: View {
         self.sshService = sshService
         self.workspace = workspace
         self.preferences = preferences
+        self.intelligence = intelligence
+        self.onJumpToLine = onJumpToLine
+        self.onFixDiagnosticWithAgent = onFixDiagnosticWithAgent
         self.onClose = onClose
     }
 
@@ -69,31 +109,61 @@ public struct BottomConsolePreviewPanel: View {
 
         VStack(spacing: 0) {
             // Compact Panel Header with 3-detent resize & Safari launcher
-            HStack(spacing: 8) {
-                ForEach(BottomPanelTab.allCases) { tab in
-                    Button {
-                        selectedTab = tab
-                    } label: {
-                        HStack(spacing: 4) {
-                            if tab == .livePreview && liveServer.isRunning {
-                                Circle().fill(Color.green).frame(width: 6, height: 6)
-                            } else if tab == .terminal && sshService.isConnected {
-                                Circle().fill(Color.cyan).frame(width: 6, height: 6)
+            HStack(spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(BottomPanelTab.allCases) { tab in
+                            Button {
+                                selectedTab = tab
+                            } label: {
+                                HStack(spacing: 4) {
+                                    if tab == .livePreview && liveServer.isRunning {
+                                        Circle().fill(Color.green).frame(width: 6, height: 6)
+                                    } else if tab == .terminal && sshService.isConnected {
+                                        Circle().fill(Color.cyan).frame(width: 6, height: 6)
+                                    } else if tab == .problems && !intelligence.diagnostics.isEmpty {
+                                        Circle()
+                                            .fill(intelligence.errorCount > 0 ? Color.red : Color.orange)
+                                            .frame(width: 6, height: 6)
+                                    }
+                                    Text(tabLabel(tab))
+                                        .font(.system(size: 11.5, weight: selectedTab == tab ? .bold : .medium))
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(selectedTab == tab ? Color(hex: palette.currentLineBackground) : Color.clear)
+                                .foregroundColor(selectedTab == tab ? Color(hex: palette.accent) : Color(hex: palette.gutterForeground))
+                                .cornerRadius(6)
                             }
-                            Text(tabLabel(tab))
-                                .font(.system(size: 11.5, weight: selectedTab == tab ? .bold : .medium))
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(selectedTab == tab ? Color(hex: palette.currentLineBackground) : Color.clear)
-                        .foregroundColor(selectedTab == tab ? Color(hex: palette.accent) : Color(hex: palette.gutterForeground))
-                        .cornerRadius(6)
                     }
                 }
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 if selectedTab == .livePreview {
+                    // Web F12 Console Toggle
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            showWebConsoleDrawer.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "ladybug")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("F12")
+                                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                            if webConsoleLogs.contains(where: { $0.level == "error" }) {
+                                Circle().fill(Color.red).frame(width: 5, height: 5)
+                            }
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(showWebConsoleDrawer ? Color(hex: palette.accent) : Color(hex: palette.currentLineBackground))
+                        .foregroundColor(showWebConsoleDrawer ? .white : Color(hex: palette.foreground))
+                        .cornerRadius(6)
+                    }
+
                     if !sshService.activeTunnels.isEmpty {
                         Menu {
                             Button("Local Live Server (:\(liveServer.port))") {
@@ -166,6 +236,8 @@ public struct BottomConsolePreviewPanel: View {
                         workspace: workspace,
                         preferences: preferences
                     )
+                case .problems:
+                    problemsListView(palette: palette)
                 case .output:
                     outputView(palette: palette)
                 case .livePreview:
@@ -180,6 +252,9 @@ public struct BottomConsolePreviewPanel: View {
         switch tab {
         case .terminal:
             return sshService.isConnected ? "SSH PTY" : "Terminal"
+        case .problems:
+            let count = intelligence.diagnostics.count
+            return count > 0 ? "Problems (\(count))" : "Problems"
         case .output:
             return "Output"
         case .livePreview:
@@ -206,6 +281,90 @@ public struct BottomConsolePreviewPanel: View {
         liveServer.openInSafari(relativePath: activeHTMLRelativePath())
     }
 
+    // MARK: - Problems Tab (Live Diagnostics List + 1-Tap Jump + Fix with Agent)
+    @ViewBuilder
+    private func problemsListView(palette: IDEColorPalette) -> some View {
+        if !preferences.enableLiveDiagnostics {
+            VStack(spacing: 8) {
+                Image(systemName: "eye.slash")
+                    .font(.system(size: 24))
+                    .foregroundColor(Color(hex: palette.gutterForeground))
+                Text("Tính năng báo lỗi trực tiếp đang tắt.")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(Color(hex: palette.foreground))
+                Button("Bật lại Báo lỗi trực tiếp") {
+                    preferences.enableLiveDiagnostics = true
+                }
+                .font(.system(size: 12, weight: .bold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color(hex: palette.accent))
+                .foregroundColor(.white)
+                .cornerRadius(7)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if intelligence.diagnostics.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "checkmark.seal")
+                    .font(.system(size: 26))
+                    .foregroundColor(.green)
+                Text("Không phát hiện lỗi cú pháp trong file đang mở.")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundColor(Color(hex: palette.gutterForeground))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(intelligence.diagnostics) { diag in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: diag.severity.systemIcon)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(diag.severity == .error ? .red : .orange)
+                                .padding(.top, 2)
+
+                            Button {
+                                onJumpToLine(diag.line)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(diag.message)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(Color(hex: palette.foreground))
+                                        .multilineTextAlignment(.leading)
+                                    Text("Dòng \(diag.line), Cột \(diag.column) — Chạm để nhảy tới dòng lỗi")
+                                        .font(.system(size: 10.5, design: .monospaced))
+                                        .foregroundColor(Color(hex: palette.gutterForeground))
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+
+                            Button {
+                                onFixDiagnosticWithAgent(diag)
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "cpu")
+                                        .font(.system(size: 10, weight: .semibold))
+                                    Text("Sửa")
+                                        .font(.system(size: 10.5, weight: .bold))
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color(hex: palette.accent).opacity(0.2))
+                                .foregroundColor(Color(hex: palette.accent))
+                                .cornerRadius(6)
+                            }
+                        }
+                        .padding(8)
+                        .background(Color(hex: palette.editorBackground))
+                        .cornerRadius(7)
+                    }
+                }
+                .padding(8)
+            }
+        }
+    }
+
+    // MARK: - Output & Stdin View
     @ViewBuilder
     private func outputView(palette: IDEColorPalette) -> some View {
         VStack(spacing: 0) {
@@ -236,49 +395,140 @@ public struct BottomConsolePreviewPanel: View {
         }
     }
 
+    // MARK: - Live Web Preview + Responsive Viewport + F12 Web DevTools
     @ViewBuilder
     private func liveWebPreviewBody(palette: IDEColorPalette) -> some View {
-        if let tunnelPort = selectedPreviewPort,
-           let tunnelURL = URL(string: "http://127.0.0.1:\(tunnelPort)") {
+        if let activeURL = resolvedPreviewURL() {
             VStack(spacing: 0) {
+                // Sub-toolbar: URL + Viewport Responsive Presets (Auto / 390px / 768px / 1280px)
                 HStack(spacing: 6) {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                    Image(systemName: selectedPreviewPort != nil ? "point.3.connected.trianglepath.dotted" : (liveServer.isBackgroundKeepAliveActive ? "antenna.radiowaves.left.and.right" : "globe"))
                         .font(.system(size: 10))
-                        .foregroundColor(.cyan)
-                    Text("SSH Port Tunnel → http://localhost:\(tunnelPort)")
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundColor(Color(hex: palette.foreground))
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color(hex: palette.editorBackground))
+                        .foregroundColor(selectedPreviewPort != nil ? .cyan : .green)
 
-                LiveServerWebView(url: tunnelURL, reloadToken: liveServer.reloadVersion)
-            }
-        } else if liveServer.isRunning,
-                  let url = URL(string: "\(liveServer.serverBaseURLString)/\(activeHTMLRelativePath())") {
-            VStack(spacing: 0) {
-                HStack(spacing: 6) {
-                    Image(systemName: liveServer.isBackgroundKeepAliveActive ? "antenna.radiowaves.left.and.right" : "globe")
-                        .font(.system(size: 10))
-                        .foregroundColor(.green)
-                    Text("http://localhost:\(liveServer.port)/\(activeHTMLRelativePath())")
+                    Text(activeURL.absoluteString)
                         .font(.system(size: 10.5, design: .monospaced))
                         .foregroundColor(Color(hex: palette.gutterForeground))
                         .lineLimit(1)
+
                     Spacer()
-                    if liveServer.isBackgroundKeepAliveActive {
-                        Text("BG Keep-Alive ON")
-                            .font(.system(size: 9.5, weight: .bold))
-                            .foregroundColor(.green)
+
+                    ForEach(WebViewportPreset.allCases) { preset in
+                        Button {
+                            viewportPreset = preset
+                        } label: {
+                            Text(preset.rawValue)
+                                .font(.system(size: 9.5, weight: viewportPreset == preset ? .bold : .regular, design: .monospaced))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(viewportPreset == preset ? Color(hex: palette.accent).opacity(0.24) : Color.clear)
+                                .foregroundColor(viewportPreset == preset ? Color(hex: palette.accent) : Color(hex: palette.gutterForeground))
+                                .cornerRadius(4)
+                        }
                     }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .background(Color(hex: palette.editorBackground))
 
-                LiveServerWebView(url: url, reloadToken: liveServer.reloadVersion)
+                GeometryReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: viewportPreset != .auto) {
+                        LiveServerWebView(
+                            url: activeURL,
+                            reloadToken: liveServer.reloadVersion,
+                            jsEvalTrigger: jsEvalTrigger,
+                            onConsoleLog: { entry in
+                                webConsoleLogs.append(entry)
+                                if webConsoleLogs.count > 120 {
+                                    webConsoleLogs.removeFirst(webConsoleLogs.count - 120)
+                                }
+                            }
+                        )
+                        .frame(
+                            width: viewportPreset.targetWidth ?? proxy.size.width,
+                            height: proxy.size.height
+                        )
+                    }
+                }
+
+                // F12 Web DevTools Console + Live JS Eval Drawer
+                if showWebConsoleDrawer {
+                    Divider().overlay(Color.white.opacity(0.12))
+                    VStack(spacing: 0) {
+                        HStack {
+                            Label("Web Console (F12)", systemImage: "terminal")
+                                .font(.system(size: 10.5, weight: .bold))
+                                .foregroundColor(Color(hex: palette.accent))
+                            Spacer()
+                            Button {
+                                webConsoleLogs.removeAll()
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Color(hex: palette.gutterForeground))
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color(hex: palette.headerBackground))
+
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 3) {
+                                if webConsoleLogs.isEmpty {
+                                    Text("Chưa có log từ console.log / console.error hoặc chạy thử lệnh JS bên dưới...")
+                                        .font(.system(size: 10.5, design: .monospaced))
+                                        .foregroundColor(Color(hex: palette.gutterForeground))
+                                } else {
+                                    ForEach(webConsoleLogs) { item in
+                                        HStack(alignment: .top, spacing: 6) {
+                                            Image(systemName: iconForWebLevel(item.level))
+                                                .font(.system(size: 10))
+                                                .foregroundColor(colorForWebLevel(item.level, palette: palette))
+                                                .padding(.top, 2)
+                                            Text(item.message)
+                                                .font(.system(size: 11, design: .monospaced))
+                                                .foregroundColor(colorForWebLevel(item.level, palette: palette))
+                                                .textSelection(.enabled)
+                                        }
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                        }
+                        .frame(height: 82)
+                        .background(Color(hex: palette.editorBackground))
+
+                        Divider().overlay(Color.white.opacity(0.08))
+
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color(hex: palette.accent))
+                            TextField("Chạy JS trên trang (vd: document.title)...", text: $jsEvalInput)
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundColor(Color(hex: palette.foreground))
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.never)
+                                .onSubmit {
+                                    triggerJSEval()
+                                }
+                            Button("Eval") {
+                                triggerJSEval()
+                            }
+                            .font(.system(size: 10.5, weight: .bold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color(hex: palette.accent))
+                            .foregroundColor(.white)
+                            .cornerRadius(5)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color(hex: palette.headerBackground))
+                    }
+                }
             }
         } else {
             VStack(spacing: 10) {
@@ -304,6 +554,40 @@ public struct BottomConsolePreviewPanel: View {
         }
     }
 
+    private func resolvedPreviewURL() -> URL? {
+        if let tunnelPort = selectedPreviewPort {
+            return URL(string: "http://127.0.0.1:\(tunnelPort)")
+        }
+        guard liveServer.isRunning else { return nil }
+        return URL(string: "\(liveServer.serverBaseURLString)/\(activeHTMLRelativePath())")
+    }
+
+    private func triggerJSEval() {
+        let code = jsEvalInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty else { return }
+        let nextToken = (jsEvalTrigger?.token ?? 0) + 1
+        jsEvalTrigger = (nextToken, code)
+        jsEvalInput = ""
+    }
+
+    private func iconForWebLevel(_ level: String) -> String {
+        switch level {
+        case "error": return "xmark.octagon"
+        case "warn": return "exclamationmark.triangle"
+        case "result": return "arrow.turn.down.right"
+        default: return "info.circle"
+        }
+    }
+
+    private func colorForWebLevel(_ level: String, palette: IDEColorPalette) -> Color {
+        switch level {
+        case "error": return .red
+        case "warn": return .orange
+        case "result": return Color(hex: palette.accent)
+        default: return Color(hex: palette.foreground)
+        }
+    }
+
     private func activeHTMLRelativePath() -> String {
         if let tab = workspace.activeTab, tab.language == .html {
             return workspace.relativePath(for: tab.fileURL)
@@ -315,14 +599,43 @@ public struct BottomConsolePreviewPanel: View {
 private struct LiveServerWebView: UIViewRepresentable {
     let url: URL
     let reloadToken: Int
+    let jsEvalTrigger: (token: Int, script: String)?
+    let onConsoleLog: (WebDevToolsLogEntry) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onConsoleLog: onConsoleLog)
     }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
+
+        let contentController = WKUserContentController()
+        let consoleBridgeJS = """
+        (function() {
+          function sendTo3012(level, args) {
+            try {
+              var msg = Array.prototype.slice.call(args).map(function(x) {
+                if (typeof x === 'object') { try { return JSON.stringify(x); } catch(e) { return String(x); } }
+                return String(x);
+              }).join(' ');
+              window.webkit.messageHandlers.ide3012Console.postMessage({ level: level, message: msg });
+            } catch (_) {}
+          }
+          var origLog = console.log, origWarn = console.warn, origErr = console.error;
+          console.log = function() { sendTo3012('log', arguments); if (origLog) origLog.apply(console, arguments); };
+          console.warn = function() { sendTo3012('warn', arguments); if (origWarn) origWarn.apply(console, arguments); };
+          console.error = function() { sendTo3012('error', arguments); if (origErr) origErr.apply(console, arguments); };
+          window.addEventListener('error', function(ev) {
+            sendTo3012('error', [ev.message + ' (' + (ev.filename || 'inline') + ':' + ev.lineno + ')']);
+          });
+        })();
+        """
+        let userScript = WKUserScript(source: consoleBridgeJS, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        contentController.addUserScript(userScript)
+        contentController.add(context.coordinator, name: "ide3012Console")
+        config.userContentController = contentController
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
         context.coordinator.loadedURL = url
@@ -331,6 +644,7 @@ private struct LiveServerWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.onConsoleLog = onConsoleLog
         if context.coordinator.loadedURL != url {
             context.coordinator.loadedURL = url
             context.coordinator.lastReloadToken = reloadToken
@@ -339,10 +653,43 @@ private struct LiveServerWebView: UIViewRepresentable {
             context.coordinator.lastReloadToken = reloadToken
             webView.reload()
         }
+
+        if let eval = jsEvalTrigger, eval.token != context.coordinator.lastEvalToken {
+            context.coordinator.lastEvalToken = eval.token
+            webView.evaluateJavaScript(eval.script) { result, error in
+                if let error {
+                    onConsoleLog(WebDevToolsLogEntry(level: "error", message: error.localizedDescription))
+                } else if let result {
+                    onConsoleLog(WebDevToolsLogEntry(level: "result", message: "\(result)"))
+                } else {
+                    onConsoleLog(WebDevToolsLogEntry(level: "result", message: "undefined"))
+                }
+            }
+        }
     }
 
-    final class Coordinator {
+    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "ide3012Console")
+    }
+
+    final class Coordinator: NSObject, WKScriptMessageHandler {
         var loadedURL: URL?
         var lastReloadToken: Int = 0
+        var lastEvalToken: Int = 0
+        var onConsoleLog: (WebDevToolsLogEntry) -> Void
+
+        init(onConsoleLog: @escaping (WebDevToolsLogEntry) -> Void) {
+            self.onConsoleLog = onConsoleLog
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "ide3012Console",
+                  let body = message.body as? [String: Any] else { return }
+            let level = (body["level"] as? String) ?? "log"
+            let text = (body["message"] as? String) ?? ""
+            DispatchQueue.main.async { [weak self] in
+                self?.onConsoleLog(WebDevToolsLogEntry(level: level, message: text))
+            }
+        }
     }
 }

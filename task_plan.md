@@ -1,10 +1,18 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v2.0.1 CI VERIFIED GREEN (GitHub Actions Run `#43369106389`, Artifact `14012695065` ~7.52 MB ✅)** — Tích hợp **Pure SVG Vector AppIcon** chuẩn Apple HIG (Default / Dark / Tinted trong `Assets.car` + `CFBundleIcons`) và chuyển toàn bộ giao diện sang **iOS System SF Symbols + SVG Vector (`IDECodeMarkVector`)**, loại bỏ 100% icon trống mặc định lẫn emoji/icon kiểu AI.
+> **Trạng thái hiện tại:** **v3.0.0 — Full Pro Intelligence, Inline Diagnostics, Theme Studio & Mobile DevTools Suite (`in_progress` — đang biên dịch xác minh trên GitHub Actions)**
 
 ---
 
-## Tổng kết Toàn bộ 4 Giai Đoạn Đã Hoàn Thiện
+## Tổng kết Toàn bộ 5 Giai Đoạn Triển Khai
+
+### Phase 5 (v3.0.0): Gợi Ý Code, Báo Lỗi Trực Tiếp, Theme Studio & Bộ Công Cụ Pro (`in_progress`)
+- [x] **Live Code Autocomplete (Bật/Tắt 1 chạm):** Thanh gợi ý từ khóa, thư viện chuẩn (`std::`, DOM, Python built-ins), ký hiệu trong file và Snippets nổi trực tiếp trên trình soạn thảo + nhấn `Tab` chấp nhận nhanh (`CodeIntelligenceService.swift`).
+- [x] **Inline Error & Warning Highlighting (Bật/Tắt 1 chạm):** Tô màu đỏ/cam trực tiếp lên dòng lỗi trên `Runestone` (`HighlightedRange`) kết hợp kiểm tra tức thì offline (`JSONSerialization`, `JavaScriptCore`, HTML tag matcher, Comment/String-aware Bracket & Python/C++ lint) và trình biên dịch thật trên VPS (`g++`/`gcc`/`py_compile`), kèm tab **Problems** nhảy tới dòng lỗi & **Sửa bằng Agent** 1 chạm.
+- [x] **14+ Built-in Themes + App Accent + Theme Studio:** Bộ sưu tập 14 theme sáng/tối (*Tokyo Night*, *Cursor Midnight*, *Xcode Dark/Light*, *One Dark Pro*, *Dracula*, *Catppuccin Mocha/Latte*, *Monokai Pro*, *GitHub Dark/Light*, *Nord*, *Gruvbox*, *Solarized*) + dải màu nhấn App Accent + **Theme Studio** chỉnh từng màu cú pháp code & nền ứng dụng có khung xem trước trực tiếp (`SymbolAndTimelineSheets.swift`).
+- [x] **Symbol Outline, Breadcrumbs & Code Folding:** Thanh đường dẫn `file > hàm` kèm danh sách nhảy nhanh tới mọi hàm/class/struct/heading và gập/mở khối code trên lề số dòng.
+- [x] **In-App Web DevTools (F12 Mobile) trên Live :5500:** Bắt trực tiếp `console.log`/`warn`/`error`/`window.onerror`, chạy thử biểu thức JavaScript trực tiếp (`Eval`) và chuyển khung hình Responsive (`Auto` / `390px` / `768px` / `1280px`).
+- [x] **Auto-Save, Local File Timeline (20 mốc khôi phục), Markdown + Mermaid Live Preview, Nhập/Xuất Project `.zip` & Phím tắt Bluetooth/Magic Keyboard (`Cmd+S/R/P///B/I/J`).**
 
 ### Phase 1: Core IDE, Pro Coding Bar, Themes & Live Server `:5500` (`completed` ✅)
 - [x] `project.yml` (XcodeGen) + `.github/workflows/build-ipa.yml` tự động xuất `3012-Unsigned.ipa`.

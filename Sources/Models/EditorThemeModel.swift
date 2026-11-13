@@ -28,30 +28,53 @@ public struct IDEColorPalette: Codable, Identifiable, Equatable {
     public var operatorToken: String
     public var tag: String
 
+    public init(
+        id: String,
+        name: String,
+        isDark: Bool,
+        editorBackground: String,
+        sidebarBackground: String,
+        headerBackground: String,
+        foreground: String,
+        gutterForeground: String,
+        currentLineBackground: String,
+        selectionBackground: String,
+        accent: String,
+        comment: String,
+        keyword: String,
+        string: String,
+        number: String,
+        function: String,
+        typeName: String,
+        variable: String,
+        property: String,
+        operatorToken: String,
+        tag: String
+    ) {
+        self.id = id
+        self.name = name
+        self.isDark = isDark
+        self.editorBackground = editorBackground
+        self.sidebarBackground = sidebarBackground
+        self.headerBackground = headerBackground
+        self.foreground = foreground
+        self.gutterForeground = gutterForeground
+        self.currentLineBackground = currentLineBackground
+        self.selectionBackground = selectionBackground
+        self.accent = accent
+        self.comment = comment
+        self.keyword = keyword
+        self.string = string
+        self.number = number
+        self.function = function
+        self.typeName = typeName
+        self.variable = variable
+        self.property = property
+        self.operatorToken = operatorToken
+        self.tag = tag
+    }
+
     public static let builtInThemes: [IDEColorPalette] = [
-        IDEColorPalette(
-            id: "one-dark-pro",
-            name: "One Dark Pro",
-            isDark: true,
-            editorBackground: "#282C34",
-            sidebarBackground: "#21252B",
-            headerBackground: "#1E2227",
-            foreground: "#ABB2BF",
-            gutterForeground: "#636D83",
-            currentLineBackground: "#2C313C",
-            selectionBackground: "#3E4451",
-            accent: "#61AFEF",
-            comment: "#5C6370",
-            keyword: "#C678DD",
-            string: "#98C379",
-            number: "#D19A66",
-            function: "#61AFEF",
-            typeName: "#E5C07B",
-            variable: "#E06C75",
-            property: "#56B6C2",
-            operatorToken: "#56B6C2",
-            tag: "#E06C75"
-        ),
         IDEColorPalette(
             id: "tokyo-night",
             name: "Tokyo Night",
@@ -74,6 +97,75 @@ public struct IDEColorPalette: Codable, Identifiable, Equatable {
             property: "#7DCFFF",
             operatorToken: "#89DDFF",
             tag: "#F7768E"
+        ),
+        IDEColorPalette(
+            id: "cursor-dark",
+            name: "Cursor Midnight",
+            isDark: true,
+            editorBackground: "#141414",
+            sidebarBackground: "#101010",
+            headerBackground: "#0C0C0C",
+            foreground: "#E4E4E7",
+            gutterForeground: "#52525B",
+            currentLineBackground: "#1E1E22",
+            selectionBackground: "#2563EB",
+            accent: "#3B82F6",
+            comment: "#6B7280",
+            keyword: "#C084FC",
+            string: "#86EFAC",
+            number: "#FDBA74",
+            function: "#60A5FA",
+            typeName: "#38BDF8",
+            variable: "#F87171",
+            property: "#93C5FD",
+            operatorToken: "#67E8F9",
+            tag: "#FB7185"
+        ),
+        IDEColorPalette(
+            id: "xcode-dark",
+            name: "Xcode Default Dark",
+            isDark: true,
+            editorBackground: "#1F1F24",
+            sidebarBackground: "#1A1A1E",
+            headerBackground: "#151518",
+            foreground: "#FFFFFF",
+            gutterForeground: "#74747C",
+            currentLineBackground: "#26262C",
+            selectionBackground: "#2E4C7D",
+            accent: "#0A84FF",
+            comment: "#6C7986",
+            keyword: "#FC5FA3",
+            string: "#FC6A5D",
+            number: "#D0BF69",
+            function: "#67B7A4",
+            typeName: "#D0A8FF",
+            variable: "#41A1C0",
+            property: "#9EF1DD",
+            operatorToken: "#FFFFFF",
+            tag: "#FC5FA3"
+        ),
+        IDEColorPalette(
+            id: "one-dark-pro",
+            name: "One Dark Pro",
+            isDark: true,
+            editorBackground: "#282C34",
+            sidebarBackground: "#21252B",
+            headerBackground: "#1E2227",
+            foreground: "#ABB2BF",
+            gutterForeground: "#636D83",
+            currentLineBackground: "#2C313C",
+            selectionBackground: "#3E4451",
+            accent: "#61AFEF",
+            comment: "#5C6370",
+            keyword: "#C678DD",
+            string: "#98C379",
+            number: "#D19A66",
+            function: "#61AFEF",
+            typeName: "#E5C07B",
+            variable: "#E06C75",
+            property: "#56B6C2",
+            operatorToken: "#56B6C2",
+            tag: "#E06C75"
         ),
         IDEColorPalette(
             id: "dracula",
@@ -122,6 +214,144 @@ public struct IDEColorPalette: Codable, Identifiable, Equatable {
             tag: "#F38BA8"
         ),
         IDEColorPalette(
+            id: "monokai-pro",
+            name: "Monokai Pro",
+            isDark: true,
+            editorBackground: "#2D2A2E",
+            sidebarBackground: "#221F22",
+            headerBackground: "#19181A",
+            foreground: "#FCFCFA",
+            gutterForeground: "#727072",
+            currentLineBackground: "#383539",
+            selectionBackground: "#5B595C",
+            accent: "#FFD866",
+            comment: "#727072",
+            keyword: "#FF6188",
+            string: "#FFD866",
+            number: "#AB9DF2",
+            function: "#A9DC76",
+            typeName: "#78DCE8",
+            variable: "#FC9867",
+            property: "#78DCE8",
+            operatorToken: "#FF6188",
+            tag: "#FF6188"
+        ),
+        IDEColorPalette(
+            id: "github-dark",
+            name: "GitHub Dark",
+            isDark: true,
+            editorBackground: "#0D1117",
+            sidebarBackground: "#010409",
+            headerBackground: "#010409",
+            foreground: "#E6EDF3",
+            gutterForeground: "#6E7681",
+            currentLineBackground: "#161B22",
+            selectionBackground: "#1F6FEB",
+            accent: "#2F81F7",
+            comment: "#8B949E",
+            keyword: "#FF7B72",
+            string: "#A5D6FF",
+            number: "#79C0FF",
+            function: "#D2A8FF",
+            typeName: "#FFA657",
+            variable: "#FFA657",
+            property: "#79C0FF",
+            operatorToken: "#FF7B72",
+            tag: "#7EE787"
+        ),
+        IDEColorPalette(
+            id: "nord",
+            name: "Nord",
+            isDark: true,
+            editorBackground: "#2E3440",
+            sidebarBackground: "#272C36",
+            headerBackground: "#232831",
+            foreground: "#D8DEE9",
+            gutterForeground: "#616E88",
+            currentLineBackground: "#3B4252",
+            selectionBackground: "#434C5E",
+            accent: "#88C0D0",
+            comment: "#616E88",
+            keyword: "#81A1C1",
+            string: "#A3BE8C",
+            number: "#B48EAD",
+            function: "#88C0D0",
+            typeName: "#8FBCBB",
+            variable: "#D8DEE9",
+            property: "#8FBCBB",
+            operatorToken: "#81A1C1",
+            tag: "#81A1C1"
+        ),
+        IDEColorPalette(
+            id: "gruvbox-dark",
+            name: "Gruvbox Dark",
+            isDark: true,
+            editorBackground: "#282828",
+            sidebarBackground: "#1D2021",
+            headerBackground: "#191B1C",
+            foreground: "#EBDBB2",
+            gutterForeground: "#7C6F64",
+            currentLineBackground: "#3C3836",
+            selectionBackground: "#504945",
+            accent: "#FE8019",
+            comment: "#928374",
+            keyword: "#FB4934",
+            string: "#B8BB26",
+            number: "#D3869B",
+            function: "#FABD2F",
+            typeName: "#8EC07C",
+            variable: "#83A598",
+            property: "#8EC07C",
+            operatorToken: "#FE8019",
+            tag: "#FB4934"
+        ),
+        IDEColorPalette(
+            id: "solarized-dark",
+            name: "Solarized Dark",
+            isDark: true,
+            editorBackground: "#002B36",
+            sidebarBackground: "#073642",
+            headerBackground: "#00212B",
+            foreground: "#839496",
+            gutterForeground: "#586E75",
+            currentLineBackground: "#073642",
+            selectionBackground: "#174A5A",
+            accent: "#268BD2",
+            comment: "#586E75",
+            keyword: "#859900",
+            string: "#2AA198",
+            number: "#D33682",
+            function: "#268BD2",
+            typeName: "#B58900",
+            variable: "#CB4B16",
+            property: "#268BD2",
+            operatorToken: "#859900",
+            tag: "#268BD2"
+        ),
+        IDEColorPalette(
+            id: "xcode-light",
+            name: "Xcode Default Light",
+            isDark: false,
+            editorBackground: "#FFFFFF",
+            sidebarBackground: "#F4F5F7",
+            headerBackground: "#ECEEF1",
+            foreground: "#000000",
+            gutterForeground: "#8E8E93",
+            currentLineBackground: "#F2F6FC",
+            selectionBackground: "#B4D8FD",
+            accent: "#007AFF",
+            comment: "#5D6C79",
+            keyword: "#9B2393",
+            string: "#C41A16",
+            number: "#1C00CF",
+            function: "#326D74",
+            typeName: "#3900A0",
+            variable: "#0F68A0",
+            property: "#326D74",
+            operatorToken: "#000000",
+            tag: "#9B2393"
+        ),
+        IDEColorPalette(
             id: "github-light",
             name: "GitHub Light",
             isDark: false,
@@ -143,6 +373,29 @@ public struct IDEColorPalette: Codable, Identifiable, Equatable {
             property: "#0550AE",
             operatorToken: "#CF222E",
             tag: "#116329"
+        ),
+        IDEColorPalette(
+            id: "catppuccin-latte",
+            name: "Catppuccin Latte",
+            isDark: false,
+            editorBackground: "#EFF1F5",
+            sidebarBackground: "#E6E9EF",
+            headerBackground: "#DCE0E8",
+            foreground: "#4C4F69",
+            gutterForeground: "#8C8FA1",
+            currentLineBackground: "#E6E9EF",
+            selectionBackground: "#ACB0BE",
+            accent: "#1E66F5",
+            comment: "#8C8FA1",
+            keyword: "#8839EF",
+            string: "#40A02B",
+            number: "#FE640B",
+            function: "#1E66F5",
+            typeName: "#DF8E1D",
+            variable: "#D20F39",
+            property: "#179299",
+            operatorToken: "#04A5E5",
+            tag: "#D20F39"
         )
     ]
 }
@@ -169,11 +422,29 @@ public extension UIColor {
             self.init(red: r, green: g, blue: b, alpha: 1.0)
         }
     }
+
+    func toHexString() -> String {
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 1
+        if getRed(&r, green: &g, blue: &b, alpha: &a) {
+            let ri = Int(round(min(max(r, 0), 1) * 255))
+            let gi = Int(round(min(max(g, 0), 1) * 255))
+            let bi = Int(round(min(max(b, 0), 1) * 255))
+            return String(format: "#%02X%02X%02X", ri, gi, bi)
+        }
+        return "#0A84FF"
+    }
 }
 
 public extension Color {
     init(hex: String) {
         self.init(uiColor: UIColor(hexString: hex))
+    }
+
+    func toHexString() -> String {
+        UIColor(self).toHexString()
     }
 }
 
@@ -189,7 +460,7 @@ public final class IDERunestoneTheme: Runestone.Theme {
     public var selectedLineBackgroundColor: UIColor { UIColor(hexString: palette.currentLineBackground) }
     public var selectedLinesLineNumberColor: UIColor { UIColor(hexString: palette.foreground) }
     public var selectedLinesGutterBackgroundColor: UIColor { UIColor(hexString: palette.currentLineBackground) }
-    public var invisibleCharactersColor: UIColor { UIColor(hexString: palette.gutterForeground).withAlphaComponent(0.4) }
+    public var invisibleCharactersColor: UIColor { UIColor(hexString: palette.gutterForeground).withAlphaComponent(0.45) }
     public var pageGuideHairlineColor: UIColor { UIColor(hexString: palette.currentLineBackground) }
     public var pageGuideBackgroundColor: UIColor { UIColor(hexString: palette.sidebarBackground) }
     public var markedTextBackgroundColor: UIColor { UIColor(hexString: palette.selectionBackground) }
@@ -223,7 +494,7 @@ public final class IDERunestoneTheme: Runestone.Theme {
             return UIColor(hexString: palette.tag)
         } else if key.hasPrefix("property") || key.hasPrefix("attribute") || key.hasPrefix("field") {
             return UIColor(hexString: palette.property)
-        } else if key.hasPrefix("variable.builtin") || key.hasPrefix("parameter") {
+        } else if key.hasPrefix("variable.builtin") || key.hasPrefix("parameter") || key == "variable" {
             return UIColor(hexString: palette.variable)
         } else if key.hasPrefix("operator") || key.hasPrefix("punctuation.special") {
             return UIColor(hexString: palette.operatorToken)
@@ -251,7 +522,7 @@ public enum VSCodeThemeImporter {
         let name = (root["name"] as? String) ?? fallbackName
         let typeStr = ((root["type"] as? String) ?? "dark").lowercased()
         let isDark = typeStr != "light"
-        let base = isDark ? IDEColorPalette.builtInThemes[0] : IDEColorPalette.builtInThemes[4]
+        let base = isDark ? IDEColorPalette.builtInThemes[0] : IDEColorPalette.builtInThemes[11]
 
         let colors = (root["colors"] as? [String: String]) ?? [:]
         let editorBg = colors["editor.background"] ?? base.editorBackground
@@ -332,8 +603,22 @@ public final class EditorPreferences: ObservableObject {
         "CourierNewPSMT"
     ]
 
+    public static let appAccentPresets: [(name: String, hex: String)] = [
+        ("Theo Theme", ""),
+        ("iOS Blue", "#0A84FF"),
+        ("Cyan", "#38BDF8"),
+        ("Indigo", "#6366F1"),
+        ("Purple", "#A855F7"),
+        ("Emerald", "#10B981"),
+        ("Amber", "#F59E0B"),
+        ("Rose", "#F43F5E")
+    ]
+
     @Published public var selectedThemeID: String {
         didSet { UserDefaults.standard.set(selectedThemeID, forKey: "3012.themeID") }
+    }
+    @Published public var customAccentHex: String {
+        didSet { UserDefaults.standard.set(customAccentHex, forKey: "3012.customAccentHex") }
     }
     @Published public var fontName: String {
         didSet { UserDefaults.standard.set(fontName, forKey: "3012.fontName") }
@@ -345,6 +630,9 @@ public final class EditorPreferences: ObservableObject {
             UserDefaults.standard.set(Double(clamped), forKey: "3012.fontSize")
         }
     }
+    @Published public var lineHeightMultiplier: Double {
+        didSet { UserDefaults.standard.set(lineHeightMultiplier, forKey: "3012.lineHeight") }
+    }
     @Published public var tabWidth: Int {
         didSet { UserDefaults.standard.set(tabWidth, forKey: "3012.tabWidth") }
     }
@@ -353,6 +641,24 @@ public final class EditorPreferences: ObservableObject {
     }
     @Published public var showLineNumbers: Bool {
         didSet { UserDefaults.standard.set(showLineNumbers, forKey: "3012.showLineNumbers") }
+    }
+    @Published public var showInvisibleCharacters: Bool {
+        didSet { UserDefaults.standard.set(showInvisibleCharacters, forKey: "3012.showInvisibles") }
+    }
+    @Published public var enableCodeFolding: Bool {
+        didSet { UserDefaults.standard.set(enableCodeFolding, forKey: "3012.codeFolding") }
+    }
+    @Published public var enableCodeCompletion: Bool {
+        didSet { UserDefaults.standard.set(enableCodeCompletion, forKey: "3012.codeCompletion") }
+    }
+    @Published public var enableLiveDiagnostics: Bool {
+        didSet { UserDefaults.standard.set(enableLiveDiagnostics, forKey: "3012.liveDiagnostics") }
+    }
+    @Published public var enableAutoSave: Bool {
+        didSet { UserDefaults.standard.set(enableAutoSave, forKey: "3012.autoSave") }
+    }
+    @Published public var showBreadcrumbs: Bool {
+        didSet { UserDefaults.standard.set(showBreadcrumbs, forKey: "3012.showBreadcrumbs") }
     }
     @Published public var keepServerInBackground: Bool {
         didSet { UserDefaults.standard.set(keepServerInBackground, forKey: "3012.keepServerBg") }
@@ -366,24 +672,52 @@ public final class EditorPreferences: ObservableObject {
     }
 
     public var activePalette: IDEColorPalette {
-        allThemes.first(where: { $0.id == selectedThemeID }) ?? IDEColorPalette.builtInThemes[0]
+        var base = allThemes.first(where: { $0.id == selectedThemeID }) ?? IDEColorPalette.builtInThemes[0]
+        if !customAccentHex.isEmpty {
+            base.accent = customAccentHex
+        }
+        return base
+    }
+
+    /// Returns a checksum string covering custom theme colors so Runestone refreshes immediately on live color edits.
+    public var themeSignature: String {
+        let p = activePalette
+        return "\(p.id)|\(p.editorBackground)|\(p.foreground)|\(p.accent)|\(p.keyword)|\(p.string)|\(p.function)|\(p.typeName)|\(p.number)|\(p.comment)|\(p.variable)|\(p.tag)"
     }
 
     public init() {
         self.selectedThemeID = UserDefaults.standard.string(forKey: "3012.themeID") ?? "tokyo-night"
+        self.customAccentHex = UserDefaults.standard.string(forKey: "3012.customAccentHex") ?? ""
         self.fontName = UserDefaults.standard.string(forKey: "3012.fontName") ?? "Menlo-Regular"
         let savedSize = UserDefaults.standard.double(forKey: "3012.fontSize")
         self.fontSize = savedSize > 0 ? CGFloat(savedSize) : 14.0
+        let savedLH = UserDefaults.standard.double(forKey: "3012.lineHeight")
+        self.lineHeightMultiplier = savedLH > 0 ? savedLH : 1.22
         let savedTab = UserDefaults.standard.integer(forKey: "3012.tabWidth")
         self.tabWidth = savedTab > 0 ? savedTab : 2
         self.wordWrap = UserDefaults.standard.object(forKey: "3012.wordWrap") as? Bool ?? true
         self.showLineNumbers = UserDefaults.standard.object(forKey: "3012.showLineNumbers") as? Bool ?? true
+        self.showInvisibleCharacters = UserDefaults.standard.object(forKey: "3012.showInvisibles") as? Bool ?? false
+        self.enableCodeFolding = UserDefaults.standard.object(forKey: "3012.codeFolding") as? Bool ?? true
+        self.enableCodeCompletion = UserDefaults.standard.object(forKey: "3012.codeCompletion") as? Bool ?? true
+        self.enableLiveDiagnostics = UserDefaults.standard.object(forKey: "3012.liveDiagnostics") as? Bool ?? true
+        self.enableAutoSave = UserDefaults.standard.object(forKey: "3012.autoSave") as? Bool ?? true
+        self.showBreadcrumbs = UserDefaults.standard.object(forKey: "3012.showBreadcrumbs") as? Bool ?? true
         self.keepServerInBackground = UserDefaults.standard.object(forKey: "3012.keepServerBg") as? Bool ?? true
         loadCustomThemes()
     }
 
     public func makeRunestoneTheme() -> IDERunestoneTheme {
         IDERunestoneTheme(palette: activePalette, fontName: fontName, fontSize: fontSize)
+    }
+
+    public func upsertCustomTheme(_ palette: IDEColorPalette) {
+        if let idx = customThemes.firstIndex(where: { $0.id == palette.id }) {
+            customThemes[idx] = palette
+        } else {
+            customThemes.append(palette)
+        }
+        selectedThemeID = palette.id
     }
 
     private func saveCustomThemes() {

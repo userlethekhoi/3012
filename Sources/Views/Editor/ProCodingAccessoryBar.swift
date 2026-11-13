@@ -5,6 +5,7 @@ public final class ProCodingAccessoryBar: UIInputView {
     public weak var targetTextView: TextView?
     public var tabWidthProvider: (() -> Int)?
     public var commentPrefixProvider: (() -> String)?
+    public var onAcceptPrimaryCompletion: (() -> Bool)?
     public var onTriggerAI: (() -> Void)?
     public var onTriggerFind: (() -> Void)?
 
@@ -100,10 +101,13 @@ public final class ProCodingAccessoryBar: UIInputView {
         self.selectButton = selBtn
         stack.addArrangedSubview(selBtn)
 
-        // 4. Tab Key (Apple native tab symbol)
+        // 4. Tab Key (Accepts active Autocomplete suggestion if present, otherwise inserts spaces)
         let tabBtn = makeActionButton(title: nil, systemIcon: "arrow.right.to.line", accent: false) { [weak self] in
             guard let self, let tv = self.targetTextView else { return }
             self.feedback.impactOccurred()
+            if self.onAcceptPrimaryCompletion?() == true {
+                return
+            }
             let spaces = String(repeating: " ", count: self.tabWidthProvider?() ?? 2)
             tv.insertText(spaces)
         }
