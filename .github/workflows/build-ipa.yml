@@ -1,0 +1,71 @@
+name: Build 3012 Unsigned IPA
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    name: Build Unsigned iOS IPA (3012)
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Select Latest Xcode (16+)
+        run: |
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -n 1)
+          echo "Using Xcode at: $LATEST_XCODE"
+          sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen &> /dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode Project via XcodeGen
+        run: xcodegen generate
+
+      - name: Resolve Swift Package Dependencies
+        run: xcodebuild -resolvePackageDependencies -project App3012.xcodeproj -scheme App3012
+
+      - name: Build Release App (Unsigned)
+        run: |
+          xcodebuild build \
+            -project App3012.xcodeproj \
+            -scheme App3012 \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      - name: Package Unsigned .ipa
+        run: |
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "3012.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: 3012.app not found!"
+            ls -la build/Build/Products/Release-iphoneos || true
+            exit 1
+          fi
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry 3012-Unsigned.ipa Payload
+          ls -lh 3012-Unsigned.ipa
+
+      - name: Upload 3012-Unsigned.ipa Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3012-Unsigned-IPA
+          path: 3012-Unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
