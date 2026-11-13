@@ -1,0 +1,21 @@
+3012 — Native Code Editor, Remote Development Workstation & Agentic IDE for iOS and iPadOS
+Copyright (C) 2026 Le The Khoi (@userlethekhoi) — https://github.com/userlethekhoi/3012
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+MANDATORY ATTRIBUTION & SOURCE DISCLOSURE NOTICE:
+1. Any copy, fork, redistribution, binary package (.ipa), or derivative work
+   based in whole or in part on this repository MUST retain this Copyright and
+   Attribution Notice intact in both source files and user-facing documentation/UI.
+2. Under the GNU Affero General Public License v3.0 (including Section 13 for
+   networked or hosted deployments), you MUST make the complete, corresponding
+   modified source code publicly available under the exact same GNU AGPLv3 license.
+3. Closing the source code, removing original author attribution, or relicensing
+   derivative works under proprietary terms without prior written permission from
+   the copyright holder is strictly prohibited.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program in the LICENSE file. If not, see <https://www.gnu.org/licenses/>.

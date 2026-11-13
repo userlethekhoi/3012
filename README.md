@@ -16,6 +16,9 @@
     </a>
     <img src="https://img.shields.io/badge/Platform-iOS%2017.0%2B%20%7C%20iPadOS%2017.0%2B-1e293b?style=flat-square" alt="Platform" />
     <img src="https://img.shields.io/badge/Swift-5.10-f05138?style=flat-square" alt="Swift 5.10" />
+    <a href="LICENSE">
+      <img src="https://img.shields.io/badge/License-GNU%20AGPLv3-0f766e?style=flat-square" alt="GNU AGPLv3 License" />
+    </a>
   </p>
 </div>
 
@@ -246,11 +249,36 @@ zip -qry 3012-Unsigned.ipa Payload
 │       │   └── SymbolAndTimelineSheets.swift   # Danh sách hàm, lịch sử tệp, Theme Studio & chọn ngôn ngữ
 │       ├── Settings/SettingsAndThemesSheet.swift # Giao diện tùy chỉnh trình soạn thảo, phông chữ & phím tắt
 │       └── Sidebar/LeftExplorerDrawer.swift    # Ngăn kéo 5 phân hệ chuẩn VS Code kèm hiển thị màu U/A/M/D
+├── LICENSE                         # Toàn văn giấy phép mã nguồn mở bắt buộc mở nguồn GNU AGPLv3
 └── project.yml                     # Đặc tả cấu hình dự án XcodeGen & danh sách phụ thuộc SPM
 ```
 
 ---
 
-## Giấy phép
+## Bản quyền, Quyền Tác giả & Giấy phép Mã nguồn (GNU AGPLv3)
 
-Mã nguồn dự án được phát triển và lưu trữ tại [github.com/userlethekhoi/3012](https://github.com/userlethekhoi/3012).
+**Copyright (c) 2026 Le The Khoi ([@userlethekhoi](https://github.com/userlethekhoi)).**
+
+Mã nguồn, kiến trúc hệ thống và bộ nhận diện thương hiệu của dự án **3012** được phát hành theo giấy phép [**GNU Affero General Public License v3.0 (AGPL-3.0)**](LICENSE) — giấy phép Copyleft mạnh nhất được công nhận quốc tế nhằm bảo vệ quyền tác giả và đảm bảo tính minh bạch tuyệt đối của mã nguồn.
+
+### Các điều khoản bắt buộc khi Fork, Sử dụng hoặc Phát triển Phái sinh
+
+Bất kỳ cá nhân hay tổ chức nào sao chép, fork, chỉnh sửa, tích hợp một phần hoặc toàn bộ mã nguồn của **3012** đều phải tuân thủ nghiêm ngặt 4 nghĩa vụ pháp lý sau:
+
+1. **Tôn trọng và Giữ nguyên Quyền Tác giả (`Attribution & Copyright Notice`):**
+   - Bắt buộc giữ nguyên toàn bộ thông báo bản quyền gốc (`Copyright (c) 2026 Le The Khoi`), tệp [`LICENSE`](LICENSE), và ghi nhận rõ ràng nguồn gốc từ kho lưu trữ chính thức [`github.com/userlethekhoi/3012`](https://github.com/userlethekhoi/3012) trong cả mã nguồn lẫn phần giới thiệu của ứng dụng.
+   - Nghiêm cấm mọi hành vi xóa tên tác giả, gỡ bỏ thông tin bản quyền hoặc mạo nhận quyền sở hữu gốc đối với dự án.
+2. **Bắt buộc Công khai Toàn bộ Mã nguồn (`Disclose Full Source`):**
+   - Nếu bạn **fork, chỉnh sửa, đóng gói lại (`.ipa`, kho ứng dụng)** hoặc **triển khai dưới dạng dịch vụ qua mạng** (theo Điều 13 của AGPL-3.0), bạn **bắt buộc phải công khai toàn bộ mã nguồn hoàn chỉnh** của phiên bản đó — bao gồm tất cả phần mã sửa đổi, tính năng bổ sung và cấu hình biên dịch — để bất kỳ người dùng nào cũng có thể truy cập công khai miễn phí.
+3. **Kế thừa Cùng Giấy phép (`Same License — AGPL-3.0`):**
+   - Mọi bản fork và sản phẩm phái sinh bắt buộc phải tiếp tục phát hành dưới chính giấy phép **GNU AGPLv3**. Không được phép đóng nguồn (*Closed-Source / Proprietary*) hoặc chuyển đổi sang các giấy phép hạn chế hơn.
+4. **Minh bạch Lịch sử Thay đổi (`State Changes`):**
+   - Mọi tệp mã nguồn có chỉnh sửa so với bản gốc phải ghi chú rõ ràng nội dung và thời điểm sửa đổi.
+
+| Phạm vi quyền hạn & Nghĩa vụ | Quy định cụ thể theo GNU AGPL-3.0 |
+| :--- | :--- |
+| **Được phép** | Nghiên cứu, học tập, fork, chỉnh sửa và đóng góp ngược lại (*Pull Request*) cho dự án mở. |
+| **Nghĩa vụ bắt buộc** | Giữ nguyên tên tác giả gốc • Đính kèm [`LICENSE`](LICENSE) • **Công khai 100% toàn bộ mã nguồn** của bản fork/bản sửa đổi dưới cùng giấy phép `AGPL-3.0` • Ghi rõ các thay đổi đã thực hiện. |
+| **Nghiêm cấm** | Đóng nguồn (*Closed-Source*) sau khi dùng mã nguồn • Xóa thông tin quyền tác giả • Phân phối bản biên dịch `.ipa` hoặc dịch vụ phái sinh mà che giấu mã nguồn thực tế. |
+
+> **Lưu ý về Thương hiệu & Cấp phép Riêng:** Tên gọi **3012** và bộ biểu tượng thương hiệu trong `Resources/Brand/` thuộc quyền sở hữu của tác giả nhằm định danh dự án chính thức; các bản fork độc lập khi phát hành riêng cần ghi rõ là phiên bản phái sinh từ **3012** để tránh gây nhầm lẫn cho người dùng. Mọi nhu cầu sử dụng trong sản phẩm thương mại đóng nguồn nằm ngoài phạm vi `AGPL-3.0` bắt buộc phải có sự đồng ý bằng văn bản từ tác giả [@userlethekhoi](https://github.com/userlethekhoi).
