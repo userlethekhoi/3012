@@ -123,6 +123,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             }
         }
 
+        @MainActor
         private func feedWelcomeBanner(remote: Bool) {
             guard let tv = terminalView else { return }
             if remote {
