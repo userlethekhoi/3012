@@ -1,12 +1,12 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.0.0 — Full Pro Intelligence, Inline Diagnostics, Theme Studio & Mobile DevTools Suite (`in_progress` — đang biên dịch xác minh trên GitHub Actions)**
+> **Trạng thái hiện tại:** **v3.0.0 CI VERIFIED GREEN (GitHub Actions Run `#43373662958`, Artifact `14014230131` ~7.86 MB ✅)** — Tích hợp đầy đủ Gợi ý Code trực tiếp, Báo lỗi ngay trên trình soạn thảo, 14+ Theme + Theme Studio, Symbol Outline & Breadcrumbs, Web DevTools F12, Lịch sử File 20 mốc, Markdown/Mermaid Preview, Nhập/Xuất `.zip` và Phím tắt Bluetooth/Magic Keyboard.
 
 ---
 
 ## Tổng kết Toàn bộ 5 Giai Đoạn Triển Khai
 
-### Phase 5 (v3.0.0): Gợi Ý Code, Báo Lỗi Trực Tiếp, Theme Studio & Bộ Công Cụ Pro (`in_progress`)
+### Phase 5 (v3.0.0): Gợi Ý Code, Báo Lỗi Trực Tiếp, Theme Studio & Bộ Công Cụ Pro (`completed` ✅)
 - [x] **Live Code Autocomplete (Bật/Tắt 1 chạm):** Thanh gợi ý từ khóa, thư viện chuẩn (`std::`, DOM, Python built-ins), ký hiệu trong file và Snippets nổi trực tiếp trên trình soạn thảo + nhấn `Tab` chấp nhận nhanh (`CodeIntelligenceService.swift`).
 - [x] **Inline Error & Warning Highlighting (Bật/Tắt 1 chạm):** Tô màu đỏ/cam trực tiếp lên dòng lỗi trên `Runestone` (`HighlightedRange`) kết hợp kiểm tra tức thì offline (`JSONSerialization`, `JavaScriptCore`, HTML tag matcher, Comment/String-aware Bracket & Python/C++ lint) và trình biên dịch thật trên VPS (`g++`/`gcc`/`py_compile`), kèm tab **Problems** nhảy tới dòng lỗi & **Sửa bằng Agent** 1 chạm.
 - [x] **14+ Built-in Themes + App Accent + Theme Studio:** Bộ sưu tập 14 theme sáng/tối (*Tokyo Night*, *Cursor Midnight*, *Xcode Dark/Light*, *One Dark Pro*, *Dracula*, *Catppuccin Mocha/Latte*, *Monokai Pro*, *GitHub Dark/Light*, *Nord*, *Gruvbox*, *Solarized*) + dải màu nhấn App Accent + **Theme Studio** chỉnh từng màu cú pháp code & nền ứng dụng có khung xem trước trực tiếp (`SymbolAndTimelineSheets.swift`).
@@ -44,3 +44,4 @@
 | Tên module Swift bắt đầu bằng chữ số (`3012`) | Phòng ngừa | Đặt `PRODUCT_MODULE_NAME: App3012`, giữ `PRODUCT_NAME: "3012"`. |
 | `SwiftTerm` `v1.99.x` yêu cầu `swift-tools-version: 6.2` | Phòng ngừa | Ghim dải ổn định `1.11.2 ... 1.13.99` (`swift-tools-version: 5.9`) tương thích hoàn hảo với Xcode 16+. |
 | Các kiểu dữ liệu `ByteBuffer`, `PseudoTerminalRequest`, `Curve25519` nằm ở module phụ thuộc bắc cầu của `Citadel` | Phòng ngừa | Khai báo tường minh `NIOCore`, `NIO`, `NIOSSH`, `Crypto` trong `project.yml` để tránh lỗi thiếu module khi biên dịch. |
+| Gọi nhầm `extStore.customSnippets` thay vì thuộc tính gộp `extStore.snippets` trong `App3012Main.swift` | 1 | Đổi sang `extStore.snippets` (commit `1e19490`), build xanh 100% ở Run `#43373662958`. |
