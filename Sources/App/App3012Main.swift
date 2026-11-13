@@ -7,6 +7,9 @@ struct App3012Main: App {
     @StateObject private var liveServer = LiveServerService()
     @StateObject private var runner = CodeRunnerService()
     @StateObject private var aiService = AIAgentService()
+    @StateObject private var gitService = GitService()
+    @StateObject private var sshService = SSHWorkspaceService()
+    @StateObject private var extStore = ExtensionStoreService()
 
     var body: some Scene {
         WindowGroup {
@@ -15,7 +18,10 @@ struct App3012Main: App {
                 workspace: workspace,
                 liveServer: liveServer,
                 runner: runner,
-                aiService: aiService
+                aiService: aiService,
+                gitService: gitService,
+                sshService: sshService,
+                extStore: extStore
             )
             .preferredColorScheme(preferences.activePalette.isDark ? .dark : .light)
         }
@@ -28,12 +34,17 @@ public struct MainIDEWorkspaceView: View {
     @ObservedObject var liveServer: LiveServerService
     @ObservedObject var runner: CodeRunnerService
     @ObservedObject var aiService: AIAgentService
+    @ObservedObject var gitService: GitService
+    @ObservedObject var sshService: SSHWorkspaceService
+    @ObservedObject var extStore: ExtensionStoreService
 
     @State private var showLeftExplorer: Bool = false
     @State private var showRightAIPanel: Bool = false
     @State private var showBottomPanel: Bool = false
-    @State private var bottomTab: BottomPanelTab = .output
+    @State private var bottomTab: BottomPanelTab = .terminal
+    @State private var bottomDetent: BottomPanelDetent = .half
     @State private var showSettingsSheet: Bool = false
+    @State private var showCommandPalette: Bool = false
     @State private var findTriggerToken: Int = 0
 
     public var body: some View {
@@ -44,7 +55,7 @@ public struct MainIDEWorkspaceView: View {
 
             ZStack(alignment: .leading) {
                 VStack(spacing: 0) {
-                    // 1. Ultra-Slim 36pt Top Header Bar (~90% screen preserved for code!)
+                    // 1. Ultra-Slim 38pt Top Header Bar (~90% screen preserved for code!)
                     topHeaderBar(palette: palette)
 
                     // 2. Central Workspace Area (Editor + Optional Side-by-Side AI on wide screens)
@@ -77,8 +88,10 @@ public struct MainIDEWorkspaceView: View {
                                 Divider().overlay(Color.white.opacity(0.12))
                                 BottomConsolePreviewPanel(
                                     selectedTab: $bottomTab,
+                                    detent: $bottomDetent,
                                     runner: runner,
                                     liveServer: liveServer,
+                                    sshService: sshService,
                                     workspace: workspace,
                                     preferences: preferences,
                                     onClose: {
@@ -87,7 +100,7 @@ public struct MainIDEWorkspaceView: View {
                                         }
                                     }
                                 )
-                                .frame(height: min(max(geo.size.height * 0.36, 190), 340))
+                                .frame(height: bottomDetent.height(in: geo.size.height))
                             }
                         }
 
@@ -123,12 +136,18 @@ public struct MainIDEWorkspaceView: View {
                         }
                 }
 
-                // Left Explorer Drawer
+                // Full 5-Tab VS Code Activity Sidebar Drawer (Explorer, Search, Git, SSH/SFTP, OpenVSX)
                 if showLeftExplorer {
                     LeftExplorerDrawer(
                         workspace: workspace,
                         preferences: preferences,
                         liveServer: liveServer,
+                        gitService: gitService,
+                        sshService: sshService,
+                        extStore: extStore,
+                        onInsertSnippet: { snippetBody in
+                            insertTextIntoActiveTab(snippetBody)
+                        },
                         onOpenSettings: {
                             showLeftExplorer = false
                             showSettingsSheet = true
@@ -139,7 +158,7 @@ public struct MainIDEWorkspaceView: View {
                             }
                         }
                     )
-                    .frame(width: min(geo.size.width * 0.80, 310))
+                    .frame(width: min(geo.size.width * 0.86, 350))
                     .transition(.move(edge: .leading))
                     .zIndex(10)
                 }
@@ -169,14 +188,11 @@ public struct MainIDEWorkspaceView: View {
             .gesture(
                 DragGesture(minimumDistance: 22, coordinateSpace: .local)
                     .onEnded { value in
-                        // Left edge swipe -> Open Explorer
                         if value.startLocation.x < 24 && value.translation.width > 55 {
                             withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                                 showLeftExplorer = true
                             }
-                        }
-                        // Right edge swipe -> Open AI Coding Agent
-                        else if value.startLocation.x > geo.size.width - 24 && value.translation.width < -55 {
+                        } else if value.startLocation.x > geo.size.width - 24 && value.translation.width < -55 {
                             withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                                 showRightAIPanel = true
                             }
@@ -187,6 +203,9 @@ public struct MainIDEWorkspaceView: View {
         .onAppear {
             workspace.onFileSavedOrChanged = { [weak liveServer] in
                 liveServer?.notifyFileChanged()
+            }
+            workspace.onAnyTabSavedWithURL = { [weak sshService] fileURL, updatedText in
+                sshService?.syncSavedLocalMirrorIfNeeded(localURL: fileURL, content: updatedText)
             }
             liveServer.start(
                 serving: workspace.rootURL,
@@ -200,21 +219,33 @@ public struct MainIDEWorkspaceView: View {
                 runner: runner
             )
         }
+        .sheet(isPresented: $showCommandPalette) {
+            CommandPaletteSheet(
+                workspace: workspace,
+                preferences: preferences,
+                commands: buildPaletteCommands()
+            )
+        }
     }
 
     @ViewBuilder
     private func topHeaderBar(palette: IDEColorPalette) -> some View {
-        HStack(spacing: 6) {
-            // Explorer Button
+        HStack(spacing: 5) {
+            // Activity Drawer Button (with green dot when SSH VPS connected!)
             Button {
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                     showLeftExplorer.toggle()
                 }
             } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Color(hex: palette.foreground))
-                    .frame(width: 30, height: 30)
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .frame(width: 28, height: 30)
+                    if sshService.isConnected {
+                        Circle().fill(Color.green).frame(width: 6, height: 6).offset(x: -2, y: 4)
+                    }
+                }
             }
 
             // Compact Scrollable Tab Strip
@@ -222,10 +253,11 @@ public struct MainIDEWorkspaceView: View {
                 HStack(spacing: 4) {
                     ForEach(workspace.openTabs) { tab in
                         let isSelected = (workspace.activeTabID == tab.id)
-                        HStack(spacing: 5) {
-                            Image(systemName: tab.language.systemIcon)
+                        let isRemoteSFTP = (sshService.remotePathBound(to: tab.fileURL) != nil)
+                        HStack(spacing: 4) {
+                            Image(systemName: isRemoteSFTP ? "cloud.fill" : tab.language.systemIcon)
                                 .font(.system(size: 10))
-                                .foregroundColor(Color(hex: palette.accent))
+                                .foregroundColor(isRemoteSFTP ? .cyan : Color(hex: palette.accent))
                             Text(tab.title)
                                 .font(.system(size: 12, weight: isSelected ? .bold : .regular))
                                 .foregroundColor(Color(hex: isSelected ? palette.foreground : palette.gutterForeground))
@@ -250,7 +282,7 @@ public struct MainIDEWorkspaceView: View {
                 }
             }
 
-            // 1-Tap Run / Live Preview Button
+            // 1-Tap Smart Run Button (Local / VPS SSH / Live Server)
             Button {
                 triggerSmartRun()
             } label: {
@@ -271,8 +303,28 @@ public struct MainIDEWorkspaceView: View {
                 .cornerRadius(6)
             }
 
-            // Quick Safari Live Server Menu
+            // Tools & Live Server Menu
             Menu {
+                Button {
+                    showCommandPalette = true
+                } label: {
+                    Label("Command Palette & Quick Open", systemImage: "command")
+                }
+
+                Button {
+                    formatActiveFile()
+                } label: {
+                    Label("Format Document (Làm đẹp Code)", systemImage: "wand.and.stars")
+                }
+
+                Button {
+                    checkSyntaxAndLSPDiagnostics()
+                } label: {
+                    Label("Kiểm tra Lỗi Cú pháp / Remote LSP", systemImage: "checkmark.shield")
+                }
+
+                Divider()
+
                 Button {
                     if !liveServer.isRunning {
                         liveServer.start(serving: workspace.rootURL, keepAliveInBackground: preferences.keepServerInBackground)
@@ -291,10 +343,10 @@ public struct MainIDEWorkspaceView: View {
                 }
 
                 Button {
-                    bottomTab = .shell
+                    bottomTab = .terminal
                     withAnimation { showBottomPanel.toggle() }
                 } label: {
-                    Label("Bật/Tắt Terminal & Output", systemImage: "terminal")
+                    Label(sshService.isConnected ? "Mở SSH PTY Terminal (SwiftTerm)" : "Mở Terminal (SwiftTerm)", systemImage: "terminal")
                 }
 
                 Button {
@@ -315,7 +367,7 @@ public struct MainIDEWorkspaceView: View {
                     .frame(width: 28, height: 30)
             }
 
-            // AI Coding Agent Button (Side-by-side / Right Drawer)
+            // AI Coding Agent Button
             Button {
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                     showRightAIPanel.toggle()
@@ -345,7 +397,7 @@ public struct MainIDEWorkspaceView: View {
             Text("3012")
                 .font(.system(size: 34, weight: .black, design: .monospaced))
                 .foregroundColor(Color(hex: palette.accent))
-            Text("Vuốt từ mép trái để mở File Explorer • Vuốt mép phải để gọi AI Agent")
+            Text("Vuốt mép trái: Explorer • Git • SSH SFTP • OpenVSX\nVuốt mép phải: AI Coding Agent")
                 .font(.system(size: 12.5))
                 .foregroundColor(Color(hex: palette.gutterForeground))
                 .multilineTextAlignment(.center)
@@ -354,7 +406,7 @@ public struct MainIDEWorkspaceView: View {
                 Button {
                     showLeftExplorer = true
                 } label: {
-                    Label("Mở Explorer", systemImage: "folder.fill")
+                    Label("Mở Sidebar", systemImage: "sidebar.left")
                         .font(.system(size: 13, weight: .semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
@@ -364,9 +416,9 @@ public struct MainIDEWorkspaceView: View {
                 }
 
                 Button {
-                    showRightAIPanel = true
+                    showCommandPalette = true
                 } label: {
-                    Label("Mở AI Agent", systemImage: "sparkles")
+                    Label("Command Palette", systemImage: "command")
                         .font(.system(size: 13, weight: .semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
@@ -395,8 +447,69 @@ public struct MainIDEWorkspaceView: View {
             bottomTab = .output
             withAnimation { showBottomPanel = true }
             Task {
-                await runner.runCode(code: active.content, language: active.language, fileName: active.title)
+                await runner.runCode(code: active.content, language: active.language, fileName: active.title, sshService: sshService)
             }
         }
+    }
+
+    private func formatActiveFile() {
+        guard let active = workspace.activeTab else { return }
+        Task {
+            let formatted = await ExtensionStoreService.formatCode(
+                active.content,
+                language: active.language,
+                tabWidth: preferences.tabWidth,
+                sshService: sshService
+            )
+            workspace.updateActiveContent(formatted)
+        }
+    }
+
+    private func checkSyntaxAndLSPDiagnostics() {
+        guard let active = workspace.activeTab else { return }
+        bottomTab = .output
+        withAnimation { showBottomPanel = true }
+        Task {
+            let report = await ExtensionStoreService.runSyntaxDiagnostics(
+                code: active.content,
+                language: active.language,
+                fileName: active.title,
+                sshService: sshService
+            )
+            runner.consoleOutput = report
+        }
+    }
+
+    private func insertTextIntoActiveTab(_ snippet: String) {
+        guard let active = workspace.activeTab else { return }
+        let ns = active.content as NSString
+        let loc = min(max(0, active.selectedRangeLocation), ns.length)
+        let len = min(max(0, active.selectedRangeLength), ns.length - loc)
+        let updated = ns.replacingCharacters(in: NSRange(location: loc, length: len), with: snippet)
+        workspace.updateActiveContent(updated, selectedRange: NSRange(location: loc + (snippet as NSString).length, length: 0))
+    }
+
+    private func buildPaletteCommands() -> [(title: String, icon: String, action: () -> Void)] {
+        [
+            ("Run Active File (▶ Run)", "play.fill", { triggerSmartRun() }),
+            ("Format Document (clang-format / prettier / built-in)", "wand.and.stars", { formatActiveFile() }),
+            ("Run Syntax & Remote LSP Diagnostics", "checkmark.shield", { checkSyntaxAndLSPDiagnostics() }),
+            ("Open Live Server localhost:\(liveServer.port) in Safari", "safari", {
+                if !liveServer.isRunning {
+                    liveServer.start(serving: workspace.rootURL, keepAliveInBackground: preferences.keepServerInBackground)
+                }
+                liveServer.openInSafari()
+            }),
+            ("Toggle Xterm / SSH PTY Terminal", "terminal", {
+                bottomTab = .terminal
+                withAnimation { showBottomPanel.toggle() }
+            }),
+            ("Toggle AI Coding Agent Panel", "sparkles", {
+                withAnimation { showRightAIPanel.toggle() }
+            }),
+            ("Open Themes, Fonts & IDE Settings", "paintbrush", {
+                showSettingsSheet = true
+            })
+        ]
     }
 }

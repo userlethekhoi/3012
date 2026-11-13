@@ -1,35 +1,64 @@
 import SwiftUI
 import WebKit
+import UIKit
 
 public enum BottomPanelTab: String, CaseIterable, Identifiable {
+    case terminal = "Terminal"
     case output = "Output"
     case livePreview = "Live :5500"
-    case shell = "Terminal"
 
     public var id: String { rawValue }
 }
 
+public enum BottomPanelDetent: CaseIterable {
+    case compact
+    case half
+    case expanded
+
+    public func height(in totalHeight: CGFloat) -> CGFloat {
+        switch self {
+        case .compact: return min(max(totalHeight * 0.28, 175), 230)
+        case .half: return min(max(totalHeight * 0.45, 250), 380)
+        case .expanded: return max(totalHeight * 0.76, 400)
+        }
+    }
+
+    public var next: BottomPanelDetent {
+        switch self {
+        case .compact: return .half
+        case .half: return .expanded
+        case .expanded: return .compact
+        }
+    }
+}
+
 public struct BottomConsolePreviewPanel: View {
     @Binding var selectedTab: BottomPanelTab
+    @Binding var detent: BottomPanelDetent
     @ObservedObject var runner: CodeRunnerService
     @ObservedObject var liveServer: LiveServerService
+    @ObservedObject var sshService: SSHWorkspaceService
     @ObservedObject var workspace: WorkspaceManager
     @ObservedObject var preferences: EditorPreferences
     var onClose: () -> Void
 
-    @State private var shellInput: String = ""
+    @State private var selectedPreviewPort: UInt16? = nil
 
     public init(
         selectedTab: Binding<BottomPanelTab>,
+        detent: Binding<BottomPanelDetent>,
         runner: CodeRunnerService,
         liveServer: LiveServerService,
+        sshService: SSHWorkspaceService,
         workspace: WorkspaceManager,
         preferences: EditorPreferences,
         onClose: @escaping () -> Void
     ) {
         self._selectedTab = selectedTab
+        self._detent = detent
         self.runner = runner
         self.liveServer = liveServer
+        self.sshService = sshService
         self.workspace = workspace
         self.preferences = preferences
         self.onClose = onClose
@@ -39,8 +68,8 @@ public struct BottomConsolePreviewPanel: View {
         let palette = preferences.activePalette
 
         VStack(spacing: 0) {
-            // Compact Panel Header
-            HStack(spacing: 10) {
+            // Compact Panel Header with 3-detent resize & Safari launcher
+            HStack(spacing: 8) {
                 ForEach(BottomPanelTab.allCases) { tab in
                     Button {
                         selectedTab = tab
@@ -48,8 +77,10 @@ public struct BottomConsolePreviewPanel: View {
                         HStack(spacing: 4) {
                             if tab == .livePreview && liveServer.isRunning {
                                 Circle().fill(Color.green).frame(width: 6, height: 6)
+                            } else if tab == .terminal && sshService.isConnected {
+                                Circle().fill(Color.cyan).frame(width: 6, height: 6)
                             }
-                            Text(tab == .livePreview ? "Live :\(liveServer.port)" : tab.rawValue)
+                            Text(tabLabel(tab))
                                 .font(.system(size: 11.5, weight: selectedTab == tab ? .bold : .medium))
                         }
                         .padding(.horizontal, 8)
@@ -63,15 +94,25 @@ public struct BottomConsolePreviewPanel: View {
                 Spacer()
 
                 if selectedTab == .livePreview {
-                    Button {
-                        if !liveServer.isRunning {
-                            liveServer.start(
-                                serving: workspace.rootURL,
-                                keepAliveInBackground: preferences.keepServerInBackground
-                            )
+                    if !sshService.activeTunnels.isEmpty {
+                        Menu {
+                            Button("Local Live Server (:\(liveServer.port))") {
+                                selectedPreviewPort = nil
+                            }
+                            ForEach(sshService.activeTunnels) { t in
+                                Button("SSH Tunnel localhost:\(t.localPort)") {
+                                    selectedPreviewPort = t.localPort
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "network")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.cyan)
                         }
-                        let rel = activeHTMLRelativePath()
-                        liveServer.openInSafari(relativePath: rel)
+                    }
+
+                    Button {
+                        openCurrentPreviewInSafari()
                     } label: {
                         Label("Safari", systemImage: "safari.fill")
                             .font(.system(size: 11, weight: .bold))
@@ -91,6 +132,17 @@ public struct BottomConsolePreviewPanel: View {
                     }
                 }
 
+                // Cycle 3 Detent Sizes (Compact -> Half -> Full)
+                Button {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                        detent = detent.next
+                    }
+                } label: {
+                    Image(systemName: detent == .expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Color(hex: palette.foreground))
+                }
+
                 Button {
                     onClose()
                 } label: {
@@ -105,19 +157,53 @@ public struct BottomConsolePreviewPanel: View {
 
             Divider().overlay(Color.white.opacity(0.08))
 
-            // Body
             Group {
                 switch selectedTab {
+                case .terminal:
+                    SwiftTermTerminalContainer(
+                        sshService: sshService,
+                        runner: runner,
+                        workspace: workspace,
+                        preferences: preferences
+                    )
                 case .output:
                     outputView(palette: palette)
                 case .livePreview:
                     liveWebPreviewBody(palette: palette)
-                case .shell:
-                    localShellView(palette: palette)
                 }
             }
         }
         .background(Color(hex: palette.sidebarBackground))
+    }
+
+    private func tabLabel(_ tab: BottomPanelTab) -> String {
+        switch tab {
+        case .terminal:
+            return sshService.isConnected ? "SSH PTY" : "Terminal"
+        case .output:
+            return "Output"
+        case .livePreview:
+            if let customPort = selectedPreviewPort {
+                return "Tunnel :\(customPort)"
+            }
+            return "Live :\(liveServer.port)"
+        }
+    }
+
+    private func openCurrentPreviewInSafari() {
+        if let tunnelPort = selectedPreviewPort,
+           let url = URL(string: "http://localhost:\(tunnelPort)") {
+            liveServer.updateBackgroundKeepAlive(enabled: preferences.keepServerInBackground)
+            UIApplication.shared.open(url)
+            return
+        }
+        if !liveServer.isRunning {
+            liveServer.start(
+                serving: workspace.rootURL,
+                keepAliveInBackground: preferences.keepServerInBackground
+            )
+        }
+        liveServer.openInSafari(relativePath: activeHTMLRelativePath())
     }
 
     @ViewBuilder
@@ -152,8 +238,26 @@ public struct BottomConsolePreviewPanel: View {
 
     @ViewBuilder
     private func liveWebPreviewBody(palette: IDEColorPalette) -> some View {
-        if liveServer.isRunning,
-           let url = URL(string: "\(liveServer.serverBaseURLString)/\(activeHTMLRelativePath())") {
+        if let tunnelPort = selectedPreviewPort,
+           let tunnelURL = URL(string: "http://127.0.0.1:\(tunnelPort)") {
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 10))
+                        .foregroundColor(.cyan)
+                    Text("SSH Port Tunnel → http://localhost:\(tunnelPort)")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundColor(Color(hex: palette.foreground))
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color(hex: palette.editorBackground))
+
+                LiveServerWebView(url: tunnelURL, reloadToken: liveServer.reloadVersion)
+            }
+        } else if liveServer.isRunning,
+                  let url = URL(string: "\(liveServer.serverBaseURLString)/\(activeHTMLRelativePath())") {
             VStack(spacing: 0) {
                 HStack(spacing: 6) {
                     Image(systemName: liveServer.isBackgroundKeepAliveActive ? "antenna.radiowaves.left.and.right" : "globe")
@@ -197,56 +301,6 @@ public struct BottomConsolePreviewPanel: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    @ViewBuilder
-    private func localShellView(palette: IDEColorPalette) -> some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(runner.shellHistory.enumerated()), id: \.offset) { _, line in
-                        Text(line)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(line.hasPrefix("$") ? Color(hex: palette.accent) : Color(hex: palette.foreground))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding(10)
-                .textSelection(.enabled)
-            }
-
-            Divider().overlay(Color.white.opacity(0.08))
-
-            HStack(spacing: 6) {
-                Text("$")
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
-                    .foregroundColor(.green)
-                TextField("ls, cat index.html, touch test.cpp, js 2+2...", text: $shellInput)
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .foregroundColor(Color(hex: palette.foreground))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .onSubmit {
-                        runShellLine()
-                    }
-                Button("Run") {
-                    runShellLine()
-                }
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(Color(hex: palette.accent))
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(Color(hex: palette.headerBackground))
-        }
-    }
-
-    private func runShellLine() {
-        let cmd = shellInput
-        shellInput = ""
-        runner.executeLocalShellCommand(cmd, workspaceRoot: workspace.rootURL) {
-            workspace.reloadTree()
         }
     }
 

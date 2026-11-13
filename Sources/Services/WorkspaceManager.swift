@@ -11,6 +11,7 @@ public final class WorkspaceManager: ObservableObject {
     @Published public var searchResults: [(url: URL, line: Int, preview: String)] = []
 
     public var onFileSavedOrChanged: (() -> Void)?
+    public var onAnyTabSavedWithURL: ((URL, String) -> Void)?
 
     public var activeTab: OpenTab? {
         guard let activeTabID else { return nil }
@@ -233,10 +234,11 @@ public final class WorkspaceManager: ObservableObject {
             openTabs[idx].selectedRangeLocation = selectedRange.location
             openTabs[idx].selectedRangeLength = selectedRange.length
         }
-        // Auto-save quietly for instant Live Server hot-reload
+        // Auto-save quietly for instant Live Server hot-reload & SFTP sync
         try? newText.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
         openTabs[idx].savedContent = newText
         onFileSavedOrChanged?()
+        onAnyTabSavedWithURL?(openTabs[idx].fileURL, newText)
     }
 
     public func updateSelectionOnly(_ range: NSRange) {
@@ -263,6 +265,7 @@ public final class WorkspaceManager: ObservableObject {
         try? openTabs[idx].content.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
         openTabs[idx].savedContent = openTabs[idx].content
         onFileSavedOrChanged?()
+        onAnyTabSavedWithURL?(openTabs[idx].fileURL, openTabs[idx].content)
     }
 
     public func saveAllTabs() {

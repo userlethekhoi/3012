@@ -28,13 +28,21 @@ public final class CodeRunnerService: ObservableObject {
     sudo apt-get update && sudo apt-get install -y build-essential gcc g++ gdb clang clangd cmake python3 python3-pip nodejs npm git ripgrep && echo "✅ 3012 VPS Toolchain Installed!"
     """
 
-    public func runCode(code: String, language: CodeLanguage, fileName: String) async {
+    public func runCode(code: String, language: CodeLanguage, fileName: String, sshService: SSHWorkspaceService? = nil) async {
         isRunning = true
         let startTime = Date()
         consoleOutput = "▶ Running \(fileName) (\(language.rawValue))...\n"
 
         defer {
             isRunning = false
+        }
+
+        // 0. If connected to SSH VPS (Phase 3), compile & run directly on the user's VPS!
+        if let ssh = sshService, ssh.isConnected {
+            let vpsOut = await ssh.compileAndRunOnVPS(code: code, language: language, fileName: fileName, stdin: stdinInput)
+            let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
+            consoleOutput += vpsOut + "\n\n✓ Finished in \(elapsed) ms (SSH VPS: \(ssh.connectedProfile?.host ?? "Remote"))"
+            return
         }
 
         if language == .javascript {
