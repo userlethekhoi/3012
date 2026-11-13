@@ -1,17 +1,17 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **Đang biên dịch & kiểm chứng CI v3.3.0 (`in_progress`)** — Hoàn thiện bộ nhận diện thương hiệu Developer **3012** (Anodized Carbon + Titanium Chalk + Terminal Emerald `#10B981`, số `0` gạch chéo chuẩn lập trình viên & thanh lề Editor), đóng gói đầy đủ ma trận 18 kích cỡ `AppIcon` cho `.ipa` (iPhone/iPad `@1x`/`@2x`/`@3x` + `1024px`), nâng cấp Logo Vector 120Hz nội bộ ứng dụng và banner `README.md`.
+> **Trạng thái hiện tại:** **v3.3.0 CI & GITHUB RELEASE VERIFIED GREEN (Run `#43402981526` • Release `v3.3.0-b9` ~12.86 MB ✅)** — Hoàn thiện bộ nhận diện thương hiệu Developer **3012** (*Anodized Carbon* + *Titanium Chalk* + *Terminal Emerald* `#10B981`, số `0` gạch chéo chuẩn lập trình viên & thanh lề Editor), đóng gói trọn bộ 18 kích cỡ `AppIcon` vào `.ipa` (`Assets.car` + `CFBundleIcons`), nâng cấp Logo Vector 120Hz bên trong ứng dụng và banner `README.md`.
 
 ---
 
 ## Tổng kết Toàn bộ 8 Giai Đoạn Triển Khai
 
-### Phase 8 (v3.3.0): Thiết Kế Thương Hiệu `3012`, Trọn Bộ `AppIcon` Cho `.ipa` & Logo Vector Nội Bộ / GitHub (`in_progress`)
+### Phase 8 (v3.3.0): Thiết Kế Thương Hiệu `3012`, Trọn Bộ `AppIcon` Cho `.ipa` & Logo Vector Nội Bộ / GitHub (`completed` ✅)
 - [x] **Bộ nhận diện thương hiệu Developer `3012` thuần kỹ thuật (Không Neon Tím, Không Icon AI):** Thiết kế trên lưới kiến trúc `1024×1024` với nền *Anodized Carbon* (`#141A22 -> #0A0D12`), chữ số đơn cách *Titanium Chalk* (`#F1F5F9`) tạo hình riêng (`30` / `12`), dấu gạch chéo bên trong số `0` (*Programmer's Slashed Zero*) và thanh lề trái *Terminal Emerald* (`#10B981`).
 - [x] **Đóng gói đầy đủ 18 kích cỡ `AppIcon` vào `.ipa` (`Sources/Resources/Assets.xcassets/AppIcon.appiconset` & `project.yml`):** Bổ sung trọn bộ PNG 24-bit RGB không kênh alpha cho mọi thiết bị iPhone (`20pt`, `29pt`, `40pt`, `60pt @2x/@3x` gồm `180×180`), iPad (`20pt`, `29pt`, `40pt`, `76pt`, `83.5pt @2x`) và `ios-marketing` (`1024×1024`), kèm cờ `ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES` và `CFBundleIconName: AppIcon` để hiển thị chuẩn xác trên mọi công cụ ký `.p12` (`Feather`, `ESign`, `GBox`, `AltStore`, `SideStore`, `TrollStore`, `Sideloadly`).
 - [x] **Nâng cấp Logo Vector 120Hz bên trong ứng dụng (`IDEVectorIcons.swift`, `App3012Main.swift`, `LeftExplorerDrawer.swift`, `SettingsAndThemesSheet.swift`):** Vẽ trực tiếp biểu tượng `3012` và chữ hiệu ngang `3012_` bằng `SwiftUI Canvas` trên thanh Header góc trái, đỉnh thanh công cụ Sidebar, màn hình chào mừng trình soạn thảo trống và thẻ nhận diện đầu trang Cài đặt.
 - [x] **Cập nhật Banner Thương hiệu trên `README.md` (`Resources/Brand/`):** Bổ sung `3012-banner.svg`, `3012-icon.svg`, `3012-icon.png` khắc phục triệt để đường dẫn ảnh bị thiếu trước đó trên GitHub.
-- [ ] **Kiểm chứng CI Build Xanh 100% & Xác thực gói `3012-Unsigned.ipa` trên GitHub Releases.**
+- [x] **Kiểm chứng CI Build Xanh 100% & Xác thực gói `3012-Unsigned.ipa` trên GitHub Releases (`Run #43402981526` -> Release `v3.3.0-b9`).**
 
 ### Phase 7 (v3.2.0): Tự Động Xuất Bản GitHub Release `.ipa`, Màu Trạng Thái File VS Code & `README.md` Chuyên Nghiệp (`completed` ✅)
 - [x] **Tự động phát hành `3012-Unsigned.ipa` vào GitHub Releases (`.github/workflows/build-ipa.yml`):** Tự động tạo bản Release mới nhất (`--latest`) kèm mã kiểm tra `SHA256SUMS.txt` và đường dẫn tải trực tiếp `releases/latest/download/3012-Unsigned.ipa` ngay sau mỗi lần build xanh.
