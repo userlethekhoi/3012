@@ -23,6 +23,7 @@ struct App3012Main: App {
     @StateObject private var intelligence = CodeIntelligenceService()
     @StateObject private var timelineService = FileTimelineAndArchiveService.shared
     @StateObject private var theosService = TheosBuildService()
+    @StateObject private var xtoolService = XtoolBuildService()
     @StateObject private var daemonService = LocalDaemonService()
 
     var body: some Scene {
@@ -39,6 +40,7 @@ struct App3012Main: App {
                 intelligence: intelligence,
                 timelineService: timelineService,
                 theosService: theosService,
+                xtoolService: xtoolService,
                 daemonService: daemonService
             )
             .preferredColorScheme(preferences.activePalette.isDark ? .dark : .light)
@@ -59,6 +61,7 @@ public struct MainIDEWorkspaceView: View {
     @ObservedObject var intelligence: CodeIntelligenceService
     @ObservedObject var timelineService: FileTimelineAndArchiveService
     @ObservedObject var theosService: TheosBuildService
+    @ObservedObject var xtoolService: XtoolBuildService
     @ObservedObject var daemonService: LocalDaemonService
 
     @State private var showLeftExplorer: Bool = false
@@ -73,6 +76,7 @@ public struct MainIDEWorkspaceView: View {
     @State private var showTimelineSheet: Bool = false
     @State private var showThemeStudioDirect: Bool = false
     @State private var showTheosBuilderSheet: Bool = false
+    @State private var showXtoolBuilderSheet: Bool = false
     @State private var showDaemonManagerSheet: Bool = false
     @State private var shareZipItem: ShareableZipFile? = nil
     @State private var rootDocumentPickerMode: WorkspaceDocumentPickerMode? = nil
@@ -181,6 +185,10 @@ public struct MainIDEWorkspaceView: View {
                         onOpenTheosBuilder: {
                             showLeftExplorer = false
                             showTheosBuilderSheet = true
+                        },
+                        onOpenXtoolBuilder: {
+                            showLeftExplorer = false
+                            showXtoolBuilderSheet = true
                         },
                         onRequestOpenSingleFile: {
                             rootDocumentPickerMode = .singleFile
@@ -310,6 +318,15 @@ public struct MainIDEWorkspaceView: View {
         .sheet(isPresented: $showTheosBuilderSheet) {
             TheosBuilderSheet(
                 theosService: theosService,
+                workspace: workspace,
+                sshService: sshService,
+                runner: runner,
+                preferences: preferences
+            )
+        }
+        .sheet(isPresented: $showXtoolBuilderSheet) {
+            XtoolBuilderSheet(
+                xtoolService: xtoolService,
                 workspace: workspace,
                 sshService: sshService,
                 runner: runner,
@@ -547,6 +564,7 @@ public struct MainIDEWorkspaceView: View {
             intelligence: intelligence,
             aiService: aiService,
             gitService: gitService,
+            xtoolService: xtoolService,
             onJumpToLine: { line in
                 triggerJumpToLine(line)
             },
@@ -1069,6 +1087,30 @@ public struct MainIDEWorkspaceView: View {
                     .buttonStyle(.plain)
                 }
 
+                // 4.6 xtool SwiftPM / .ipa Pill
+                if isXtoolBuildContext(activeTab: activeTab) {
+                    Button {
+                        showXtoolBuilderSheet = true
+                    } label: {
+                        HStack(spacing: 3) {
+                            if xtoolService.isBuilding || xtoolService.isInjecting {
+                                ProgressView().scaleEffect(0.55)
+                            } else {
+                                Image(systemName: "cube.transparent.fill")
+                                    .font(.system(size: 9.5, weight: .semibold))
+                            }
+                            Text("xtool .ipa")
+                                .font(.system(size: 9.5, weight: .bold))
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.blue.opacity(0.18))
+                        .foregroundColor(.blue)
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 // 5. Quick Smart Autocomplete Status Pill (1-Tap Toggle)
                 Button {
                     preferences.enableCodeCompletion.toggle()
@@ -1522,6 +1564,12 @@ public struct MainIDEWorkspaceView: View {
                     showTheosBuilderSheet = true
                 } label: {
                     Label(preferences.tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)"), systemImage: "hammer.fill")
+                }
+
+                Button {
+                    showXtoolBuilderSheet = true
+                } label: {
+                    Label(preferences.tr("xtool Studio (Build SwiftUI .ipa & Nhúng .dylib)", "xtool Studio (Build SwiftUI .ipa & Inject .dylib)"), systemImage: "cube.transparent.fill")
                 }
 
                 Button {
@@ -2322,6 +2370,17 @@ public struct MainIDEWorkspaceView: View {
         return theosService.isTheosWorkspace(workspace.rootURL)
     }
 
+    private func isXtoolBuildContext(activeTab: OpenTab) -> Bool {
+        let lowerName = activeTab.fileURL.lastPathComponent.lowercased()
+        if lowerName == "xtool.yml" {
+            return true
+        }
+        if lowerName == "package.swift" && xtoolService.isXtoolWorkspace(workspace.rootURL) {
+            return true
+        }
+        return activeTab.language == .swift && xtoolService.isXtoolWorkspace(workspace.rootURL)
+    }
+
     private func triggerSmartRun() {
         applyFormatOnSaveIfEnabled()
         workspace.saveActiveTab()
@@ -2336,6 +2395,25 @@ public struct MainIDEWorkspaceView: View {
             bottomTab = .output
             withAnimation { showBottomPanel = true }
             theosService.startBuild(
+                workspaceRoot: workspace.rootURL,
+                sshService: sshService,
+                runner: runner,
+                onWorkspaceChanged: { [weak workspace] in
+                    workspace?.reloadTree()
+                }
+            )
+            return
+        }
+
+        if isXtoolBuildContext(activeTab: active) {
+            if xtoolService.buildMode == .privateSSHVPS && !sshService.isConnected {
+                showXtoolBuilderSheet = true
+                return
+            }
+            workspace.saveAllTabs()
+            bottomTab = .output
+            withAnimation { showBottomPanel = true }
+            xtoolService.startBuild(
                 workspaceRoot: workspace.rootURL,
                 sshService: sshService,
                 runner: runner,
@@ -2451,6 +2529,7 @@ public struct MainIDEWorkspaceView: View {
             (preferences.tr("Xem Problems & Báo lỗi trực tiếp", "Show Problems & Inline Diagnostics"), "checklist", { checkSyntaxAndLSPDiagnostics() }),
             (preferences.tr("Treo Bot Telegram & Chạy Ngầm Terminal 24/7 (Trên Máy)", "24/7 Background Terminal & Telegram Bot Runner (On-Device)"), "waveform.path.ecg", { showDaemonManagerSheet = true }),
             (preferences.tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)"), "hammer.fill", { showTheosBuilderSheet = true }),
+            (preferences.tr("xtool Studio — Build SwiftUI .ipa & Nhúng .dylib", "xtool Studio — Build SwiftUI .ipa & Inject .dylib"), "cube.transparent.fill", { showXtoolBuilderSheet = true }),
             (preferences.tr("Mở File lẻ trên máy (Files)... (Cmd+O)", "Open File(s) from Files... (Cmd+O)"), "doc.badge.arrow.up", {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     rootDocumentPickerMode = .singleFile

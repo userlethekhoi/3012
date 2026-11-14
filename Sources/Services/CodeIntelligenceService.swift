@@ -1515,6 +1515,22 @@ public final class CodeIntelligenceService: ObservableObject {
             }
         }
 
+        if language == .yaml {
+            for (index, rawLine) in lines.enumerated() {
+                if rawLine.hasPrefix("\t") || rawLine.contains(":\t") {
+                    let lineNum = index + 1
+                    issues.append(EditorDiagnostic(
+                        line: lineNum,
+                        column: 1,
+                        severity: .error,
+                        message: "YAML không cho phép thụt lề bằng phím Tab; hãy dùng dấu cách (Spaces).",
+                        range: lineNSRange(lineNum)
+                    ))
+                    if issues.count >= 25 { break }
+                }
+            }
+        }
+
         return Array(issues.prefix(25))
     }
 
@@ -1839,6 +1855,11 @@ public final class CodeIntelligenceService: ObservableObject {
         case .swift:
             return [
                 ("struct View", "struct $0: View {\n    var body: some View {\n        Text(\"Hello\")\n    }\n}", "SwiftUI View", .snippet),
+                ("@main App", "@main\nstruct $0App: App {\n    var body: some Scene {\n        WindowGroup {\n            ContentView()\n        }\n    }\n}", "SwiftUI @main App Entry", .snippet),
+                ("Package(xtool)", "// swift-tools-version: 5.10\nimport PackageDescription\n\nlet package = Package(\n    name: \"$0\",\n    platforms: [.iOS(.v17)],\n    products: [\n        .library(name: \"$0\", targets: [\"$0\"])\n    ],\n    targets: [\n        .target(name: \"$0\")\n    ]\n)", "xtool Package.swift Manifest", .snippet),
+                (".library", ".library(name: \"$0\", targets: [\"$0\"])", "SwiftPM Library Product (xtool App)", .function),
+                (".target", ".target(name: \"$0\")", "SwiftPM Source Target", .function),
+                (".package(url:)", ".package(url: \"$0\", from: \"1.0.0\")", "SwiftPM Remote Dependency", .function),
                 ("func", "func $0() {\n    \n}", "Function", .snippet),
                 ("guard let", "guard let $0 else { return }", "Unwrap Guard", .snippet),
                 ("Task", "Task {\n    $0\n}", "Async Task", .snippet),
@@ -1908,6 +1929,18 @@ public final class CodeIntelligenceService: ObservableObject {
                 ("UPDATE", "UPDATE $0 SET  WHERE id = ;", "Update Row", .snippet),
                 ("LEFT JOIN", "LEFT JOIN $0 ON ", "Join Clause", .keyword),
                 ("GROUP BY", "GROUP BY $0 ORDER BY ", "Aggregation", .keyword)
+            ]
+
+        case .yaml:
+            return [
+                ("xtool.yml", "version: 1\nbundleID: com.dev.$0\nproduct: $0\ninfoPath: Info.plist", "xtool Manifest Skeleton", .snippet),
+                ("version: 1", "version: 1", "xtool Schema Version", .property),
+                ("bundleID:", "bundleID: com.dev.$0", "iOS App Bundle Identifier", .property),
+                ("product:", "product: $0", "Primary .library Product in Package.swift", .property),
+                ("infoPath:", "infoPath: Info.plist", "Custom Info.plist Path", .property),
+                ("entitlementsPath:", "entitlementsPath: $0.entitlements", "App Entitlements Path", .property),
+                ("resources:", "resources:\n  - path: $0", "Bundle Resources", .snippet),
+                ("extensions:", "extensions:\n  - product: $0Extension\n    infoPath: $0Extension-Info.plist", "App Extension (Widget/Share)", .snippet)
             ]
 
         case .php, .ruby, .lua, .shell, .dockerfile, .hcl:

@@ -70,6 +70,7 @@ public struct BottomConsolePreviewPanel: View {
     @ObservedObject var intelligence: CodeIntelligenceService
     @ObservedObject var aiService: AIAgentService
     @ObservedObject var gitService: GitService
+    var xtoolService: XtoolBuildService? = nil
     var onJumpToLine: (Int) -> Void
     var onFixDiagnosticWithAgent: (EditorDiagnostic) -> Void
     var onOpenDaemonManager: () -> Void
@@ -94,6 +95,7 @@ public struct BottomConsolePreviewPanel: View {
         intelligence: CodeIntelligenceService,
         aiService: AIAgentService,
         gitService: GitService,
+        xtoolService: XtoolBuildService? = nil,
         onJumpToLine: @escaping (Int) -> Void,
         onFixDiagnosticWithAgent: @escaping (EditorDiagnostic) -> Void,
         onOpenDaemonManager: @escaping () -> Void = {},
@@ -110,6 +112,7 @@ public struct BottomConsolePreviewPanel: View {
         self.intelligence = intelligence
         self.aiService = aiService
         self.gitService = gitService
+        self.xtoolService = xtoolService
         self.onJumpToLine = onJumpToLine
         self.onFixDiagnosticWithAgent = onFixDiagnosticWithAgent
         self.onOpenDaemonManager = onOpenDaemonManager
@@ -284,7 +287,8 @@ public struct BottomConsolePreviewPanel: View {
                         workspace: workspace,
                         preferences: preferences,
                         aiService: aiService,
-                        gitService: gitService
+                        gitService: gitService,
+                        xtoolService: xtoolService
                     )
                 case .problems:
                     problemsListView(palette: palette)

@@ -11,6 +11,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
     @ObservedObject var preferences: EditorPreferences
     @ObservedObject var aiService: AIAgentService
     @ObservedObject var gitService: GitService
+    var xtoolService: XtoolBuildService? = nil
 
     public init(
         sshService: SSHWorkspaceService,
@@ -19,7 +20,8 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         workspace: WorkspaceManager,
         preferences: EditorPreferences,
         aiService: AIAgentService,
-        gitService: GitService
+        gitService: GitService,
+        xtoolService: XtoolBuildService? = nil
     ) {
         self.sshService = sshService
         self.runner = runner
@@ -28,6 +30,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         self.preferences = preferences
         self.aiService = aiService
         self.gitService = gitService
+        self.xtoolService = xtoolService
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -215,6 +218,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 ("&&", nil, Array(" && ".utf8)),
                 ("claude", nil, Array("claude ".utf8)),
                 ("opencode", nil, Array("opencode ".utf8)),
+                ("xtool", nil, Array("xtool ".utf8)),
                 ("code", nil, Array("code ".utf8)),
                 ("dir", nil, Array("dir\r".utf8))
             ]
@@ -388,7 +392,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
 
             var candidates: [String] = []
             if parts.count <= 1 {
-                let cmds = ["claude", "opencode", "code", "open", "dir", "ls", "cd", "cls", "clear", "pwd", "tree", "type", "cat", "copy", "cp", "move", "mv", "del", "rm", "mkdir", "rmdir", "touch", "findstr", "grep", "git", "gcc", "g++", "python", "node", "swift", "run", "npm", "zip", "unzip", "wget", "curl", "ping", "ipconfig", "systeminfo", "tasklist", "taskkill", "ps", "kill", "bot", "keepalive", "files", "set", "help"]
+                let cmds = ["claude", "opencode", "xtool", "code", "open", "dir", "ls", "cd", "cls", "clear", "pwd", "tree", "type", "cat", "copy", "cp", "move", "mv", "del", "rm", "mkdir", "rmdir", "touch", "findstr", "grep", "git", "gcc", "g++", "python", "node", "swift", "run", "npm", "zip", "unzip", "wget", "curl", "ping", "ipconfig", "systeminfo", "tasklist", "taskkill", "ps", "kill", "bot", "keepalive", "files", "set", "help"]
                 candidates.append(contentsOf: cmds.filter { token.isEmpty || $0.lowercased().hasPrefix(token.lowercased()) })
             }
 
@@ -509,8 +513,9 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                   del / rm [-rf] <path>   Delete item     | cls / clear       Clear terminal
                   findstr / grep <query>  Search in files | where / find <q>  Locate files
 
-                \u{001B}[1;36mCompilers, Git, Archive, Network & 24/7 Bot Daemons:\u{001B}[0m
+                \u{001B}[1;36mCompilers, xtool, Git, Archive, Network & 24/7 Bot Daemons:\u{001B}[0m
                   gcc / g++ / clang / swift / python / node / run <file>
+                  xtool [new|sync|inject|build|dev|help]  iOS SwiftPM builder & .dylib injector
                   npm [init|start|run]    Manage package.json & run scripts locally
                   git [status|init|add|commit|log|diff|branch|clone <url>]
                   zip <out.zip> <src>     | unzip <file.zip> [dest]
@@ -1096,6 +1101,9 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     emit("\(key)=\(sessionEnv[key] ?? "")\n")
                 }
 
+            case "xtool":
+                await handleXtoolCommand(args: args, cwd: cwd, emit: emit)
+
             default:
                 parent.runner.executeLocalShellCommand(raw, workspaceRoot: cwd) { [weak self] in
                     self?.parent.workspace.reloadTree()
@@ -1103,6 +1111,93 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 if let last = parent.runner.shellHistory.last {
                     emit(last + "\n")
                 }
+            }
+        }
+
+        // MARK: - xtool Subcommand Handler
+        @MainActor
+        private func handleXtoolCommand(
+            args: [String],
+            cwd: URL,
+            emit: @escaping @MainActor (String) -> Void
+        ) async {
+            let service = parent.xtoolService ?? XtoolBuildService()
+            let sub = args.first?.lowercased() ?? "help"
+            let tail = Array(args.dropFirst())
+
+            switch sub {
+            case "new", "init", "create":
+                let name = tail.first(where: { !$0.hasPrefix("-") }) ?? "App3012"
+                let flags = tail.filter { $0.hasPrefix("-") }
+                let bundleArg = tail.dropFirst().first(where: { !$0.hasPrefix("-") }) ?? "com.dev.\(name.lowercased())"
+                let kind: XtoolTemplateKind = flags.contains("--widget")
+                    ? .swiftUIWidgetExtension
+                    : (flags.contains("--modmenu") ? .modMenuHostApp : .swiftUIApp)
+                if let entry = service.scaffoldTemplate(kind: kind, appName: name, bundleID: bundleArg, in: parent.workspace) {
+                    emit("\u{001B}[32m[xtool new]\u{001B}[0m Created \(kind.title) -> \(parent.workspace.relativePath(for: entry))\n")
+                } else {
+                    emit("\u{001B}[31m[xtool new]\u{001B}[0m Failed to generate template.\n")
+                }
+
+            case "sync":
+                parent.workspace.saveAllTabs()
+                let msg = service.syncXtoolManifests(
+                    in: parent.workspace,
+                    isEnglish: parent.preferences.appLanguage != .vietnamese
+                )
+                emit("\u{001B}[36m[xtool sync]\u{001B}[0m \(msg)\n")
+
+            case "inject":
+                guard tail.count >= 2 else {
+                    emit("Usage: xtool inject <App.ipa> <Tweak.dylib>\n")
+                    return
+                }
+                let ipaURL = resolvePath(tail[0], cwd: cwd)
+                let dylibURL = resolvePath(tail[1], cwd: cwd)
+                emit("Injecting \(dylibURL.lastPathComponent) -> \(ipaURL.lastPathComponent)...\n")
+                if let out = await service.injectDylibIntoIPA(
+                    ipaURL: ipaURL,
+                    dylibURL: dylibURL,
+                    workspaceRoot: parent.workspace.rootURL,
+                    options: XtoolInjectionOptions(),
+                    runner: parent.runner
+                ) {
+                    parent.workspace.reloadTree()
+                    emit("\u{001B}[32m[xtool inject]\u{001B}[0m Packaged at packages/\(out.lastPathComponent)\n")
+                } else {
+                    emit("\u{001B}[31m[xtool inject]\u{001B}[0m \(service.buildStatusText)\n")
+                }
+
+            case "status":
+                let info = service.inspectWorkspace(parent.workspace.rootURL)
+                emit("xtool.yml: \(info.hasXtoolYML ? "YES" : "NO") | Package.swift: \(info.hasPackageSwift ? "YES" : "NO")\n")
+                emit("Product  : \(info.productName.isEmpty ? "(unset)" : info.productName)\n")
+                emit("BundleID : \(info.bundleID.isEmpty ? "(unset)" : info.bundleID)\n")
+
+            case "build", "dev", "ds", "install":
+                parent.workspace.saveAllTabs()
+                let ws = parent.workspace
+                if !parent.sshService.isConnected && service.buildMode == .privateSSHVPS {
+                    service.buildMode = .offlineGitHubActions
+                }
+                service.startBuild(
+                    workspaceRoot: ws.rootURL,
+                    sshService: parent.sshService,
+                    runner: parent.runner,
+                    onWorkspaceChanged: { ws.reloadTree() }
+                )
+                emit("\u{001B}[36m[xtool \(sub)]\u{001B}[0m Dispatched in mode '\(service.buildMode.rawValue)'. Check Output / xtool Studio for logs.\n")
+
+            default:
+                emit("""
+                3012 xtool Integration CLI:
+                  xtool new <Name> [bundleID] [--widget | --modmenu]   Create SwiftUI / Widget / Host project
+                  xtool sync                                           Sync Package.swift <-> xtool.yml
+                  xtool inject <App.ipa> <Mod.dylib>                   Patch 64-bit Mach-O & export IPA
+                  xtool status                                         Inspect xtool.yml & Package.swift
+                  xtool build | dev                                    Build via SSH VPS or export Actions .zip
+                \n
+                """)
             }
         }
 

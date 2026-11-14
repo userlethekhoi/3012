@@ -122,6 +122,7 @@ public struct LeftExplorerDrawer: View {
     @ObservedObject var timelineService: FileTimelineAndArchiveService
     var onInsertSnippet: (String) -> Void
     var onOpenTheosBuilder: () -> Void
+    var onOpenXtoolBuilder: () -> Void
     var onRequestOpenSingleFile: (() -> Void)?
     var onRequestOpenFolder: (() -> Void)?
     var onRequestImportZip: (() -> Void)?
@@ -170,6 +171,7 @@ public struct LeftExplorerDrawer: View {
         timelineService: FileTimelineAndArchiveService,
         onInsertSnippet: @escaping (String) -> Void,
         onOpenTheosBuilder: @escaping () -> Void = {},
+        onOpenXtoolBuilder: @escaping () -> Void = {},
         onRequestOpenSingleFile: (() -> Void)? = nil,
         onRequestOpenFolder: (() -> Void)? = nil,
         onRequestImportZip: (() -> Void)? = nil,
@@ -185,6 +187,7 @@ public struct LeftExplorerDrawer: View {
         self.timelineService = timelineService
         self.onInsertSnippet = onInsertSnippet
         self.onOpenTheosBuilder = onOpenTheosBuilder
+        self.onOpenXtoolBuilder = onOpenXtoolBuilder
         self.onRequestOpenSingleFile = onRequestOpenSingleFile
         self.onRequestOpenFolder = onRequestOpenFolder
         self.onRequestImportZip = onRequestImportZip
@@ -348,6 +351,11 @@ public struct LeftExplorerDrawer: View {
                             onOpenTheosBuilder()
                         } label: {
                             Label(preferences.tr("Theos Tweak / Mod Menu (.deb/.dylib)", "Theos Tweak / Mod Menu (.deb/.dylib)"), systemImage: "hammer.fill")
+                        }
+                        Button {
+                            onOpenXtoolBuilder()
+                        } label: {
+                            Label(preferences.tr("xtool Studio (.ipa / Dylib Injector)", "xtool Studio (.ipa / Dylib Injector)"), systemImage: "cube.transparent.fill")
                         }
                     } label: {
                         Label(preferences.tr("Dự án / .zip", "Project / .zip"), systemImage: "folder.badge.gearshape")
@@ -596,6 +604,11 @@ public struct LeftExplorerDrawer: View {
                     onOpenTheosBuilder()
                 } label: {
                     Image(systemName: "hammer").font(.system(size: 12)).foregroundColor(Color(hex: palette.accent))
+                }
+                Button {
+                    onOpenXtoolBuilder()
+                } label: {
+                    Image(systemName: "cube.transparent").font(.system(size: 12)).foregroundColor(.blue)
                 }
                 Button {
                     workspace.reloadTree()
