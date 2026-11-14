@@ -88,6 +88,8 @@ jobs:
               ]
           )
           EOF
+          sed -i '' 's/Task\.sleep(for: \.seconds(100_000))/Task.sleep(nanoseconds: 100_000_000_000_000)/g' VendorPackages/Citadel/Sources/Citadel/RemotePortForward/Client/RemotePortForward+Client.swift
+          sed -i '' 's/withDiscardingTaskGroup {/withTaskGroup(of: Void.self) {/g' VendorPackages/Citadel/Sources/Citadel/RemotePortForward/Client/RemotePortForward+Client.swift
 
       - name: Generate Xcode Project via XcodeGen
         run: xcodegen generate
