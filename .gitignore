@@ -13,3 +13,4 @@ DerivedData/
 .build/
 .swiftpm/
 Packages/
+VendorPackages/

@@ -14,7 +14,7 @@
     <a href="https://github.com/userlethekhoi/3012/releases/latest/download/3012-Unsigned.ipa">
       <img src="https://img.shields.io/badge/Download-3012--Unsigned.ipa-10b981?style=flat-square" alt="Download Unsigned IPA" />
     </a>
-    <img src="https://img.shields.io/badge/Platform-iOS%2017.0%2B%20%7C%20iPadOS%2017.0%2B-1e293b?style=flat-square" alt="Platform" />
+    <img src="https://img.shields.io/badge/Platform-iOS%2015.0%2B%20%7C%20iPadOS%2015.0%2B-1e293b?style=flat-square" alt="Platform" />
     <img src="https://img.shields.io/badge/Swift-5.10-f05138?style=flat-square" alt="Swift 5.10" />
     <a href="LICENSE">
       <img src="https://img.shields.io/badge/License-GNU%20AGPLv3-0f766e?style=flat-square" alt="GNU AGPLv3 License" />
@@ -272,7 +272,7 @@ zip -qry 3012-Unsigned.ipa Payload
 
 ## Bản quyền, Quyền Tác giả & Giấy phép Mã nguồn (GNU AGPLv3)
 
-**Copyright (c) 2026 Le The Khoi (Sinh năm 2009 • GitHub: [@userlethekhoi](https://github.com/userlethekhoi) • Telegram: [@coder_009](https://t.me/coder_009)).**
+**Copyright (c) 2026 Le The Khoi (GitHub: [@userlethekhoi](https://github.com/userlethekhoi) • Telegram: [@coder_009](https://t.me/coder_009)).**
 
 Mã nguồn, kiến trúc hệ thống và bộ nhận diện thương hiệu của dự án **3012** được phát hành theo giấy phép [**GNU Affero General Public License v3.0 (AGPL-3.0)**](LICENSE) — giấy phép Copyleft mạnh nhất được công nhận quốc tế nhằm bảo vệ quyền tác giả và đảm bảo tính minh bạch tuyệt đối của mã nguồn.
 

@@ -35,7 +35,7 @@ public struct TheosBuilderSheet: View {
     public var body: some View {
         let hasTheosProject = theosService.isTheosWorkspace(workspace.rootURL)
 
-        NavigationStack {
+        CompatibleNavigationContainer {
             Form {
                 // MARK: - 1. Workspace Status & Action
                 Section {
@@ -71,7 +71,7 @@ public struct TheosBuilderSheet: View {
                             triggerBuildWithConsentCheck()
                         } label: {
                             Label(preferences.tr("Build .deb / .dylib Ngay", "Build .deb / .dylib Now"), systemImage: "play.fill")
-                                .fontWeight(.bold)
+                                .font(.body.weight(.bold))
                         }
                         .disabled(!hasTheosProject && theosService.buildMode != .offlineExport)
                     }
@@ -125,7 +125,7 @@ public struct TheosBuilderSheet: View {
                             }
                         } label: {
                             Label(preferences.tr("Khởi Tạo Dự Án Theos 1 Chạm", "1-Tap Scaffold Theos Project"), systemImage: "doc.badge.plus")
-                                .fontWeight(.semibold)
+                                .font(.body.weight(.semibold))
                         }
 
                         if let notice = templateCreatedNotice {
@@ -236,7 +236,7 @@ public struct TheosBuilderSheet: View {
                             preferences.tr("Tự động quét & điền _FILES vào Makefile", "Auto-Scan & Sync _FILES into Makefile"),
                             systemImage: "wand.and.stars"
                         )
-                        .fontWeight(.semibold)
+                        .font(.body.weight(.semibold))
                     }
                     .disabled(!hasTheosProject)
 
@@ -283,7 +283,7 @@ public struct TheosBuilderSheet: View {
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer()
-                                ShareLink(item: item.localURL) {
+                                CompatibleFileShareButton(item: item.localURL) {
                                     Label(preferences.tr("Xuất", "Export"), systemImage: "square.and.arrow.up")
                                         .font(.system(size: 12, weight: .bold))
                                 }

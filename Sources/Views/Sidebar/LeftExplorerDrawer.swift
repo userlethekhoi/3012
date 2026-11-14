@@ -364,7 +364,7 @@ public struct LeftExplorerDrawer: View {
                     }
 
                     if let zipURL = exportedZipURL {
-                        ShareLink(item: zipURL) {
+                        CompatibleFileShareButton(item: zipURL) {
                             Image(systemName: "square.and.arrow.up")
                                 .font(.system(size: 11.5, weight: .bold))
                                 .foregroundColor(Color(hex: palette.accent))
@@ -766,7 +766,7 @@ public struct LeftExplorerDrawer: View {
                     .foregroundColor(Color(hex: palette.foreground))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                    .onChange(of: workspace.searchQuery) { _, q in
+                    .onChange(of: workspace.searchQuery) { q in
                         workspace.performWorkspaceSearch(q)
                     }
             }
@@ -989,7 +989,7 @@ public struct LeftExplorerDrawer: View {
                         .background(Color(hex: palette.editorBackground))
                         .foregroundColor(Color(hex: palette.foreground))
                         .cornerRadius(6)
-                        .onChange(of: githubTokenInput) { _, val in
+                        .onChange(of: githubTokenInput) { val in
                             gitService.githubToken = val
                         }
 
@@ -1374,7 +1374,7 @@ public struct LeftExplorerDrawer: View {
 
     @ViewBuilder
     private func vpsEditorSheet() -> some View {
-        NavigationStack {
+        CompatibleNavigationContainer {
             Form {
                 Section("Thông tin Máy Chủ VPS (SSH & SFTP)") {
                     TextField("Tên gợi nhớ (vd: Ubuntu VPS)", text: $draftVPS.label)

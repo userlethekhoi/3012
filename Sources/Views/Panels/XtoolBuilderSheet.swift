@@ -47,7 +47,7 @@ public struct XtoolBuilderSheet: View {
         let isXtoolProject = xtoolService.isXtoolWorkspace(workspace.rootURL)
         let manifest = xtoolService.inspectWorkspace(workspace.rootURL)
 
-        NavigationStack {
+        CompatibleNavigationContainer {
             Form {
                 // MARK: - 1. xtool Workspace Status & Build Action
                 Section {
@@ -95,7 +95,7 @@ public struct XtoolBuilderSheet: View {
                                     : preferences.tr("Xuất GitHub Actions + .zip (Build .ipa)", "Export GitHub Actions + .zip (.ipa)"),
                                 systemImage: "play.fill"
                             )
-                            .fontWeight(.bold)
+                            .font(.body.weight(.bold))
                         }
                         .disabled(!isXtoolProject && xtoolService.buildMode == .privateSSHVPS)
                     }
@@ -144,7 +144,7 @@ public struct XtoolBuilderSheet: View {
                             }
                         } label: {
                             Label(preferences.tr("Khởi Tạo Dự Án xtool 1 Chạm", "1-Tap Scaffold xtool Project"), systemImage: "doc.badge.plus")
-                                .fontWeight(.semibold)
+                                .font(.body.weight(.semibold))
                         }
 
                         if let notice = templateNotice {
@@ -192,7 +192,7 @@ public struct XtoolBuilderSheet: View {
                             preferences.tr("Đồng bộ Package.swift <-> xtool.yml", "Sync Package.swift <-> xtool.yml"),
                             systemImage: "arrow.triangle.2.circlepath"
                         )
-                        .fontWeight(.semibold)
+                        .font(.body.weight(.semibold))
                     }
                     .disabled(!manifest.hasPackageSwift)
 
@@ -322,7 +322,7 @@ public struct XtoolBuilderSheet: View {
                                 preferences.tr("Nhúng .dylib & Đóng Gói .ipa", "Inject .dylib & Repack .ipa"),
                                 systemImage: "bandage.fill"
                             )
-                            .fontWeight(.bold)
+                            .font(.body.weight(.bold))
                         }
                     }
                     .disabled(pickedIPAURL == nil || pickedDylibURL == nil || xtoolService.isInjecting)
@@ -362,7 +362,7 @@ public struct XtoolBuilderSheet: View {
                                     .font(.system(size: 11.5, weight: .semibold))
                                     .buttonStyle(.bordered)
                                 }
-                                ShareLink(item: item.localURL) {
+                                CompatibleFileShareButton(item: item.localURL) {
                                     Label(preferences.tr("Xuất", "Export"), systemImage: "square.and.arrow.up")
                                         .font(.system(size: 12, weight: .bold))
                                 }

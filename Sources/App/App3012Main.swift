@@ -269,10 +269,10 @@ public struct MainIDEWorkspaceView: View {
             intelligence.reindexWorkspaceFiles(workspace.flattenFiles(in: workspace.fileTree))
             refreshIntelligenceForActiveTab()
         }
-        .onChange(of: workspace.fileTree) { _, updatedTree in
+        .onChange(of: workspace.fileTree) { updatedTree in
             intelligence.reindexWorkspaceFiles(workspace.flattenFiles(in: updatedTree))
         }
-        .onChange(of: workspace.activeTabID) { _, _ in
+        .onChange(of: workspace.activeTabID) { _ in
             intelligence.clearCompletions()
             if workspace.activeTab?.language != .markdown {
                 markdownMode = .editor
@@ -282,14 +282,14 @@ public struct MainIDEWorkspaceView: View {
             }
             refreshIntelligenceForActiveTab()
         }
-        .onChange(of: preferences.enableLiveDiagnostics) { _, enabled in
+        .onChange(of: preferences.enableLiveDiagnostics) { enabled in
             if enabled {
                 refreshIntelligenceForActiveTab()
             } else {
                 intelligence.diagnostics = []
             }
         }
-        .onChange(of: preferences.enableCodeCompletion) { _, enabled in
+        .onChange(of: preferences.enableCodeCompletion) { enabled in
             if !enabled {
                 intelligence.clearCompletions()
             }
@@ -387,7 +387,7 @@ public struct MainIDEWorkspaceView: View {
             workspace.handleIncomingURL(url)
             liveServer.updateRootDirectory(workspace.rootURL)
         }
-        .onChange(of: workspace.rootURL) { _, newRoot in
+        .onChange(of: workspace.rootURL) { newRoot in
             liveServer.updateRootDirectory(newRoot)
         }
         .sheet(item: $rootDocumentPickerMode) { mode in
@@ -581,7 +581,7 @@ public struct MainIDEWorkspaceView: View {
             }
         )
         .frame(height: activeBottomH)
-        .onChange(of: bottomDetent) { _, _ in
+        .onChange(of: bottomDetent) { _ in
             customBottomPanelHeight = nil
         }
     }
@@ -1216,7 +1216,7 @@ public struct MainIDEWorkspaceView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .onSubmit { stepFindMatch(forward: true) }
-                        .onChange(of: findQuery) { _, _ in
+                        .onChange(of: findQuery) { _ in
                             recomputeFindMatches(jumpToFirst: true)
                         }
 
@@ -1839,7 +1839,7 @@ public struct MainIDEWorkspaceView: View {
                         }
                     }
                 }
-                .onChange(of: workspace.activeTabID) { _, newID in
+                .onChange(of: workspace.activeTabID) { newID in
                     if let newID {
                         withAnimation(.easeInOut(duration: 0.18)) {
                             scrollProxy.scrollTo(newID, anchor: .center)

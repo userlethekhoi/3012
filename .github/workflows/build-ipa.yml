@@ -42,6 +42,13 @@ jobs:
           fi
           xcodegen --version
 
+      - name: Prepare Citadel Local Package for iOS 15.0+
+        run: |
+          rm -rf VendorPackages/Citadel
+          mkdir -p VendorPackages
+          git clone --depth 1 --branch 0.12.1 https://github.com/orlandos-nl/Citadel.git VendorPackages/Citadel
+          sed -i '' 's/\.iOS(\.v17)/.iOS(.v15)/g' VendorPackages/Citadel/Package.swift
+
       - name: Generate Xcode Project via XcodeGen
         run: xcodegen generate
 
@@ -68,6 +75,7 @@ jobs:
             -derivedDataPath build \
             -clonedSourcePackagesDirPath build/SourcePackages \
             -quiet \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -86,6 +94,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :CFBundleIcons" "$APP_PATH/Info.plist"
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
+          codesign --force --deep --sign - --timestamp=none Payload/3012.app
           zip -qry 3012-Unsigned.ipa Payload
           ls -lh 3012-Unsigned.ipa
 
@@ -119,7 +128,7 @@ jobs:
           | :--- | :--- |
           | **Version** | \`${APP_VERSION}\` (Build \`#${{ github.run_number }}\`) |
           | **Bundle Identifier** | \`com.dev.app3012\` |
-          | **Target Platform** | \`iOS 17.0+\` / \`iPadOS 17.0+\` (arm64) |
+          | **Target Platform** | \`iOS 15.0+\` / \`iPadOS 15.0+\` (arm64 — TrollStore & Sideload Ready) |
           | **Package Size** | \`${IPA_SIZE}\` |
           | **Commit** | \`${SHORT_SHA}\` — ${COMMIT_MSG} |
           | **SHA-256** | \`${SHA256_VAL}\` |

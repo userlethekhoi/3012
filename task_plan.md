@@ -1,10 +1,17 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v4.0.0 Đã Phát Hành (`v4.0.0-b29` / CI Run `43580542538` — Build Xanh Lần Đầu)** — Tích hợp trọn bộ quy trình **`xtool` Studio** (`Package.swift` `.library` + `xtool.yml`, mẫu SwiftUI App / Widget Extension / Non-JB Host App, đồng bộ manifest, build qua SSH VPS & GitHub Actions `.zip`), **On-Device `.dylib` -> Non-JB `.ipa` Injector** (giải nén `.ipa`, cập nhật `Info.plist`, chép `.dylib` vào `Frameworks/`, vá Mach-O 64-bit/Fat `LC_LOAD_DYLIB` thuần Swift, xoá `_CodeSignature` cũ & đóng gói `.ipa` không cần PC), **Terminal `xtool` CLI**, và **YAML/`xtool.yml` IntelliSense**.
+> **Trạng thái hiện tại:** **v4.0.1 (`Build 20`) — Sửa Crash TrollStore iOS 15/16 & Hỗ trợ Chính Thức `iOS 15.0+` (`in_progress`)** — Hạ Deployment Target toàn ứng dụng & gói phụ thuộc `Citadel` xuống `iOS 15.0`, thêm `codesign` Ad-hoc chuẩn TrollStore/iOS 16, chuyển toàn bộ `NavigationStack` / `ShareLink` / `.onChange(of:)` 2 tham số / `TextField(..., axis: .vertical)` / `.navigationDestination(item:)` / `.fontWeight` trên `Label`/`Button` sang API tương thích `iOS 15.0+`, và gỡ thông tin năm sinh theo yêu cầu.
 
 ---
 
-## Tổng kết Toàn bộ 20 Giai Đoạn Triển Khai
+## Tổng kết Toàn bộ 21 Giai Đoạn Triển Khai
+
+### Phase 21 (v4.0.1): Tương thích `iOS 15.0+` / Sửa Crash TrollStore iOS 16 & Gỡ Năm Sinh (`in_progress`)
+- [x] **Xác định Nguyên nhân Crash trên iOS 16 / TrollStore:** Gói `.ipa` trước đây biên dịch với `IPHONEOS_DEPLOYMENT_TARGET: "17.0"` nên liên kết thẳng các ký hiệu `SwiftUI` iOS 17 (14 chỗ `.onChange(of:)` 2 tham số, `.navigationDestination(item:)`) và `SwiftUI` iOS 16 (`NavigationStack`, `ShareLink`, `TextField(..., axis: .vertical)`, `.fontWeight` trên `Label`/`Button`), khiến `dyld` trên iOS 16/15 văng ngay lúc mở app khi TrollStore bỏ qua kiểm tra `MinimumOSVersion`.
+- [x] **Tương thích Ngược Toàn Diện Xuống `iOS 15.0+` (`AppLocalization.swift`, các Sheet & `App3012Main.swift`):** Bổ sung `CompatibleNavigationContainer` (`NavigationStack` iOS 16+ / `NavigationView .stack` iOS 15), `CompatibleFileShareButton` (`ShareLink` iOS 16+ / `UIActivityViewController` iOS 15), thay toàn bộ `.onChange(of:)` sang 1 tham số (iOS 14+), thay `.navigationDestination(item:)` sang `NavigationLink(isActive:)` ẩn, bọc `#available(iOS 16.0, *)` cho `TextField(..., axis: .vertical)`, và chuyển `.fontWeight` trên `Label`/`Button` sang `.font(.body.weight(...))`.
+- [x] **Vá `Citadel 0.12.1` & Ad-hoc `codesign` TrollStore (`project.yml`, `build-ipa.yml`, `.gitignore`):** Tải cục bộ `Citadel 0.12.1` vào `VendorPackages/Citadel` trong CI và hạ platform trong `Package.swift` xuống `.iOS(.v15)`, đặt `IPHONEOS_DEPLOYMENT_TARGET: "15.0"`, chạy `codesign --force --deep --sign - --timestamp=none Payload/3012.app` trước khi đóng gói `.ipa`, và nâng phiên bản lên `4.0.1` (Build `20`).
+- [x] **Gỡ thông tin năm sinh (`AppLocalization.swift`, `SettingsAndThemesSheet.swift`, `NOTICE`, `README.md`, `task_plan.md`):** Xóa `birthYear` và mục hiển thị tương ứng trong phần Thông tin Tác giả & tài liệu.
+- [ ] **Kiểm tra tĩnh & Kiểm chứng CI GitHub Actions `Build 3012 Unsigned IPA` (v4.0.1 / Build 20).**
 
 ### Phase 20 (v4.0.0): Tích Hợp Toàn Diện Workflow `xtool` (`xtool.yml`, SwiftPM `.ipa` & On-Device `.dylib` Injector) (`completed`)
 - [x] **Tạo `XtoolBuildService.swift` (`Sources/Services/XtoolBuildService.swift`):** Nhận diện dự án `xtool` (`xtool.yml` & `Package.swift` có `.library`/`.iOS`), khởi tạo nhanh 1 chạm 3 mẫu (`SwiftUI App`, `SwiftUI App + Widget Extension`, `Host App + Runtime dlopen(.dylib)`), đồng bộ 2 chiều `Package.swift <-> xtool.yml` (`syncXtoolManifests`), build qua SSH VPS (`xtool dev build` / `swift build`) hoặc xuất GitHub Actions workflow `.github/workflows/build-xtool-ipa.yml` + gói `.zip` sạch trong `packages/`.
@@ -51,7 +58,7 @@
 - [x] Bump version `3.7.2` (Build 14) & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100% (Run `#43456884697` -> Release `v3.7.2-b23`, `3012-Unsigned.ipa`).
 
 ### Phase 14 (v3.7.1): Tinh gọn Nội dung Hiển thị Tác giả & Ngôn ngữ (`completed` ✅)
-- [x] Xóa dòng lặp `Le The Khoi (2009) • Telegram @coder_009` dưới `Native Code Editor & Remote Workstation` trong `SettingsAndThemesSheet.swift` và màn hình chờ + Menu trong `App3012Main.swift`.
+- [x] Xóa dòng lặp thông tin tác giả dưới `Native Code Editor & Remote Workstation` trong `SettingsAndThemesSheet.swift` và màn hình chờ + Menu trong `App3012Main.swift`.
 - [x] Xóa đoạn chú thích `"Mặc định ứng dụng sử dụng Tiếng Việt vì nhà phát triển..."` và đoạn lặp `"Ứng dụng 3012 được phát triển bởi Le The Khoi..."` trong `SettingsAndThemesSheet.swift`, chỉ giữ bảng Thông Tin Tác Giả gọn sạch.
 - [x] Bump version `3.7.1` (Build 13) & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100% (Run `#43447481279` -> Release `v3.7.1-b20`, `3012-Unsigned.ipa`).
 
@@ -69,7 +76,7 @@
 
 ### Phase 11 (v3.5.1): Thông tin Tác giả & Tùy chỉnh Đa Ngôn Ngữ Giao Diện (`completed` ✅)
 - [x] **Hệ thống Đa ngôn ngữ (`AppLocalization.swift`, `EditorThemeModel.swift`):** Hỗ trợ 7 ngôn ngữ (`VI - Tiếng Việt (Mặc định)`, `EN - English`, `ZH - 中文 (简体)`, `JA - 日本語`, `KO - 한국어`, `RU - Русский`, `ES - Español`), lưu vào `UserDefaults` (`3012.appLanguage`) và **mặc định Tiếng Việt** vì nhà phát triển là người Việt Nam, kèm nút chuyển nhanh và đặt lại về Tiếng Việt 1 chạm.
-- [x] **Hồ sơ Tác giả (`IDEAuthorInfo`, `SettingsAndThemesSheet.swift`, `App3012Main.swift`, `NOTICE`, `README.md`):** Hiển thị đầy đủ thông tin **Tác giả: Le The Khoi**, **Năm sinh: 2009**, **Telegram: `@coder_009`** (mở trực tiếp `https://t.me/coder_009` & nút sao chép nhanh), cùng liên kết kho mã nguồn mở `GNU AGPLv3` tại Cài đặt, Menu công cụ, Command Palette và màn hình chào mừng.
+- [x] **Hồ sơ Tác giả (`IDEAuthorInfo`, `SettingsAndThemesSheet.swift`, `App3012Main.swift`, `NOTICE`, `README.md`):** Hiển thị đầy đủ thông tin **Tác giả: Le The Khoi**, **Telegram: `@coder_009`** (mở trực tiếp `https://t.me/coder_009` & nút sao chép nhanh), cùng liên kết kho mã nguồn mở `GNU AGPLv3` tại Cài đặt, Menu công cụ, Command Palette và màn hình chào mừng.
 - [x] **Đồng bộ Đa ngôn ngữ trên các màn hình chính (`SettingsAndThemesSheet.swift`, `App3012Main.swift`, `LeftExplorerDrawer.swift`, `BottomConsolePreviewPanel.swift`, `AIAgentSidePanel.swift`, `TheosBuilderSheet.swift`, `TheosBuildService.swift`, `CommandPaletteSheet.swift`).**
 - [x] **Kiểm chứng CI Build Xanh 100% (IPA Run `#43428410469`) & Release `v3.5.1-b15` (`3012-Unsigned.ipa`, 13.25 MB).**
 

@@ -23,7 +23,7 @@ public struct LocalDaemonManagerSheet: View {
     }
 
     public var body: some View {
-        NavigationStack {
+        CompatibleNavigationContainer {
             Form {
                 // MARK: - 1. Local On-Device Runtime & Live Hardware Status
                 Section {
@@ -143,7 +143,7 @@ public struct LocalDaemonManagerSheet: View {
                             preferences.tr("Tạo & Treo Bot Telegram Ngầm Ngay", "Create & Run Telegram Bot in Background"),
                             systemImage: "paperplane.circle.fill"
                         )
-                        .fontWeight(.bold)
+                        .font(.body.weight(.bold))
                     }
 
                     if let active = workspace.activeTab {
@@ -157,7 +157,7 @@ public struct LocalDaemonManagerSheet: View {
                                 preferences.tr("Chạy Ngầm File Đang Mở (\(active.title))", "Run Active File as Background Daemon (\(active.title))"),
                                 systemImage: "play.circle.fill"
                             )
-                            .fontWeight(.semibold)
+                            .font(.body.weight(.semibold))
                         }
                     }
                 } header: {

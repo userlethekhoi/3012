@@ -31,7 +31,7 @@ public struct SettingsAndThemesSheet: View {
     }
 
     public var body: some View {
-        NavigationStack {
+        CompatibleNavigationContainer {
             Form {
                 // MARK: - 0. 3012 Developer Brand Identity Header
                 Section {
@@ -125,7 +125,7 @@ public struct SettingsAndThemesSheet: View {
                                 ),
                                 systemImage: "arrow.uturn.backward.circle"
                             )
-                            .fontWeight(.semibold)
+                            .font(.body.weight(.semibold))
                         }
                     }
                 } header: {
@@ -145,10 +145,6 @@ public struct SettingsAndThemesSheet: View {
                     authorInfoRow(
                         label: preferences.tr("Tác giả", "Author", zh: "作者", ja: "作者", ko: "작성자", ru: "Автор", es: "Autor"),
                         value: IDEAuthorInfo.fullName
-                    )
-                    authorInfoRow(
-                        label: preferences.tr("Năm sinh", "Birth Year", zh: "出生年份", ja: "生年", ko: "출생 연도", ru: "Год рождения", es: "Año de nacimiento"),
-                        value: String(IDEAuthorInfo.birthYear)
                     )
                     authorInfoRow(
                         label: "Telegram",
@@ -175,7 +171,7 @@ public struct SettingsAndThemesSheet: View {
                             ),
                             systemImage: "paperplane.fill"
                         )
-                        .fontWeight(.semibold)
+                        .font(.body.weight(.semibold))
                     }
 
                     Button {
@@ -314,7 +310,7 @@ public struct SettingsAndThemesSheet: View {
                         showThemeStudio = true
                     } label: {
                         Label(preferences.tr("Mở Theme Studio (Tự chỉnh màu Code & Nền App)", "Open Theme Studio (Customize Code & App Colors)", zh: "打开 Theme Studio（自定义配色）", ja: "Theme Studio を開く（カスタム配色）", ko: "Theme Studio 열기 (색상 맞춤 설정)", ru: "Открыть Theme Studio (Настройка цветов)", es: "Abrir Theme Studio (Personalizar colores)"), systemImage: "slider.horizontal.below.square.filled.and.square")
-                            .fontWeight(.semibold)
+                            .font(.body.weight(.semibold))
                     }
 
                     Button {
@@ -381,7 +377,7 @@ public struct SettingsAndThemesSheet: View {
                 // MARK: - 6. Live Server & Safari
                 Section(preferences.tr("Live Server (:5500) & Xem Trên Safari", "Live Server (:5500) & Safari Preview", zh: "Live Server (:5500) 与 Safari 预览", ja: "Live Server (:5500) と Safari プレビュー", ko: "Live Server (:5500) 및 Safari 미리보기", ru: "Live Server (:5500) и Safari", es: "Live Server (:5500) y Safari")) {
                     Toggle(preferences.tr("Giữ localhost:5500 chạy ngầm khi mở Safari", "Keep localhost:5500 Alive in Background", zh: "切换至 Safari 时在后台保持 localhost:5500 运行", ja: "Safari 使用中も localhost:5500 をバックグラウンド維持", ko: "Safari 사용 중에도 localhost:5500 백그라운드 유지", ru: "Держать localhost:5500 в фоне для Safari", es: "Mantener localhost:5500 en segundo plano"), isOn: $preferences.keepServerInBackground)
-                        .onChange(of: preferences.keepServerInBackground) { _, enabled in
+                        .onChange(of: preferences.keepServerInBackground) { enabled in
                             liveServer.updateBackgroundKeepAlive(enabled: enabled)
                         }
 

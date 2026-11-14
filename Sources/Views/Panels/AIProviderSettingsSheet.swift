@@ -12,7 +12,7 @@ public struct AIProviderSettingsSheet: View {
     }
 
     public var body: some View {
-        NavigationStack {
+        CompatibleNavigationContainer {
             List {
                 Section {
                     if aiService.profiles.isEmpty {
@@ -64,9 +64,21 @@ public struct AIProviderSettingsSheet: View {
                     Button("Xong") { dismiss() }
                 }
             }
-            .navigationDestination(item: $editingProfileID) { profileID in
-                AIProviderProfileEditor(aiService: aiService, profileID: profileID)
-            }
+            .background(
+                NavigationLink(
+                    isActive: Binding(
+                        get: { editingProfileID != nil },
+                        set: { if !$0 { editingProfileID = nil } }
+                    )
+                ) {
+                    if let profileID = editingProfileID {
+                        AIProviderProfileEditor(aiService: aiService, profileID: profileID)
+                    }
+                } label: {
+                    EmptyView()
+                }
+                .hidden()
+            )
         }
     }
 
@@ -149,7 +161,7 @@ struct AIProviderProfileEditor: View {
                 apiKeyInput = aiService.apiKey(for: profile)
             }
         }
-        .onChange(of: apiKeyInput) { _, newValue in
+        .onChange(of: apiKeyInput) { newValue in
             aiService.setAPIKey(newValue, for: profileID)
         }
         .task {

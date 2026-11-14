@@ -27,7 +27,7 @@ public struct CommandPaletteSheet: View {
             query.isEmpty || workspace.relativePath(for: $0).localizedCaseInsensitiveContains(query)
         }
 
-        NavigationStack {
+        CompatibleNavigationContainer {
             List {
                 if !filteredCommands.isEmpty {
                     Section(preferences.tr("Lệnh IDE (Commands)", "IDE Commands", zh: "IDE 命令", ja: "IDE コマンド", ko: "IDE 명령", ru: "Команды IDE", es: "Comandos del IDE")) {

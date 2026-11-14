@@ -185,12 +185,12 @@ public struct AIAgentSidePanel: View {
                     }
                     .padding(10)
                 }
-                .onChange(of: aiService.messages.count) { _, _ in
+                .onChange(of: aiService.messages.count) { _ in
                     if let lastID = aiService.messages.last?.id {
                         withAnimation { proxy.scrollTo(lastID, anchor: .bottom) }
                     }
                 }
-                .onChange(of: aiService.streamRevision) { _, _ in
+                .onChange(of: aiService.streamRevision) { _ in
                     if let lastID = aiService.messages.last?.id {
                         proxy.scrollTo(lastID, anchor: .bottom)
                     }
@@ -201,8 +201,12 @@ public struct AIAgentSidePanel: View {
 
             // Composer Input
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(preferences.tr("Giao việc cho AI (tạo/sửa file, fix bug)...", "Ask AI (create/edit files, fix bugs)..."), text: $promptInput, axis: .vertical)
-                    .lineLimit(1...4)
+                if #available(iOS 16.0, *) {
+                    TextField(preferences.tr("Giao việc cho AI (tạo/sửa file, fix bug)...", "Ask AI (create/edit files, fix bugs)..."), text: $promptInput, axis: .vertical)
+                        .lineLimit(1...4)
+                } else {
+                    TextField(preferences.tr("Giao việc cho AI (tạo/sửa file, fix bug)...", "Ask AI (create/edit files, fix bugs)..."), text: $promptInput)
+                }
                     .font(.system(size: 13))
                     .padding(8)
                     .background(Color(hex: palette.editorBackground))

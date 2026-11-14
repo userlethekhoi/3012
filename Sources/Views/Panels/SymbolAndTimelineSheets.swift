@@ -30,7 +30,7 @@ public struct SymbolOutlineSheet: View {
     }
 
     public var body: some View {
-        NavigationStack {
+        CompatibleNavigationContainer {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
@@ -130,7 +130,7 @@ public struct FileTimelineSheet: View {
     }()
 
     public var body: some View {
-        NavigationStack {
+        CompatibleNavigationContainer {
             VStack(spacing: 0) {
                 HStack {
                     Text("Tự động lưu tối đa 20 mốc lịch sử cục bộ cho \(fileURL.lastPathComponent).")
@@ -235,7 +235,7 @@ public struct ThemeStudioEditorSheet: View {
     }
 
     public var body: some View {
-        NavigationStack {
+        CompatibleNavigationContainer {
             Form {
                 Section("Xem Trước Trực Tiếp Màu Code & Giao Diện") {
                     liveCodePreviewCard
@@ -294,7 +294,7 @@ public struct ThemeStudioEditorSheet: View {
                         preferences.upsertCustomTheme(draft)
                         dismiss()
                     }
-                    .fontWeight(.bold)
+                    .font(.body.weight(.bold))
                 }
             }
         }
@@ -444,7 +444,7 @@ public struct LanguageModePickerSheet: View {
     }
 
     public var body: some View {
-        NavigationStack {
+        CompatibleNavigationContainer {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
