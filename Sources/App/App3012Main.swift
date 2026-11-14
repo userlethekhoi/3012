@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Runestone
 
 public enum MarkdownDisplayMode: String, CaseIterable, Identifiable {
     case editor = "Code"
@@ -81,9 +82,19 @@ public struct MainIDEWorkspaceView: View {
     @State private var toggleCommentToken: Int = 0
     @State private var completionRequest: CompletionReplacementRequest? = nil
     @State private var jumpRequest: JumpToLineRequest? = nil
+    @State private var selectRangeRequest: SelectRangeRequest? = nil
     @State private var quickActionRequest: EditorQuickActionRequest? = nil
     @State private var showQuickNewFileAlert: Bool = false
     @State private var quickNewFileName: String = ""
+    @State private var showInlineFindBar: Bool = false
+    @State private var showReplaceRow: Bool = false
+    @State private var findQuery: String = ""
+    @State private var replaceQuery: String = ""
+    @State private var findCaseSensitive: Bool = false
+    @State private var findMatchRanges: [NSRange] = []
+    @State private var currentFindMatchIndex: Int = 0
+    @State private var showGoToLineAlert: Bool = false
+    @State private var goToLineInput: String = ""
 
     public var body: some View {
         let palette = preferences.activePalette
@@ -107,6 +118,9 @@ public struct MainIDEWorkspaceView: View {
                     // 3. Slim 27pt Breadcrumb, Diagnostics, Quick Toggles & Markdown/Timeline Strip
                     if let activeTab = workspace.activeTab {
                         editorSubToolbar(activeTab: activeTab, palette: palette)
+                        if showInlineFindBar {
+                            inlineFindReplaceBar(activeTab: activeTab, palette: palette)
+                        }
                     }
 
                     // 3. Central Workspace Area (Editor / Markdown Preview + Optional Side-by-Side Agent)
@@ -284,6 +298,9 @@ public struct MainIDEWorkspaceView: View {
             if workspace.activeTab?.language != .markdown {
                 markdownMode = .editor
             }
+            if showInlineFindBar {
+                recomputeFindMatches(jumpToFirst: false)
+            }
             refreshIntelligenceForActiveTab()
         }
         .onChange(of: preferences.enableLiveDiagnostics) { _, enabled in
@@ -418,6 +435,24 @@ public struct MainIDEWorkspaceView: View {
                 quickNewFileName = ""
             }
         }
+        .alert(preferences.tr("Đi tới dòng (Go to Line)", "Go to Line"), isPresented: $showGoToLineAlert) {
+            TextField(preferences.tr("Số dòng (vd: 42)", "Line number (e.g. 42)"), text: $goToLineInput)
+                .keyboardType(.numberPad)
+            Button(preferences.tr("Đi tới", "Go")) {
+                if let lineNum = Int(goToLineInput.trimmingCharacters(in: .whitespacesAndNewlines)), lineNum > 0 {
+                    triggerJumpToLine(lineNum)
+                }
+                goToLineInput = ""
+            }
+            Button(preferences.tr("Hủy", "Cancel"), role: .cancel) {
+                goToLineInput = ""
+            }
+        } message: {
+            if let tab = workspace.activeTab {
+                let totalLines = max(1, tab.content.reduce(1) { $1 == "\n" ? $0 + 1 : $0 })
+                Text(preferences.tr("File hiện có \(totalLines) dòng.", "File has \(totalLines) lines."))
+            }
+        }
     }
 
     // MARK: - Central Editor + Floating Live Autocomplete + Markdown/Mermaid View
@@ -455,9 +490,11 @@ public struct MainIDEWorkspaceView: View {
                 text: activeTab.content,
                 language: activeTab.language,
                 preferences: preferences,
-                highlightedRanges: intelligence.makeRunestoneHighlightedRanges(enabled: preferences.enableLiveDiagnostics),
+                highlightedRanges: mergedHighlightedRanges(for: activeTab),
+                ghostSuggestion: preferences.enableCodeCompletion ? intelligence.completions.first : nil,
                 completionRequest: completionRequest,
                 jumpRequest: jumpRequest,
+                selectRangeRequest: selectRangeRequest,
                 quickActionRequest: quickActionRequest,
                 findTriggerToken: findTriggerToken,
                 toggleCommentToken: toggleCommentToken,
@@ -486,11 +523,17 @@ public struct MainIDEWorkspaceView: View {
                         diagnosticsEnabled: preferences.enableLiveDiagnostics,
                         sshService: sshService
                     )
+                    if showInlineFindBar {
+                        recomputeFindMatches(in: updatedCode, jumpToFirst: false)
+                    }
                 },
                 onSelectionChange: { range in
                     workspace.updateSelectionOnly(range)
                     intelligence.updateActiveBreadcrumb(cursorLocation: range.location, in: activeTab.content)
                     if range.length > 0 {
+                        intelligence.clearCompletions()
+                    } else if let top = intelligence.completions.first,
+                              range.location < top.replaceRange.location || range.location > top.replaceRange.upperBound {
                         intelligence.clearCompletions()
                     }
                 },
@@ -498,6 +541,14 @@ public struct MainIDEWorkspaceView: View {
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                         showRightAIPanel.toggle()
                     }
+                },
+                onTriggerGoToLine: {
+                    let cursor = cursorLineAndColumn(in: activeTab.content, location: activeTab.selectedRangeLocation)
+                    goToLineInput = "\(cursor.line)"
+                    showGoToLineAlert = true
+                },
+                onTriggerFindBar: {
+                    openInlineFindBar()
                 }
             )
 
@@ -658,6 +709,22 @@ public struct MainIDEWorkspaceView: View {
                     .buttonStyle(.plain)
                 }
 
+                // 1.5 Live Cursor Position (Ln, Col) + 1-Tap Go to Line
+                let cursorPos = cursorLineAndColumn(in: activeTab.content, location: activeTab.selectedRangeLocation)
+                Button {
+                    goToLineInput = "\(cursorPos.line)"
+                    showGoToLineAlert = true
+                } label: {
+                    Text("Ln \(cursorPos.line), Col \(cursorPos.column)")
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(hex: palette.currentLineBackground))
+                        .foregroundColor(Color(hex: palette.gutterForeground))
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+
                 // 2. Markdown & Mermaid Live Preview Mode Picker
                 if activeTab.language == .markdown {
                     HStack(spacing: 2) {
@@ -716,6 +783,42 @@ public struct MainIDEWorkspaceView: View {
                 }
                 .buttonStyle(.plain)
 
+                // 4.1 1-Tap Toggle Comment & Inline Find/Replace Pills
+                Button {
+                    toggleCommentToken += 1
+                } label: {
+                    Text("//")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(hex: palette.currentLineBackground))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    if showInlineFindBar {
+                        showInlineFindBar = false
+                        findMatchRanges = []
+                    } else {
+                        openInlineFindBar()
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text(preferences.tr("Tìm", "Find"))
+                            .font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(showInlineFindBar ? Color(hex: palette.accent).opacity(0.22) : Color(hex: palette.currentLineBackground))
+                    .foregroundColor(showInlineFindBar ? Color(hex: palette.accent) : Color(hex: palette.foreground))
+                    .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+
                 // 4.2 Quick Line / Clipboard Menu (Cut, Select All, Duplicate/Delete Line)
                 Menu {
                     Button { triggerQuickAction(.undo) } label: {
@@ -738,12 +841,35 @@ public struct MainIDEWorkspaceView: View {
                         Label(preferences.tr("Chọn tất cả (Ctrl+A)", "Select All (Ctrl+A)"), systemImage: "selection.pin.in.out")
                     }
                     Divider()
+                    Button { toggleCommentToken += 1 } label: {
+                        Label(preferences.tr("Chú thích dòng (Cmd+/)", "Toggle Comment (Cmd+/)"), systemImage: "number")
+                    }
+                    Button { triggerQuickAction(.moveLineUp) } label: {
+                        Label(preferences.tr("Đẩy dòng lên (Alt+↑)", "Move Line Up (Alt+↑)"), systemImage: "arrow.up.to.line")
+                    }
+                    Button { triggerQuickAction(.moveLineDown) } label: {
+                        Label(preferences.tr("Đẩy dòng xuống (Alt+↓)", "Move Line Down (Alt+↓)"), systemImage: "arrow.down.to.line")
+                    }
                     Button { triggerQuickAction(.duplicateLine) } label: {
                         Label(preferences.tr("Nhân đôi dòng", "Duplicate Line"), systemImage: "plus.square.on.square")
                     }
                     Button { triggerQuickAction(.deleteLine) } label: {
                         Label(preferences.tr("Xóa dòng hiện tại", "Delete Line"), systemImage: "delete.left")
                     }
+                    Divider()
+                    Button { openInlineFindBar() } label: {
+                        Label(preferences.tr("Tìm & Thay thế (Cmd+F)", "Find & Replace (Cmd+F)"), systemImage: "magnifyingglass")
+                    }
+                    Button {
+                        goToLineInput = "\(cursorPos.line)"
+                        showGoToLineAlert = true
+                    } label: {
+                        Label(preferences.tr("Đi tới dòng... (Ctrl+G)", "Go to Line... (Ctrl+G)"), systemImage: "arrow.right.to.line")
+                    }
+                    Button { workspace.reopenLastClosedTab() } label: {
+                        Label(preferences.tr("Mở lại Tab vừa đóng (Cmd+Shift+T)", "Reopen Closed Tab (Cmd+Shift+T)"), systemImage: "arrow.uturn.left.circle")
+                    }
+                    .disabled(!workspace.canReopenClosedTab)
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "scissors")
@@ -858,6 +984,168 @@ public struct MainIDEWorkspaceView: View {
         .background(Color(hex: palette.sidebarBackground))
         .overlay(alignment: .bottom) {
             Divider().overlay(Color.white.opacity(0.06))
+        }
+    }
+
+    // MARK: - VS Code Inline Find & Replace Bar (Undo-Safe)
+    @ViewBuilder
+    private func inlineFindReplaceBar(activeTab: OpenTab, palette: IDEColorPalette) -> some View {
+        VStack(spacing: 5) {
+            HStack(spacing: 5) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.14)) {
+                        showReplaceRow.toggle()
+                    }
+                } label: {
+                    Image(systemName: showReplaceRow ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundColor(Color(hex: palette.gutterForeground))
+                        .frame(width: 22, height: 26)
+                        .background(Color(hex: palette.currentLineBackground))
+                        .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+
+                HStack(spacing: 4) {
+                    TextField(preferences.tr("Tìm trong file...", "Find in file..."), text: $findQuery)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .onSubmit { stepFindMatch(forward: true) }
+                        .onChange(of: findQuery) { _, _ in
+                            recomputeFindMatches(jumpToFirst: true)
+                        }
+
+                    if !findQuery.isEmpty {
+                        Button {
+                            findQuery = ""
+                            findMatchRanges = []
+                            currentFindMatchIndex = 0
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundColor(Color(hex: palette.gutterForeground))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(Color(hex: palette.editorBackground))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 0.8)
+                )
+                .cornerRadius(5)
+
+                Text(findMatchRanges.isEmpty ? (findQuery.isEmpty ? "0/0" : "0/0") : "\(currentFindMatchIndex + 1)/\(findMatchRanges.count)")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(findMatchRanges.isEmpty && !findQuery.isEmpty ? .red : Color(hex: palette.gutterForeground))
+                    .fixedSize(horizontal: true, vertical: false)
+
+                Button {
+                    findCaseSensitive.toggle()
+                    recomputeFindMatches(jumpToFirst: true)
+                } label: {
+                    Text("Aa")
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .frame(width: 25, height: 26)
+                        .background(findCaseSensitive ? Color(hex: palette.accent).opacity(0.28) : Color(hex: palette.currentLineBackground))
+                        .foregroundColor(findCaseSensitive ? Color(hex: palette.accent) : Color(hex: palette.foreground))
+                        .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+
+                Button { stepFindMatch(forward: false) } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .frame(width: 24, height: 26)
+                        .background(Color(hex: palette.currentLineBackground))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+                .disabled(findMatchRanges.isEmpty)
+
+                Button { stepFindMatch(forward: true) } label: {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .frame(width: 24, height: 26)
+                        .background(Color(hex: palette.currentLineBackground))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+                .disabled(findMatchRanges.isEmpty)
+
+                Button {
+                    showInlineFindBar = false
+                    findMatchRanges = []
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .frame(width: 24, height: 26)
+                        .background(Color(hex: palette.currentLineBackground))
+                        .foregroundColor(Color(hex: palette.gutterForeground))
+                        .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if showReplaceRow {
+                HStack(spacing: 5) {
+                    Spacer().frame(width: 22)
+
+                    TextField(preferences.tr("Thay bằng...", "Replace with..."), text: $replaceQuery)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(Color(hex: palette.editorBackground))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(Color.white.opacity(0.1), lineWidth: 0.8)
+                        )
+                        .cornerRadius(5)
+
+                    Button {
+                        replaceCurrentFindMatch()
+                    } label: {
+                        Text(preferences.tr("Thay", "Replace"))
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .padding(.horizontal, 8)
+                            .frame(height: 26)
+                            .background(Color(hex: palette.currentLineBackground))
+                            .foregroundColor(Color(hex: palette.foreground))
+                            .cornerRadius(5)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(findMatchRanges.isEmpty)
+
+                    Button {
+                        replaceAllFindMatches()
+                    } label: {
+                        Text(preferences.tr("Tất cả", "All"))
+                            .font(.system(size: 10.5, weight: .bold))
+                            .padding(.horizontal, 8)
+                            .frame(height: 26)
+                            .background(Color(hex: palette.accent).opacity(0.22))
+                            .foregroundColor(Color(hex: palette.accent))
+                            .cornerRadius(5)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(findMatchRanges.isEmpty)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color(hex: palette.sidebarBackground))
+        .overlay(alignment: .bottom) {
+            Divider().overlay(Color.white.opacity(0.08))
         }
     }
 
@@ -1045,7 +1333,7 @@ public struct MainIDEWorkspaceView: View {
                 }
 
                 Button {
-                    findTriggerToken += 1
+                    openInlineFindBar()
                 } label: {
                     Label(preferences.tr("Tìm kiếm & Thay thế", "Find & Replace"), systemImage: "magnifyingglass")
                 }
@@ -1185,6 +1473,21 @@ public struct MainIDEWorkspaceView: View {
             }
             .buttonStyle(.plain)
 
+            // 1-Tap Reopen Last Closed Tab Button
+            if workspace.canReopenClosedTab {
+                Button {
+                    workspace.reopenLastClosedTab()
+                } label: {
+                    Image(systemName: "arrow.uturn.left.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .frame(width: 26, height: 26)
+                        .background(Color(hex: palette.currentLineBackground))
+                        .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+            }
+
             ScrollViewReader { scrollProxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 5) {
@@ -1206,6 +1509,11 @@ public struct MainIDEWorkspaceView: View {
                                     .frame(height: 2.5)
 
                                 HStack(spacing: 5) {
+                                    if tab.isPinned {
+                                        Image(systemName: "pin.fill")
+                                            .font(.system(size: 8.5, weight: .bold))
+                                            .foregroundColor(Color(hex: palette.accent))
+                                    }
                                     if isRemoteSFTP {
                                         Image(systemName: "icloud")
                                             .font(.system(size: 10.5, weight: .medium))
@@ -1257,6 +1565,16 @@ public struct MainIDEWorkspaceView: View {
                             }
                             .contextMenu {
                                 Button {
+                                    workspace.togglePinTab(tab.id)
+                                } label: {
+                                    Label(
+                                        tab.isPinned
+                                            ? preferences.tr("Bỏ ghim Tab", "Unpin Tab")
+                                            : preferences.tr("Ghim Tab bên trái", "Pin Tab"),
+                                        systemImage: tab.isPinned ? "pin.slash" : "pin"
+                                    )
+                                }
+                                Button {
                                     workspace.moveTabToFront(tab.id)
                                 } label: {
                                     Label(preferences.tr("Đưa sang trái (Đầu danh sách)", "Move Tab to Leftmost"), systemImage: "arrow.left.to.line")
@@ -1265,6 +1583,13 @@ public struct MainIDEWorkspaceView: View {
                                     UIPasteboard.general.string = workspace.relativePath(for: tab.fileURL)
                                 } label: {
                                     Label(preferences.tr("Sao chép đường dẫn", "Copy Relative Path"), systemImage: "doc.on.doc")
+                                }
+                                if workspace.canReopenClosedTab {
+                                    Button {
+                                        workspace.reopenLastClosedTab()
+                                    } label: {
+                                        Label(preferences.tr("Mở lại Tab vừa đóng", "Reopen Closed Tab"), systemImage: "arrow.uturn.left.circle")
+                                    }
                                 }
                                 Divider()
                                 Button {
@@ -1315,6 +1640,46 @@ public struct MainIDEWorkspaceView: View {
                 .keyboardShortcut("p", modifiers: .command)
             Button("") { toggleCommentToken += 1 }
                 .keyboardShortcut("/", modifiers: .command)
+            Button("") { openInlineFindBar() }
+                .keyboardShortcut("f", modifiers: .command)
+            Button("") {
+                if showInlineFindBar {
+                    stepFindMatch(forward: true)
+                } else {
+                    goToLineInput = ""
+                    showGoToLineAlert = true
+                }
+            }
+            .keyboardShortcut("g", modifiers: .command)
+            Button("") {
+                goToLineInput = ""
+                showGoToLineAlert = true
+            }
+            .keyboardShortcut("g", modifiers: .control)
+            Button("") {
+                if let activeID = workspace.activeTabID {
+                    workspace.closeTab(activeID)
+                }
+            }
+            .keyboardShortcut("w", modifiers: .command)
+            Button("") { workspace.reopenLastClosedTab() }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+            Button("") {
+                quickNewFileName = ""
+                showQuickNewFileAlert = true
+            }
+            .keyboardShortcut("n", modifiers: .command)
+            Button("") { triggerQuickAction(.moveLineUp) }
+                .keyboardShortcut(.upArrow, modifiers: .option)
+            Button("") { triggerQuickAction(.moveLineDown) }
+                .keyboardShortcut(.downArrow, modifiers: .option)
+            Button("") {
+                if showInlineFindBar {
+                    showInlineFindBar = false
+                    findMatchRanges = []
+                }
+            }
+            .keyboardShortcut(.escape, modifiers: [])
             Button("") {
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                     showLeftExplorer.toggle()
@@ -1425,6 +1790,20 @@ public struct MainIDEWorkspaceView: View {
                 }
             }
 
+            if workspace.canReopenClosedTab {
+                Button {
+                    workspace.reopenLastClosedTab()
+                } label: {
+                    Label(preferences.tr("Mở lại Tab vừa đóng (Cmd+Shift+T)", "Reopen Last Closed Tab (Cmd+Shift+T)"), systemImage: "arrow.uturn.left.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Color(hex: palette.currentLineBackground))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .cornerRadius(7)
+                }
+            }
+
             HStack(spacing: 10) {
                 Menu {
                     ForEach(AppLanguage.allCases) { lang in
@@ -1491,9 +1870,167 @@ public struct MainIDEWorkspaceView: View {
         jumpRequest = JumpToLineRequest(token: nextToken, line: line)
     }
 
+    private func triggerSelectRange(_ range: NSRange) {
+        let nextToken = (selectRangeRequest?.token ?? 0) + 1
+        selectRangeRequest = SelectRangeRequest(token: nextToken, range: range)
+    }
+
     private func triggerQuickAction(_ kind: EditorQuickActionKind) {
         let nextToken = (quickActionRequest?.token ?? 0) + 1
         quickActionRequest = EditorQuickActionRequest(token: nextToken, kind: kind)
+    }
+
+    private func cursorLineAndColumn(in text: String, location: Int) -> (line: Int, column: Int) {
+        let utf16 = text.utf16
+        let clamped = max(0, min(location, utf16.count))
+        var line = 1
+        var col = 1
+        var idx = utf16.startIndex
+        var remaining = clamped
+        while remaining > 0, idx < utf16.endIndex {
+            if utf16[idx] == 10 {
+                line += 1
+                col = 1
+            } else {
+                col += 1
+            }
+            idx = utf16.index(after: idx)
+            remaining -= 1
+        }
+        return (line, col)
+    }
+
+    private func mergedHighlightedRanges(for tab: OpenTab) -> [HighlightedRange] {
+        var ranges = intelligence.makeRunestoneHighlightedRanges(enabled: preferences.enableLiveDiagnostics)
+        guard showInlineFindBar, !findMatchRanges.isEmpty else { return ranges }
+        let docLen = (tab.content as NSString).length
+        for (idx, range) in findMatchRanges.enumerated() {
+            guard range.location >= 0, range.length > 0, range.upperBound <= docLen else { continue }
+            let isCurrent = (idx == currentFindMatchIndex)
+            let color = isCurrent
+                ? UIColor.systemOrange.withAlphaComponent(0.48)
+                : UIColor.systemYellow.withAlphaComponent(0.22)
+            ranges.append(
+                HighlightedRange(
+                    id: "find_\(idx)_\(range.location)",
+                    range: range,
+                    color: color,
+                    cornerRadius: 3
+                )
+            )
+        }
+        return ranges
+    }
+
+    private func openInlineFindBar() {
+        withAnimation(.easeInOut(duration: 0.16)) {
+            showInlineFindBar = true
+        }
+        if !findQuery.isEmpty {
+            recomputeFindMatches(jumpToFirst: true)
+        }
+    }
+
+    private func recomputeFindMatches(in explicitCode: String? = nil, jumpToFirst: Bool) {
+        guard let tab = workspace.activeTab else {
+            findMatchRanges = []
+            currentFindMatchIndex = 0
+            return
+        }
+        let code = explicitCode ?? tab.content
+        guard !findQuery.isEmpty else {
+            findMatchRanges = []
+            currentFindMatchIndex = 0
+            return
+        }
+        let nsText = code as NSString
+        let docLen = nsText.length
+        let options: NSString.CompareOptions = findCaseSensitive ? [] : [.caseInsensitive]
+        var matches: [NSRange] = []
+        var searchLocation = 0
+        let maxMatches = 500
+
+        while searchLocation < docLen, matches.count < maxMatches {
+            let searchRange = NSRange(location: searchLocation, length: docLen - searchLocation)
+            let found = nsText.range(of: findQuery, options: options, range: searchRange)
+            guard found.location != NSNotFound, found.length > 0 else { break }
+            matches.append(found)
+            searchLocation = found.upperBound
+        }
+
+        findMatchRanges = matches
+        guard !matches.isEmpty else {
+            currentFindMatchIndex = 0
+            return
+        }
+
+        if jumpToFirst {
+            let cursor = tab.selectedRangeLocation
+            currentFindMatchIndex = matches.firstIndex(where: { $0.location >= cursor }) ?? 0
+            triggerSelectRange(matches[currentFindMatchIndex])
+        } else {
+            currentFindMatchIndex = max(0, min(currentFindMatchIndex, matches.count - 1))
+        }
+    }
+
+    private func stepFindMatch(forward: Bool) {
+        guard !findQuery.isEmpty else { return }
+        if findMatchRanges.isEmpty {
+            recomputeFindMatches(jumpToFirst: true)
+            return
+        }
+        let count = findMatchRanges.count
+        if forward {
+            currentFindMatchIndex = (currentFindMatchIndex + 1) % count
+        } else {
+            currentFindMatchIndex = (currentFindMatchIndex - 1 + count) % count
+        }
+        triggerSelectRange(findMatchRanges[currentFindMatchIndex])
+    }
+
+    private func replaceCurrentFindMatch() {
+        guard !findMatchRanges.isEmpty,
+              let tab = workspace.activeTab,
+              currentFindMatchIndex >= 0,
+              currentFindMatchIndex < findMatchRanges.count else { return }
+        let targetRange = findMatchRanges[currentFindMatchIndex]
+        let docLen = (tab.content as NSString).length
+        guard targetRange.location >= 0, targetRange.upperBound <= docLen else {
+            recomputeFindMatches(jumpToFirst: false)
+            return
+        }
+        let containsSelf = replaceQuery.range(
+            of: findQuery,
+            options: findCaseSensitive ? [] : [.caseInsensitive]
+        ) != nil
+        if containsSelf {
+            currentFindMatchIndex += 1
+        }
+        let nextToken = (completionRequest?.token ?? 0) + 1
+        completionRequest = CompletionReplacementRequest(
+            token: nextToken,
+            range: targetRange,
+            replacement: replaceQuery,
+            cursorOffset: (replaceQuery as NSString).length
+        )
+    }
+
+    private func replaceAllFindMatches() {
+        guard !findQuery.isEmpty, let tab = workspace.activeTab else { return }
+        let nsText = tab.content as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        let options: NSString.CompareOptions = findCaseSensitive ? [] : [.caseInsensitive]
+        let updated = nsText.replacingOccurrences(of: findQuery, with: replaceQuery, options: options, range: fullRange)
+        guard updated != tab.content else { return }
+        let nextToken = (completionRequest?.token ?? 0) + 1
+        completionRequest = CompletionReplacementRequest(
+            token: nextToken,
+            range: fullRange,
+            replacement: updated,
+            cursorOffset: min((updated as NSString).length, tab.selectedRangeLocation)
+        )
+        findMatchRanges = []
+        currentFindMatchIndex = 0
     }
 
     private func refreshIntelligenceForActiveTab() {
@@ -1684,6 +2221,19 @@ public struct MainIDEWorkspaceView: View {
             (preferences.tr("Chạy File hiện tại (Cmd+R)", "Run Active File (Cmd+R)"), "play.fill", { triggerSmartRun() }),
             (preferences.tr("Lưu File & Tạo Mốc Lịch Sử (Cmd+S)", "Save File & Record Snapshot (Cmd+S)"), "externaldrive.badge.checkmark", { saveActiveTabWithCheckpoint() }),
             (preferences.tr("Đi tới Symbol Outline trong File", "Go to Symbol Outline in File"), "list.bullet.indent", { showSymbolOutlineSheet = true }),
+            (preferences.tr("Tìm kiếm & Thay thế trong File (Cmd+F)", "Find & Replace in File (Cmd+F)"), "magnifyingglass", { openInlineFindBar() }),
+            (preferences.tr("Đi tới dòng (Go to Line) (Ctrl+G)", "Go to Line (Ctrl+G)"), "arrow.right.to.line", {
+                goToLineInput = ""
+                showGoToLineAlert = true
+            }),
+            (preferences.tr("Mở lại Tab vừa đóng (Cmd+Shift+T)", "Reopen Closed Tab (Cmd+Shift+T)"), "arrow.uturn.left.circle", { workspace.reopenLastClosedTab() }),
+            (preferences.tr("Ghim / Bỏ ghim Tab đang mở", "Pin / Unpin Active Tab"), "pin", {
+                if let activeID = workspace.activeTabID {
+                    workspace.togglePinTab(activeID)
+                }
+            }),
+            (preferences.tr("Đẩy dòng hiện tại lên trên (Alt+↑)", "Move Current Line Up (Alt+↑)"), "arrow.up.to.line", { triggerQuickAction(.moveLineUp) }),
+            (preferences.tr("Đẩy dòng hiện tại xuống dưới (Alt+↓)", "Move Current Line Down (Alt+↓)"), "arrow.down.to.line", { triggerQuickAction(.moveLineDown) }),
             (preferences.tr("Mở Lịch sử Phiên bản File (Timeline)", "Open File Version Timeline (Restore Snapshot)"), "clock.arrow.circlepath", { showTimelineSheet = true }),
             (preferences.tr("Bật/tắt Chú thích dòng (Cmd+/)", "Toggle Line Comment (Cmd+/)"), "number", { toggleCommentToken += 1 }),
             (preferences.tr("Bật/tắt Gợi ý Code thông minh", "Toggle Live Code Autocomplete") + " (\(preferences.enableCodeCompletion ? "ON" : "OFF"))", "text.cursor", {

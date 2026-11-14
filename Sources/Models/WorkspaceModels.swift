@@ -793,6 +793,7 @@ public struct OpenTab: Identifiable, Equatable {
     public var selectedRangeLocation: Int = 0
     public var selectedRangeLength: Int = 0
     public var languageOverride: CodeLanguage? = nil
+    public var isPinned: Bool = false
 
     public var title: String { fileURL.lastPathComponent }
     public var isDirty: Bool { content != savedContent }
@@ -803,12 +804,13 @@ public struct OpenTab: Identifiable, Equatable {
         return CodeLanguage.detect(from: fileURL, contentSample: String(content.prefix(1200)))
     }
 
-    public init(fileURL: URL, content: String, languageOverride: CodeLanguage? = nil) {
+    public init(fileURL: URL, content: String, languageOverride: CodeLanguage? = nil, isPinned: Bool = false) {
         self.id = fileURL
         self.fileURL = fileURL
         self.content = content
         self.savedContent = content
         self.languageOverride = languageOverride
+        self.isPinned = isPinned
     }
 }
 

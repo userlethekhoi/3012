@@ -5,11 +5,15 @@ public final class ProCodingAccessoryBar: UIInputView {
     public weak var targetTextView: TextView?
     public var tabWidthProvider: (() -> Int)?
     public var commentPrefixProvider: (() -> String)?
+    public var languageProvider: (() -> CodeLanguage)?
     public var onAcceptPrimaryCompletion: (() -> Bool)?
     public var onTriggerAI: (() -> Void)?
     public var onTriggerFind: (() -> Void)?
+    public var onTriggerGoToLine: (() -> Void)?
     public var onAfterProgrammaticEdit: ((TextView) -> Void)?
 
+    private var hasActiveCompletion: Bool = false
+    private weak var tabButton: UIButton?
     private var isSelectionMode: Bool = false {
         didSet {
             selectButton?.backgroundColor = isSelectionMode ? UIColor.systemBlue : UIColor.white.withAlphaComponent(0.12)
@@ -19,6 +23,13 @@ public final class ProCodingAccessoryBar: UIInputView {
     private var accumulatedX: CGFloat = 0
     private var accumulatedY: CGFloat = 0
     private let feedback = UIImpactFeedbackGenerator(style: .light)
+
+    public func setHasActiveCompletion(_ active: Bool) {
+        hasActiveCompletion = active
+        tabButton?.backgroundColor = active
+            ? UIColor.systemBlue.withAlphaComponent(0.92)
+            : UIColor.white.withAlphaComponent(0.12)
+    }
 
     public init() {
         super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 80), inputViewStyle: .keyboard)
@@ -184,6 +195,10 @@ public final class ProCodingAccessoryBar: UIInputView {
             tv.insertText(spaces)
             self.onAfterProgrammaticEdit?(tv)
         }
+        self.tabButton = tabBtn
+        if hasActiveCompletion {
+            tabBtn.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.92)
+        }
         row2Stack.addArrangedSubview(tabBtn)
 
         let flickConfigs: [(String, String, Bool)] = [
@@ -206,19 +221,32 @@ public final class ProCodingAccessoryBar: UIInputView {
             row2Stack.addArrangedSubview(key)
         }
 
+        let commentBtn = makeActionButton(title: "//", systemIcon: nil, accent: false) { [weak self] in
+            self?.triggerQuick(.toggleComment)
+        }
+        let moveUpBtn = makeActionButton(title: nil, systemIcon: "arrow.up.square", accent: false) { [weak self] in
+            self?.triggerQuick(.moveLineUp)
+        }
+        let moveDownBtn = makeActionButton(title: nil, systemIcon: "arrow.down.square", accent: false) { [weak self] in
+            self?.triggerQuick(.moveLineDown)
+        }
         let dupLineBtn = makeActionButton(title: nil, systemIcon: "plus.square.on.square", accent: false) { [weak self] in
             self?.triggerQuick(.duplicateLine)
         }
         let delLineBtn = makeActionButton(title: nil, systemIcon: "delete.left", accent: false) { [weak self] in
             self?.triggerQuick(.deleteLine)
         }
+        let goToLineBtn = makeActionButton(title: ":Ln", systemIcon: nil, accent: false) { [weak self] in
+            self?.feedback.impactOccurred()
+            self?.onTriggerGoToLine?()
+        }
         let findBtn = makeActionButton(title: nil, systemIcon: "magnifyingglass", accent: false) { [weak self] in
             self?.feedback.impactOccurred()
             self?.onTriggerFind?()
         }
-        row2Stack.addArrangedSubview(dupLineBtn)
-        row2Stack.addArrangedSubview(delLineBtn)
-        row2Stack.addArrangedSubview(findBtn)
+        for v in [makeGroupSpacer(), commentBtn, moveUpBtn, moveDownBtn, dupLineBtn, delLineBtn, goToLineBtn, findBtn] {
+            row2Stack.addArrangedSubview(v)
+        }
     }
 
     private func makeGroupSpacer() -> UIView {
@@ -237,7 +265,8 @@ public final class ProCodingAccessoryBar: UIInputView {
         if haptic {
             feedback.impactOccurred()
         }
-        let mutated = Self.performAction(kind, on: tv, isSelectionMode: isSelectionMode)
+        let lang = languageProvider?() ?? .plainText
+        let mutated = Self.performAction(kind, on: tv, isSelectionMode: isSelectionMode, language: lang)
         if mutated {
             onAfterProgrammaticEdit?(tv)
         }
@@ -246,7 +275,12 @@ public final class ProCodingAccessoryBar: UIInputView {
     // MARK: - Shared Action Execution (Used by both Accessory Bar and SwiftUI Header/Toolbar)
     @MainActor
     @discardableResult
-    public static func performAction(_ kind: EditorQuickActionKind, on tv: TextView, isSelectionMode: Bool = false) -> Bool {
+    public static func performAction(
+        _ kind: EditorQuickActionKind,
+        on tv: TextView,
+        isSelectionMode: Bool = false,
+        language: CodeLanguage = .plainText
+    ) -> Bool {
         switch kind {
         case .undo:
             tv.undoManager?.undo()
@@ -269,6 +303,12 @@ public final class ProCodingAccessoryBar: UIInputView {
             return performDuplicateLine(in: tv)
         case .deleteLine:
             return performDeleteLine(in: tv)
+        case .toggleComment:
+            return performToggleComment(in: tv, language: language)
+        case .moveLineUp:
+            return performMoveLine(in: tv, down: false)
+        case .moveLineDown:
+            return performMoveLine(in: tv, down: true)
         case .moveLeft:
             moveCursorHorizontally(in: tv, offset: -1, isSelectionMode: isSelectionMode)
             return false
@@ -361,6 +401,178 @@ public final class ProCodingAccessoryBar: UIInputView {
         tv.selectedRange = NSRange(location: min(lineRange.location, newLen), length: 0)
         tv.scrollRangeToVisible(tv.selectedRange)
         return true
+    }
+
+    @MainActor
+    public static func performToggleComment(in tv: TextView, language: CodeLanguage) -> Bool {
+        let ns = tv.text as NSString
+        let safeSel = clampRange(tv.selectedRange, maxLength: ns.length)
+
+        // Block comment markers for HTML/XML/Vue/Svelte/Markdown/CSS
+        if [.html, .xml, .vue, .svelte, .markdown, .css].contains(language) {
+            let openToken = (language == .css) ? "/* " : "<!-- "
+            let closeToken = (language == .css) ? " */" : " -->"
+            let openTrim = openToken.trimmingCharacters(in: .whitespaces)
+            let closeTrim = closeToken.trimmingCharacters(in: .whitespaces)
+
+            if ns.length == 0 {
+                tv.insertText(openToken + closeToken)
+                tv.selectedRange = NSRange(location: (openToken as NSString).length, length: 0)
+                return true
+            }
+
+            let targetRange: NSRange
+            if safeSel.length > 0 {
+                targetRange = safeSel
+            } else {
+                let rawLine = ns.lineRange(for: safeSel)
+                let rawStr = ns.substring(with: rawLine)
+                let noNewline = rawStr.hasSuffix("\n") ? String(rawStr.dropLast()) : rawStr
+                let leadCount = (String(noNewline.prefix { $0 == " " || $0 == "\t" }) as NSString).length
+                let innerLen = max(0, (noNewline as NSString).length - leadCount)
+                targetRange = NSRange(location: rawLine.location + leadCount, length: innerLen)
+            }
+
+            let snippet = ns.substring(with: targetRange)
+            let trimmedSnippet = snippet.trimmingCharacters(in: .whitespaces)
+            if trimmedSnippet.isEmpty {
+                let inserted = openToken + closeToken
+                tv.replace(targetRange, withText: inserted)
+                tv.selectedRange = NSRange(location: targetRange.location + (openToken as NSString).length, length: 0)
+                return true
+            }
+
+            if trimmedSnippet.hasPrefix(openTrim) && trimmedSnippet.hasSuffix(closeTrim) {
+                var unwrapped = trimmedSnippet
+                if unwrapped.hasPrefix(openToken) {
+                    unwrapped.removeFirst(openToken.count)
+                } else {
+                    unwrapped.removeFirst(openTrim.count)
+                }
+                if unwrapped.hasSuffix(closeToken) {
+                    unwrapped.removeLast(closeToken.count)
+                } else if unwrapped.hasSuffix(closeTrim) {
+                    unwrapped.removeLast(closeTrim.count)
+                }
+                tv.replace(targetRange, withText: unwrapped)
+                return true
+            } else {
+                let wrapped = openToken + snippet + closeToken
+                tv.replace(targetRange, withText: wrapped)
+                return true
+            }
+        }
+
+        // Standard line comment prefix (// , # , -- , % , ; )
+        let prefix = language.lineCommentPrefix
+        let trimmedPrefix = prefix.trimmingCharacters(in: .whitespaces)
+        guard ns.length > 0 else {
+            tv.insertText(prefix)
+            return true
+        }
+
+        var effectiveSel = safeSel
+        if safeSel.length > 0,
+           ns.substring(with: NSRange(location: safeSel.location + safeSel.length - 1, length: 1)) == "\n" {
+            effectiveSel.length -= 1
+        }
+        let lineRange = ns.lineRange(for: effectiveSel)
+        let block = ns.substring(with: lineRange)
+        let hasTrailingNewline = block.hasSuffix("\n")
+        var lines = block.components(separatedBy: "\n")
+        if hasTrailingNewline && lines.last == "" {
+            lines.removeLast()
+        }
+
+        let nonEmptyLines = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let allCommented = !nonEmptyLines.isEmpty && nonEmptyLines.allSatisfy {
+            $0.trimmingCharacters(in: .whitespaces).hasPrefix(trimmedPrefix)
+        }
+
+        let transformed = lines.map { line -> String in
+            let indent = String(line.prefix { $0 == " " || $0 == "\t" })
+            let body = String(line.dropFirst(indent.count))
+            if allCommented {
+                if body.hasPrefix(prefix) {
+                    return indent + String(body.dropFirst(prefix.count))
+                } else if body.hasPrefix(trimmedPrefix) {
+                    return indent + String(body.dropFirst(trimmedPrefix.count))
+                }
+                return line
+            } else {
+                if line.trimmingCharacters(in: .whitespaces).isEmpty && lines.count > 1 {
+                    return line
+                }
+                return indent + prefix + body
+            }
+        }
+        let replacement = transformed.joined(separator: "\n") + (hasTrailingNewline ? "\n" : "")
+        tv.replace(lineRange, withText: replacement)
+        return true
+    }
+
+    @MainActor
+    public static func performMoveLine(in tv: TextView, down: Bool) -> Bool {
+        let ns = tv.text as NSString
+        guard ns.length > 0 else { return false }
+        let safeSel = clampRange(tv.selectedRange, maxLength: ns.length)
+
+        var effectiveSel = safeSel
+        if safeSel.length > 0,
+           ns.substring(with: NSRange(location: safeSel.location + safeSel.length - 1, length: 1)) == "\n" {
+            effectiveSel.length -= 1
+        }
+        let blockRange = ns.lineRange(for: effectiveSel)
+        let cursorOffsetInBlock = safeSel.location - blockRange.location
+
+        if !down {
+            guard blockRange.location > 0 else { return false }
+            let prevLineRange = ns.lineRange(for: NSRange(location: blockRange.location - 1, length: 0))
+            let blockText = ns.substring(with: blockRange)
+            let prevText = ns.substring(with: prevLineRange)
+
+            let swappedFirst: String
+            let swappedSecond: String
+            if !blockText.hasSuffix("\n") && prevText.hasSuffix("\n") {
+                swappedFirst = blockText + "\n"
+                swappedSecond = String(prevText.dropLast())
+            } else {
+                swappedFirst = blockText
+                swappedSecond = prevText
+            }
+            let combinedRange = NSRange(location: prevLineRange.location, length: prevLineRange.length + blockRange.length)
+            tv.replace(combinedRange, withText: swappedFirst + swappedSecond)
+            let newLen = (tv.text as NSString).length
+            let targetLoc = min(max(0, prevLineRange.location + cursorOffsetInBlock), newLen)
+            let targetLen = min(safeSel.length, newLen - targetLoc)
+            tv.selectedRange = NSRange(location: targetLoc, length: targetLen)
+            tv.scrollRangeToVisible(tv.selectedRange)
+            return true
+        } else {
+            let afterBlockLoc = blockRange.location + blockRange.length
+            guard afterBlockLoc < ns.length else { return false }
+            let nextLineRange = ns.lineRange(for: NSRange(location: afterBlockLoc, length: 0))
+            let blockText = ns.substring(with: blockRange)
+            let nextText = ns.substring(with: nextLineRange)
+
+            let swappedFirst: String
+            let swappedSecond: String
+            if !nextText.hasSuffix("\n") && blockText.hasSuffix("\n") {
+                swappedFirst = nextText + "\n"
+                swappedSecond = String(blockText.dropLast())
+            } else {
+                swappedFirst = nextText
+                swappedSecond = blockText
+            }
+            let combinedRange = NSRange(location: blockRange.location, length: blockRange.length + nextLineRange.length)
+            tv.replace(combinedRange, withText: swappedFirst + swappedSecond)
+            let newLen = (tv.text as NSString).length
+            let targetLoc = min(max(0, blockRange.location + (swappedFirst as NSString).length + cursorOffsetInBlock), newLen)
+            let targetLen = min(safeSel.length, newLen - targetLoc)
+            tv.selectedRange = NSRange(location: targetLoc, length: targetLen)
+            tv.scrollRangeToVisible(tv.selectedRange)
+            return true
+        }
     }
 
     private static func clampRange(_ range: NSRange, maxLength: Int) -> NSRange {

@@ -1,6 +1,28 @@
 import Foundation
 import SwiftUI
 
+public struct ClosedTabRecord: Equatable {
+    public let fileURL: URL
+    public let content: String
+    public let languageOverride: CodeLanguage?
+    public let isPinned: Bool
+    public let selectedRangeLocation: Int
+
+    public init(
+        fileURL: URL,
+        content: String,
+        languageOverride: CodeLanguage? = nil,
+        isPinned: Bool = false,
+        selectedRangeLocation: Int = 0
+    ) {
+        self.fileURL = fileURL
+        self.content = content
+        self.languageOverride = languageOverride
+        self.isPinned = isPinned
+        self.selectedRangeLocation = selectedRangeLocation
+    }
+}
+
 @MainActor
 public final class WorkspaceManager: ObservableObject {
     @Published public private(set) var rootURL: URL
@@ -9,9 +31,12 @@ public final class WorkspaceManager: ObservableObject {
     @Published public private(set) var fileTree: [FileNode] = []
     @Published public var openTabs: [OpenTab] = []
     @Published public var activeTabID: URL?
+    @Published public private(set) var recentlyClosedTabs: [ClosedTabRecord] = []
     @Published public var searchQuery: String = ""
     @Published public var searchResults: [(url: URL, line: Int, preview: String)] = []
     @Published public private(set) var fileStatuses: [String: WorkspaceFileDiffStatus] = [:]
+
+    public var canReopenClosedTab: Bool { !recentlyClosedTabs.isEmpty }
 
     private var baselineSnapshots: [String: String] = [:]
     private var deletedGhostContents: [String: String] = [:]
@@ -344,8 +369,10 @@ public final class WorkspaceManager: ObservableObject {
         } else {
             text = readTextWithEncodingFallback(from: url) ?? ""
         }
+        recentlyClosedTabs.removeAll { $0.fileURL.standardizedFileURL == url.standardizedFileURL }
         let tab = OpenTab(fileURL: url, content: text)
-        openTabs.insert(tab, at: 0)
+        let insertIdx = openTabs.firstIndex(where: { !$0.isPinned }) ?? openTabs.count
+        openTabs.insert(tab, at: insertIdx)
         activeTabID = tab.id
     }
 
@@ -425,10 +452,38 @@ public final class WorkspaceManager: ObservableObject {
         onFileSavedOrChanged?()
     }
 
+    private func recordClosedTab(_ tab: OpenTab) {
+        let std = tab.fileURL.standardizedFileURL
+        recentlyClosedTabs.removeAll { $0.fileURL.standardizedFileURL == std }
+        recentlyClosedTabs.insert(
+            ClosedTabRecord(
+                fileURL: tab.fileURL,
+                content: tab.content,
+                languageOverride: tab.languageOverride,
+                isPinned: tab.isPinned,
+                selectedRangeLocation: tab.selectedRangeLocation
+            ),
+            at: 0
+        )
+        if recentlyClosedTabs.count > 25 {
+            recentlyClosedTabs.removeLast(recentlyClosedTabs.count - 25)
+        }
+    }
+
+    public func togglePinTab(_ tabID: URL) {
+        guard let idx = openTabs.firstIndex(where: { $0.id == tabID }) else { return }
+        openTabs[idx].isPinned.toggle()
+        let pinned = openTabs.filter { $0.isPinned }
+        let unpinned = openTabs.filter { !$0.isPinned }
+        openTabs = pinned + unpinned
+    }
+
     public func closeTab(_ tabID: URL) {
         guard let idx = openTabs.firstIndex(where: { $0.id == tabID }) else { return }
-        try? openTabs[idx].content.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
-        syncFileChangeBackToExternalMirror(localFileURL: openTabs[idx].fileURL, content: openTabs[idx].content)
+        let closing = openTabs[idx]
+        try? closing.content.write(to: closing.fileURL, atomically: true, encoding: .utf8)
+        syncFileChangeBackToExternalMirror(localFileURL: closing.fileURL, content: closing.content)
+        recordClosedTab(closing)
         openTabs.remove(at: idx)
         if activeTabID == tabID {
             if openTabs.indices.contains(idx) {
@@ -440,33 +495,83 @@ public final class WorkspaceManager: ObservableObject {
     }
 
     public func closeOtherTabs(keeping tabID: URL) {
-        let toClose = openTabs.filter { $0.id != tabID }
+        let toClose = openTabs.filter { $0.id != tabID && !$0.isPinned }
         for tab in toClose {
             try? tab.content.write(to: tab.fileURL, atomically: true, encoding: .utf8)
             syncFileChangeBackToExternalMirror(localFileURL: tab.fileURL, content: tab.content)
+            recordClosedTab(tab)
         }
-        openTabs.removeAll { $0.id != tabID }
-        if activeTabID != tabID {
-            activeTabID = openTabs.first?.id
+        openTabs.removeAll { $0.id != tabID && !$0.isPinned }
+        if !openTabs.contains(where: { $0.id == activeTabID }) {
+            activeTabID = openTabs.first(where: { $0.id == tabID })?.id ?? openTabs.first?.id
         }
     }
 
     public func closeAllTabs() {
-        for tab in openTabs {
+        let hasUnpinned = openTabs.contains { !$0.isPinned }
+        let toClose = hasUnpinned ? openTabs.filter { !$0.isPinned } : openTabs
+        for tab in toClose {
             try? tab.content.write(to: tab.fileURL, atomically: true, encoding: .utf8)
             syncFileChangeBackToExternalMirror(localFileURL: tab.fileURL, content: tab.content)
+            recordClosedTab(tab)
         }
-        openTabs.removeAll()
-        activeTabID = nil
+        if hasUnpinned {
+            openTabs.removeAll { !$0.isPinned }
+            if let current = activeTabID, !openTabs.contains(where: { $0.id == current }) {
+                activeTabID = openTabs.first?.id
+            }
+        } else {
+            openTabs.removeAll()
+            activeTabID = nil
+        }
+    }
+
+    public func reopenLastClosedTab() {
+        guard !recentlyClosedTabs.isEmpty else { return }
+        let record = recentlyClosedTabs.removeFirst()
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: record.fileURL.path) {
+            let parent = record.fileURL.deletingLastPathComponent()
+            try? fm.createDirectory(at: parent, withIntermediateDirectories: true)
+            try? record.content.write(to: record.fileURL, atomically: true, encoding: .utf8)
+            syncFileChangeBackToExternalMirror(localFileURL: record.fileURL, content: record.content)
+            reloadTree()
+        }
+        if let existingIdx = openTabs.firstIndex(where: { $0.fileURL.standardizedFileURL == record.fileURL.standardizedFileURL }) {
+            openTabs[existingIdx].languageOverride = record.languageOverride
+            openTabs[existingIdx].selectedRangeLocation = record.selectedRangeLocation
+            activeTabID = openTabs[existingIdx].id
+            return
+        }
+        let diskText = readTextWithEncodingFallback(from: record.fileURL) ?? record.content
+        var restored = OpenTab(
+            fileURL: record.fileURL,
+            content: diskText,
+            languageOverride: record.languageOverride,
+            isPinned: record.isPinned
+        )
+        restored.selectedRangeLocation = record.selectedRangeLocation
+        if restored.isPinned {
+            openTabs.insert(restored, at: 0)
+        } else {
+            let insertIdx = openTabs.firstIndex(where: { !$0.isPinned }) ?? openTabs.count
+            openTabs.insert(restored, at: insertIdx)
+        }
+        activeTabID = restored.id
     }
 
     public func moveTabToFront(_ tabID: URL) {
-        guard let idx = openTabs.firstIndex(where: { $0.id == tabID }), idx > 0 else {
+        guard let idx = openTabs.firstIndex(where: { $0.id == tabID }) else {
             activeTabID = tabID
             return
         }
         let tab = openTabs.remove(at: idx)
-        openTabs.insert(tab, at: 0)
+        if tab.isPinned {
+            openTabs.insert(tab, at: 0)
+        } else {
+            let insertIdx = openTabs.firstIndex(where: { !$0.isPinned }) ?? openTabs.count
+            openTabs.insert(tab, at: insertIdx)
+        }
         activeTabID = tab.id
     }
 
@@ -581,10 +686,15 @@ public final class WorkspaceManager: ObservableObject {
                 saveBaselineMeta()
             }
             if let idx = openTabs.firstIndex(where: { $0.fileURL.standardizedFileURL == url.standardizedFileURL }) {
-                let content = openTabs[idx].content
-                let wasActive = (activeTabID == openTabs[idx].id)
+                let oldTab = openTabs[idx]
+                let wasActive = (activeTabID == oldTab.id)
                 openTabs.remove(at: idx)
-                let updated = OpenTab(fileURL: dest, content: content)
+                let updated = OpenTab(
+                    fileURL: dest,
+                    content: oldTab.content,
+                    languageOverride: oldTab.languageOverride,
+                    isPinned: oldTab.isPinned
+                )
                 openTabs.insert(updated, at: idx)
                 if wasActive { activeTabID = updated.id }
             }
@@ -641,6 +751,7 @@ public final class WorkspaceManager: ObservableObject {
         }
 
         self.openTabs.removeAll()
+        self.recentlyClosedTabs.removeAll()
         self.activeTabID = nil
         loadOrInitializeBaseline(at: self.rootURL)
         reloadTree()
@@ -663,6 +774,7 @@ public final class WorkspaceManager: ObservableObject {
         }
         self.rootURL = importedDir
         self.openTabs.removeAll()
+        self.recentlyClosedTabs.removeAll()
         self.activeTabID = nil
         loadOrInitializeBaseline(at: importedDir)
         reloadTree()

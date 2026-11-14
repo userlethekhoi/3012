@@ -202,7 +202,68 @@ public final class CodeIntelligenceService: ObservableObject {
         }
     }
 
-    // MARK: - Smart VS Code IntelliSense (Fuzzy + CamelCase + Member Dot/Scope + Emmet + Signature Hints)
+    // MARK: - VS Code Dimmed Inline Ghost Preview Text Helper
+    public static func ghostPreviewText(for candidate: CompletionCandidate, in text: String, cursor: Int) -> String? {
+        let ns = text as NSString
+        guard candidate.replaceRange.location >= 0,
+              candidate.replaceRange.location + candidate.replaceRange.length <= ns.length,
+              cursor == candidate.replaceRange.location + candidate.replaceRange.length else {
+            return nil
+        }
+
+        func compactSingleLine(_ raw: String) -> String {
+            let trimmed = raw.replacingOccurrences(of: #"\s*\n\s*"#, with: " ↵ ", options: .regularExpression)
+            if trimmed.count > 68 {
+                return String(trimmed.prefix(65)) + "..."
+            }
+            return trimmed
+        }
+
+        if candidate.replaceRange.length == 0 {
+            let preview = compactSingleLine(candidate.insertText)
+            return preview.isEmpty ? nil : preview
+        }
+
+        let typedPrefix = ns.substring(with: candidate.replaceRange)
+        if let prefixRange = candidate.insertText.range(of: typedPrefix, options: [.caseInsensitive, .anchored]) {
+            let remaining = String(candidate.insertText[prefixRange.upperBound...])
+            let preview = compactSingleLine(remaining)
+            return preview.isEmpty ? nil : preview
+        }
+
+        let fallback = compactSingleLine(candidate.insertText)
+        return fallback.isEmpty ? nil : " → \(fallback)"
+    }
+
+    // MARK: - Embedded Web Block Detector (<style> -> CSS, <script> -> JS inside HTML/Vue/Svelte)
+    private static func detectEmbeddedWebLanguage(nsText: NSString, cursor: Int, baseLanguage: CodeLanguage) -> CodeLanguage {
+        guard [.html, .vue, .svelte, .astro].contains(baseLanguage), cursor > 0 else {
+            return baseLanguage
+        }
+        let lookbackStart = max(0, cursor - 8000)
+        let slice = nsText.substring(with: NSRange(location: lookbackStart, length: cursor - lookbackStart)).lowercased()
+
+        func isInside(tag: String) -> Bool {
+            guard let openMatch = slice.range(of: "<\(tag)(?=\\s|>)", options: [.regularExpression, .backwards]) else {
+                return false
+            }
+            let closeMatch = slice.range(of: "</\(tag)", options: [.backwards])
+            if let closeMatch, closeMatch.upperBound > openMatch.upperBound {
+                return false
+            }
+            return slice[openMatch.upperBound...].contains(">")
+        }
+
+        if isInside(tag: "style") {
+            return .css
+        }
+        if isInside(tag: "script") {
+            return .javascript
+        }
+        return baseLanguage
+    }
+
+    // MARK: - Smart VS Code IntelliSense (Fuzzy + CamelCase + Member Dot/Scope + Emmet + HTML Tag/Attr + Signature Hints)
     public func updateCompletions(
         in text: String,
         selectedRange: NSRange,
@@ -226,9 +287,16 @@ public final class CodeIntelligenceService: ObservableObject {
 
         let lineRange = nsText.lineRange(for: NSRange(location: cursor, length: 0))
         let linePrefix = nsText.substring(with: NSRange(location: lineRange.location, length: cursor - lineRange.location))
+        let lineEnd = lineRange.location + lineRange.length
+        let lineSuffix = lineEnd > cursor ? nsText.substring(with: NSRange(location: cursor, length: lineEnd - cursor)) : ""
+
+        let isTypingClosingTag = linePrefix.range(of: #"</[A-Za-z0-9-]*$"#, options: .regularExpression) != nil
+        let effectiveLanguage = isTypingClosingTag
+            ? language
+            : Self.detectEmbeddedWebLanguage(nsText: nsText, cursor: cursor, baseLanguage: language)
 
         // 1. Check C/C++ #include <header> context
-        if (language == .c || language == .cpp || language == .objectiveC),
+        if (effectiveLanguage == .c || effectiveLanguage == .cpp || effectiveLanguage == .objectiveC),
            let incMatch = linePrefix.range(of: #"#include\s*[<"][A-Za-z0-9_./]*$"#, options: .regularExpression) {
             let fullMatch = String(linePrefix[incMatch])
             let headerQuery: String
@@ -259,17 +327,36 @@ public final class CodeIntelligenceService: ObservableObject {
             return
         }
 
-        // 2. Check HTML / JSX / TSX / Vue / Svelte Emmet Abbreviation (e.g. div.card, ul>li*3, button#submit, !)
-        if [.html, .tsx, .vue, .svelte, .astro].contains(language) {
+        // 1.5 Deep Step-by-Step HTML / XML / JSX Context (<tag>, attributes, values, auto-close)
+        if [.html, .xml, .vue, .svelte, .astro, .tsx].contains(effectiveLanguage) {
+            let htmlContextResults = Self.htmlContextCompletions(
+                nsText: nsText,
+                linePrefix: linePrefix,
+                lineSuffix: lineSuffix,
+                cursor: cursor
+            )
+            if !htmlContextResults.isEmpty {
+                completions = htmlContextResults
+                return
+            }
+
             if let emmet = Self.tryExpandEmmet(linePrefix: linePrefix, cursor: cursor) {
                 completions = [emmet]
                 return
             }
         }
 
+        // 2. CSS Property Value Context (after `property: ...`)
+        if effectiveLanguage == .css || effectiveLanguage == .scss {
+            if let cssValMatches = Self.cssValueCompletions(linePrefix: linePrefix, cursor: cursor), !cssValMatches.isEmpty {
+                completions = cssValMatches
+                return
+            }
+        }
+
         // 3. Check Member Access Trigger (`.` or `->` or `::`)
         if let memberCtx = Self.extractMemberAccessContext(linePrefix: linePrefix, cursor: cursor) {
-            let memberItems = Self.memberCatalog(receiver: memberCtx.receiver, accessor: memberCtx.accessor, language: language)
+            let memberItems = Self.memberCatalog(receiver: memberCtx.receiver, accessor: memberCtx.accessor, language: effectiveLanguage)
             var matched: [CompletionCandidate] = []
             for item in memberItems {
                 let sc = memberCtx.memberPrefix.isEmpty ? 950 : Self.fuzzyScore(query: memberCtx.memberPrefix, candidate: item.label)
@@ -291,13 +378,15 @@ public final class CodeIntelligenceService: ObservableObject {
             }
         }
 
-        // 4. General Identifier / Keyword / Fuzzy Subsequence / CamelCase Scan
+        // 4. General Identifier / Keyword / Fuzzy Subsequence / CamelCase Scan (1+ characters)
+        let allowHyphen = (effectiveLanguage == .css || effectiveLanguage == .scss)
         var start = cursor
         while start > 0 {
             let ch = nsText.character(at: start - 1)
             guard let scalar = UnicodeScalar(ch) else { break }
             let isIdent = CharacterSet.alphanumerics.contains(scalar)
                 || scalar == "_" || scalar == "#" || scalar == "@" || scalar == "$" || scalar == "%"
+                || (allowHyphen && scalar == "-")
             if isIdent {
                 start -= 1
             } else {
@@ -306,8 +395,7 @@ public final class CodeIntelligenceService: ObservableObject {
         }
 
         let prefixLen = cursor - start
-        let triggersOnSingleChar = (prefixLen == 1 && ["#", "@", "$", "%"].contains(nsText.substring(with: NSRange(location: start, length: 1))))
-        guard prefixLen >= 1 && (prefixLen >= 2 || triggersOnSingleChar) else {
+        guard prefixLen >= 1 else {
             if !completions.isEmpty { completions = [] }
             return
         }
@@ -319,7 +407,7 @@ public final class CodeIntelligenceService: ObservableObject {
         var seenLabels = Set<String>()
 
         func addCandidate(label: String, template: String, detail: String, kind: CompletionKind, bonus: Int = 0) {
-            guard label != prefix else { return }
+            guard label.lowercased() != prefix.lowercased() else { return }
             let baseScore = Self.fuzzyScore(query: prefix, candidate: label)
             guard baseScore > 0 else { return }
             guard seenLabels.insert(label).inserted else { return }
@@ -335,26 +423,26 @@ public final class CodeIntelligenceService: ObservableObject {
         }
 
         // A. Built-in & OpenVSX Snippets
-        for snip in snippets where (snip.language == "all" || snip.language.lowercased() == language.defaultExtension.lowercased() || snip.language.lowercased() == language.rawValue.lowercased()) {
-            addCandidate(label: snip.prefix, template: snip.body, detail: snip.title, kind: .snippet, bonus: 90)
+        for snip in snippets where (snip.language == "all" || snip.language.lowercased() == effectiveLanguage.defaultExtension.lowercased() || snip.language.lowercased() == effectiveLanguage.rawValue.lowercased()) {
+            addCandidate(label: snip.prefix, template: snip.body, detail: snip.title, kind: .snippet, bonus: 110)
         }
 
         // B. Smart Language Templates, Keywords & Stdlib APIs
-        for entry in Self.smartLanguageCatalog(for: language) {
-            addCandidate(label: entry.label, template: entry.template, detail: entry.detail, kind: entry.kind, bonus: entry.kind == .snippet ? 60 : 25)
+        for entry in Self.smartLanguageCatalog(for: effectiveLanguage) {
+            addCandidate(label: entry.label, template: entry.template, detail: entry.detail, kind: entry.kind, bonus: (entry.kind == .snippet || entry.kind == .emmet) ? 95 : 45)
         }
 
         // C. Current File Symbols with Exact Signatures
         for sym in symbols {
             let tpl = sym.systemIcon == "function" ? "\(sym.name)($0)" : sym.name
             let k: CompletionKind = sym.systemIcon == "function" ? .function : .type
-            addCandidate(label: sym.name, template: tpl, detail: sym.signature, kind: k, bonus: 75)
+            addCandidate(label: sym.name, template: tpl, detail: sym.signature, kind: k, bonus: 80)
         }
 
         // D. Cross-File Workspace Symbols
         for wSym in workspaceSymbols {
             let tpl = wSym.kind == .function ? "\(wSym.name)($0)" : wSym.name
-            addCandidate(label: wSym.name, template: tpl, detail: "\(wSym.signature) • \(wSym.fileName)", kind: wSym.kind, bonus: 45)
+            addCandidate(label: wSym.name, template: tpl, detail: "\(wSym.signature) • \(wSym.fileName)", kind: wSym.kind, bonus: 50)
         }
 
         // E. Identifiers in Active Buffer (Variables, Parameters, Local Names)
@@ -363,7 +451,7 @@ public final class CodeIntelligenceService: ObservableObject {
             let matches = identRegex.matches(in: text, range: NSRange(location: 0, length: scanLen))
             for m in matches {
                 let word = nsText.substring(with: m.range)
-                addCandidate(label: word, template: word, detail: "Local Identifier", kind: .variable, bonus: 35)
+                addCandidate(label: word, template: word, detail: "Local Identifier", kind: .variable, bonus: 25)
                 if results.count >= 45 { break }
             }
         }
@@ -373,7 +461,7 @@ public final class CodeIntelligenceService: ObservableObject {
             return a.label.count < b.label.count
         }
 
-        completions = Array(results.prefix(10))
+        completions = Array(results.prefix(12))
     }
 
     public func clearCompletions() {
@@ -481,6 +569,435 @@ public final class CodeIntelligenceService: ObservableObject {
             return 640 + (boundaryHits * 25) + (consecutiveHits * 15) - min(candidate.count, 60)
         }
         return 0
+    }
+
+    // MARK: - Deep Step-by-Step HTML / XML / JSX Context Completions
+    private static func htmlContextCompletions(
+        nsText: NSString,
+        linePrefix: String,
+        lineSuffix: String,
+        cursor: Int
+    ) -> [CompletionCandidate] {
+        let voidTags: Set<String> = [
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr"
+        ]
+        let blockTags: Set<String> = [
+            "html", "head", "body", "div", "section", "main", "header", "footer",
+            "nav", "article", "aside", "ul", "ol", "table", "thead", "tbody",
+            "tr", "form", "select", "script", "style", "template"
+        ]
+        let nsPrefix = linePrefix as NSString
+
+        // 1. Closing Tag Context: "</" or "</di"
+        if let closeRx = try? NSRegularExpression(pattern: #"</([A-Za-z0-9-]*)$"#),
+           let cm = closeRx.firstMatch(in: linePrefix, range: NSRange(location: 0, length: nsPrefix.length)) {
+            let fullMatchRange = cm.range
+            let query = nsPrefix.substring(with: cm.range(at: 1)).lowercased()
+            let repRange = NSRange(location: cursor - fullMatchRange.length, length: fullMatchRange.length)
+
+            let beforeLen = max(0, cursor - fullMatchRange.length)
+            let scanLen = min(beforeLen, 20_000)
+            let scanStart = beforeLen - scanLen
+            let scanSlice = nsText.substring(with: NSRange(location: scanStart, length: scanLen))
+
+            var openStack: [String] = []
+            if let tagRx = try? NSRegularExpression(pattern: #"<\s*(/?)\s*([a-zA-Z][a-zA-Z0-9-]*)([^>]*?)(/?)>"#) {
+                let nsSlice = scanSlice as NSString
+                for tm in tagRx.matches(in: scanSlice, range: NSRange(location: 0, length: nsSlice.length)) {
+                    let isClose = nsSlice.substring(with: tm.range(at: 1)) == "/"
+                    let tName = nsSlice.substring(with: tm.range(at: 2)).lowercased()
+                    let isSelfClose = nsSlice.substring(with: tm.range(at: 4)) == "/"
+                    if voidTags.contains(tName) || isSelfClose { continue }
+                    if isClose {
+                        if let idx = openStack.lastIndex(of: tName) {
+                            openStack.removeSubrange(idx...)
+                        }
+                    } else {
+                        openStack.append(tName)
+                    }
+                }
+            }
+
+            var orderedTags: [String] = []
+            var seen = Set<String>()
+            for t in openStack.reversed() {
+                if seen.insert(t).inserted { orderedTags.append(t) }
+            }
+            for fallback in ["div", "span", "p", "section", "button", "a", "li", "ul", "body", "html", "head", "style", "script"] {
+                if seen.insert(fallback).inserted { orderedTags.append(fallback) }
+            }
+
+            var results: [CompletionCandidate] = []
+            for (idx, tag) in orderedTags.enumerated() {
+                let score: Int
+                if query.isEmpty {
+                    score = 1600 - idx * 20
+                } else {
+                    let fs = fuzzyScore(query: query, candidate: tag)
+                    guard fs > 0 else { continue }
+                    score = fs + (openStack.last == tag ? 350 : (openStack.contains(tag) ? 200 : 0))
+                }
+                results.append(CompletionCandidate(
+                    label: "</\(tag)>",
+                    rawTemplate: "</\(tag)>$0",
+                    detail: openStack.last == tag ? "Close <\(tag)>" : "Closing Tag",
+                    kind: .emmet,
+                    replaceRange: repRange,
+                    score: score
+                ))
+            }
+            results.sort { $0.score > $1.score }
+            return Array(results.prefix(8))
+        }
+
+        // 2. Auto-Close Immediately After Opening Tag: "<div class=\"card\">"
+        let trimmedPrefix = linePrefix.trimmingCharacters(in: .whitespaces)
+        if !trimmedPrefix.hasSuffix("/>"),
+           let justClosedRx = try? NSRegularExpression(pattern: #"<\s*([A-Za-z][A-Za-z0-9-]*)(?:\s+[^<>]*)?>$"#),
+           let jm = justClosedRx.firstMatch(in: linePrefix, range: NSRange(location: 0, length: nsPrefix.length)) {
+            let tag = nsPrefix.substring(with: jm.range(at: 1))
+            let lowerTag = tag.lowercased()
+            let trimmedSuffix = lineSuffix.trimmingCharacters(in: .whitespaces).lowercased()
+            if !voidTags.contains(lowerTag) && !trimmedSuffix.hasPrefix("</\(lowerTag)") {
+                let repRange = NSRange(location: cursor, length: 0)
+                var items = [
+                    CompletionCandidate(
+                        label: "</\(tag)>",
+                        rawTemplate: "$0</\(tag)>",
+                        detail: "Auto-close <\(tag)>",
+                        kind: .emmet,
+                        replaceRange: repRange,
+                        score: 1580
+                    )
+                ]
+                if blockTags.contains(lowerTag) {
+                    let indent = String(linePrefix.prefix { $0 == " " || $0 == "\t" })
+                    items.append(CompletionCandidate(
+                        label: "</\(tag)> (block)",
+                        rawTemplate: "\n\(indent)  $0\n\(indent)</\(tag)>",
+                        detail: "Multi-line <\(tag)>",
+                        kind: .emmet,
+                        replaceRange: repRange,
+                        score: 1560
+                    ))
+                }
+                return items
+            }
+        }
+
+        // 3. Inside Unclosed Opening Tag: "<div " or "<input typ" or "<input type=\"b"
+        if let openTagRx = try? NSRegularExpression(pattern: #"<\s*([A-Za-z][A-Za-z0-9-]*)(\s+[^<>]*)$"#),
+           let om = openTagRx.firstMatch(in: linePrefix, range: NSRange(location: 0, length: nsPrefix.length)) {
+            let tag = nsPrefix.substring(with: om.range(at: 1)).lowercased()
+            let attrTail = nsPrefix.substring(with: om.range(at: 2))
+            let nsTail = attrTail as NSString
+
+            // 3a. Inside attribute value quotes: attr="valPrefix
+            if let valRx = try? NSRegularExpression(pattern: #"\s([A-Za-z][A-Za-z0-9-:]*)=["']([^"'<>]*)$"#),
+               let vm = valRx.firstMatch(in: attrTail, range: NSRange(location: 0, length: nsTail.length)) {
+                let attrName = nsTail.substring(with: vm.range(at: 1)).lowercased()
+                let valQuery = nsTail.substring(with: vm.range(at: 2))
+                let repRange = NSRange(location: cursor - (valQuery as NSString).length, length: (valQuery as NSString).length)
+                let suggestions = htmlAttributeValues(for: attrName, tag: tag)
+                var out: [CompletionCandidate] = []
+                for (idx, val) in suggestions.enumerated() {
+                    let sc = valQuery.isEmpty ? (1300 - idx * 10) : fuzzyScore(query: valQuery, candidate: val)
+                    guard sc > 0 else { continue }
+                    out.append(CompletionCandidate(
+                        label: val,
+                        rawTemplate: val,
+                        detail: "\(attrName) value",
+                        kind: .property,
+                        replaceRange: repRange,
+                        score: sc
+                    ))
+                }
+                out.sort { $0.score > $1.score }
+                return Array(out.prefix(10))
+            }
+
+            // 3b. Attribute name completion (only when quotes are balanced)
+            let doubleQuotes = attrTail.filter { $0 == "\"" }.count
+            let singleQuotes = attrTail.filter { $0 == "'" }.count
+            if doubleQuotes % 2 == 0 && singleQuotes % 2 == 0,
+               let attrRx = try? NSRegularExpression(pattern: #"([A-Za-z-]*)$"#),
+               let am = attrRx.firstMatch(in: attrTail, range: NSRange(location: 0, length: nsTail.length)) {
+                let attrQuery = nsTail.substring(with: am.range(at: 1))
+                let repRange = NSRange(location: cursor - (attrQuery as NSString).length, length: (attrQuery as NSString).length)
+                let catalog = htmlAttributesCatalog(for: tag)
+                var out: [CompletionCandidate] = []
+                for (idx, item) in catalog.enumerated() {
+                    let sc = attrQuery.isEmpty ? (1320 - idx * 10) : fuzzyScore(query: attrQuery, candidate: item.label)
+                    guard sc > 0 else { continue }
+                    out.append(CompletionCandidate(
+                        label: item.label,
+                        rawTemplate: item.template,
+                        detail: item.detail,
+                        kind: .property,
+                        replaceRange: repRange,
+                        score: sc
+                    ))
+                }
+                out.sort { $0.score > $1.score }
+                return Array(out.prefix(10))
+            }
+        }
+
+        // 4. Opening Tag Trigger: "<" or "<di" or "<!"
+        if let tagStartRx = try? NSRegularExpression(pattern: #"<([!A-Za-z0-9-]*)$"#),
+           let tm = tagStartRx.firstMatch(in: linePrefix, range: NSRange(location: 0, length: nsPrefix.length)) {
+            let fullMatch = tm.range
+            let query = nsPrefix.substring(with: tm.range(at: 1))
+            let repRange = NSRange(location: cursor - fullMatch.length, length: fullMatch.length)
+            let tags = htmlTagCatalog()
+            var out: [CompletionCandidate] = []
+            for (idx, item) in tags.enumerated() {
+                let sc: Int
+                if query.isEmpty {
+                    sc = 1480 - idx * 8
+                } else {
+                    let fs = fuzzyScore(query: query, candidate: item.tag)
+                    guard fs > 0 else { continue }
+                    sc = fs + 200
+                }
+                out.append(CompletionCandidate(
+                    label: "<\(item.tag)>",
+                    rawTemplate: item.template,
+                    detail: item.detail,
+                    kind: .emmet,
+                    replaceRange: repRange,
+                    score: sc
+                ))
+            }
+            out.sort { $0.score > $1.score }
+            return Array(out.prefix(12))
+        }
+
+        return []
+    }
+
+    private static func htmlTagCatalog() -> [(tag: String, template: String, detail: String)] {
+        [
+            ("div", "<div>$0</div>", "Container block"),
+            ("div class", "<div class=\"$0\"></div>", "Div + class"),
+            ("p", "<p>$0</p>", "Paragraph"),
+            ("span", "<span>$0</span>", "Inline text"),
+            ("h1", "<h1>$0</h1>", "Heading 1"),
+            ("h2", "<h2>$0</h2>", "Heading 2"),
+            ("h3", "<h3>$0</h3>", "Heading 3"),
+            ("button", "<button type=\"button\">$0</button>", "Interactive button"),
+            ("a", "<a href=\"$0\"></a>", "Hyperlink"),
+            ("img", "<img src=\"$0\" alt=\"\" />", "Image element"),
+            ("input", "<input type=\"text\" placeholder=\"$0\" />", "Form input"),
+            ("form", "<form action=\"$0\" method=\"POST\">\n  \n</form>", "Form wrapper"),
+            ("label", "<label for=\"$0\"></label>", "Input label"),
+            ("textarea", "<textarea rows=\"4\" placeholder=\"$0\"></textarea>", "Multi-line text"),
+            ("select", "<select name=\"$0\">\n  <option value=\"\"></option>\n</select>", "Dropdown select"),
+            ("option", "<option value=\"$0\"></option>", "Select option"),
+            ("ul", "<ul>\n  <li>$0</li>\n</ul>", "Unordered list"),
+            ("ol", "<ol>\n  <li>$0</li>\n</ol>", "Ordered list"),
+            ("li", "<li>$0</li>", "List item"),
+            ("section", "<section>$0</section>", "Document section"),
+            ("main", "<main>$0</main>", "Main content"),
+            ("header", "<header>$0</header>", "Header section"),
+            ("nav", "<nav>$0</nav>", "Navigation links"),
+            ("article", "<article>$0</article>", "Article content"),
+            ("aside", "<aside>$0</aside>", "Sidebar content"),
+            ("footer", "<footer>$0</footer>", "Footer section"),
+            ("table", "<table>\n  <thead>\n    <tr><th>$0</th></tr>\n  </thead>\n  <tbody>\n    <tr><td></td></tr>\n  </tbody>\n</table>", "HTML Table"),
+            ("tr", "<tr>\n  <td>$0</td>\n</tr>", "Table row"),
+            ("td", "<td>$0</td>", "Table cell"),
+            ("th", "<th>$0</th>", "Table header cell"),
+            ("script", "<script src=\"$0\"></script>", "External JS"),
+            ("script inline", "<script>\n  $0\n</script>", "Inline JavaScript"),
+            ("style", "<style>\n  $0\n</style>", "Inline CSS"),
+            ("link", "<link rel=\"stylesheet\" href=\"$0style.css\" />", "Stylesheet link"),
+            ("meta", "<meta name=\"$0\" content=\"\" />", "Metadata tag"),
+            ("title", "<title>$0</title>", "Document title"),
+            ("head", "<head>\n  <meta charset=\"UTF-8\" />\n  <title>$0</title>\n</head>", "Document head"),
+            ("body", "<body>\n  $0\n</body>", "Document body"),
+            ("!DOCTYPE html", "<!DOCTYPE html>\n<html lang=\"vi\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>$0</title>\n</head>\n<body>\n  \n</body>\n</html>", "HTML5 Skeleton"),
+            ("br", "<br />", "Line break"),
+            ("hr", "<hr />", "Horizontal rule"),
+            ("iframe", "<iframe src=\"$0\" frameborder=\"0\"></iframe>", "Embedded frame"),
+            ("canvas", "<canvas id=\"$0\" width=\"400\" height=\"300\"></canvas>", "2D/WebGL Canvas"),
+            ("video", "<video src=\"$0\" controls></video>", "Video player"),
+            ("audio", "<audio src=\"$0\" controls></audio>", "Audio player"),
+            ("strong", "<strong>$0</strong>", "Bold importance"),
+            ("code", "<code>$0</code>", "Inline code"),
+            ("pre", "<pre><code>$0</code></pre>", "Code block")
+        ]
+    }
+
+    private static func htmlAttributesCatalog(for tag: String) -> [(label: String, template: String, detail: String)] {
+        var specific: [(String, String, String)] = []
+        switch tag {
+        case "a":
+            specific = [
+                ("href", "href=\"$0\"", "Link URL"),
+                ("target", "target=\"_blank$0\"", "Open window/tab"),
+                ("rel", "rel=\"noopener noreferrer$0\"", "Link relation"),
+                ("download", "download=\"$0\"", "Download filename")
+            ]
+        case "img":
+            specific = [
+                ("src", "src=\"$0\"", "Image URL/path"),
+                ("alt", "alt=\"$0\"", "Alternative text"),
+                ("width", "width=\"$0\"", "Image width"),
+                ("height", "height=\"$0\"", "Image height"),
+                ("loading", "loading=\"lazy$0\"", "Lazy loading")
+            ]
+        case "link":
+            specific = [
+                ("rel", "rel=\"stylesheet$0\"", "Relation"),
+                ("href", "href=\"$0\"", "Stylesheet URL"),
+                ("type", "type=\"text/css$0\"", "MIME type")
+            ]
+        case "script":
+            specific = [
+                ("src", "src=\"$0\"", "Script file path"),
+                ("type", "type=\"module$0\"", "ES Module / script type"),
+                ("defer", "defer", "Defer execution"),
+                ("async", "async", "Async download")
+            ]
+        case "input":
+            specific = [
+                ("type", "type=\"text$0\"", "Input type"),
+                ("placeholder", "placeholder=\"$0\"", "Hint text"),
+                ("name", "name=\"$0\"", "Field name"),
+                ("value", "value=\"$0\"", "Initial value"),
+                ("required", "required", "Required field"),
+                ("disabled", "disabled", "Disable input"),
+                ("autocomplete", "autocomplete=\"$0\"", "Browser autofill")
+            ]
+        case "button":
+            specific = [
+                ("type", "type=\"button$0\"", "button / submit / reset"),
+                ("onclick", "onclick=\"$0\"", "Click handler"),
+                ("disabled", "disabled", "Disable button")
+            ]
+        case "form":
+            specific = [
+                ("action", "action=\"$0\"", "Submit endpoint"),
+                ("method", "method=\"POST$0\"", "HTTP method"),
+                ("onsubmit", "onsubmit=\"$0\"", "Submit handler")
+            ]
+        case "meta":
+            specific = [
+                ("charset", "charset=\"UTF-8\"", "Document encoding"),
+                ("name", "name=\"viewport$0\"", "Metadata key"),
+                ("content", "content=\"$0\"", "Metadata content")
+            ]
+        case "label":
+            specific = [("for", "for=\"$0\"", "Target input id")]
+        case "video", "audio":
+            specific = [
+                ("src", "src=\"$0\"", "Media URL"),
+                ("controls", "controls", "Show media controls"),
+                ("autoplay", "autoplay", "Auto play"),
+                ("loop", "loop", "Loop playback"),
+                ("muted", "muted", "Mute audio")
+            ]
+        default:
+            break
+        }
+
+        let globals: [(String, String, String)] = [
+            ("class", "class=\"$0\"", "CSS classes"),
+            ("id", "id=\"$0\"", "Unique element ID"),
+            ("style", "style=\"$0\"", "Inline CSS style"),
+            ("onclick", "onclick=\"$0\"", "Click JS handler"),
+            ("oninput", "oninput=\"$0\"", "Input JS handler"),
+            ("onchange", "onchange=\"$0\"", "Change JS handler"),
+            ("title", "title=\"$0\"", "Hover tooltip"),
+            ("data-", "data-$0=\"\"", "Custom data attribute"),
+            ("aria-label", "aria-label=\"$0\"", "Accessibility label"),
+            ("hidden", "hidden", "Hide element")
+        ]
+        var seen = Set<String>()
+        return (specific + globals).filter { seen.insert($0.0).inserted }
+    }
+
+    private static func htmlAttributeValues(for attr: String, tag: String) -> [String] {
+        switch attr {
+        case "type":
+            if tag == "button" { return ["button", "submit", "reset"] }
+            if tag == "script" { return ["module", "text/javascript", "application/json"] }
+            if tag == "link" { return ["text/css", "image/x-icon"] }
+            return ["text", "button", "submit", "password", "email", "number", "checkbox", "radio", "file", "search", "date", "range", "hidden"]
+        case "rel":
+            return ["stylesheet", "icon", "noopener noreferrer", "preload", "preconnect", "canonical"]
+        case "target":
+            return ["_blank", "_self", "_parent", "_top"]
+        case "method":
+            return ["POST", "GET", "dialog"]
+        case "loading":
+            return ["lazy", "eager"]
+        case "charset":
+            return ["UTF-8"]
+        case "lang":
+            return ["vi", "en", "ja", "ko", "zh-CN"]
+        case "name":
+            return tag == "meta" ? ["viewport", "description", "keywords", "author", "theme-color"] : ["username", "email", "password", "search"]
+        default:
+            return []
+        }
+    }
+
+    // MARK: - CSS Property Value Completion (`.css`, `.scss`, `<style>`)
+    private static func cssValueCompletions(linePrefix: String, cursor: Int) -> [CompletionCandidate]? {
+        let nsPrefix = linePrefix as NSString
+        guard let rx = try? NSRegularExpression(pattern: #"([a-zA-Z-]+)\s*:\s*([^;{}]*)$"#),
+              let m = rx.firstMatch(in: linePrefix, range: NSRange(location: 0, length: nsPrefix.length)) else {
+            return nil
+        }
+        let prop = nsPrefix.substring(with: m.range(at: 1)).lowercased()
+        let valPrefix = nsPrefix.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespaces)
+        let repLen = (nsPrefix.substring(with: m.range(at: 2)) as NSString).length
+        let repRange = NSRange(location: cursor - repLen, length: repLen)
+
+        let values: [String]
+        switch prop {
+        case "display":
+            values = ["flex", "grid", "block", "inline-flex", "inline-block", "none"]
+        case "position":
+            values = ["relative", "absolute", "fixed", "sticky", "static"]
+        case "justify-content":
+            values = ["center", "space-between", "space-around", "flex-start", "flex-end", "space-evenly"]
+        case "align-items":
+            values = ["center", "flex-start", "flex-end", "stretch", "baseline"]
+        case "flex-direction":
+            values = ["row", "column", "row-reverse", "column-reverse"]
+        case "text-align":
+            values = ["center", "left", "right", "justify"]
+        case "cursor":
+            values = ["pointer", "default", "not-allowed", "grab", "text"]
+        case "overflow", "overflow-x", "overflow-y":
+            values = ["hidden", "auto", "scroll", "visible"]
+        case "box-sizing":
+            values = ["border-box", "content-box"]
+        case "font-weight":
+            values = ["600", "700", "500", "400", "bold", "normal"]
+        default:
+            return nil
+        }
+
+        var out: [CompletionCandidate] = []
+        for (idx, val) in values.enumerated() {
+            let sc = valPrefix.isEmpty ? (1250 - idx * 10) : fuzzyScore(query: valPrefix, candidate: val)
+            guard sc > 0 else { continue }
+            out.append(CompletionCandidate(
+                label: val,
+                rawTemplate: "\(val);$0",
+                detail: "\(prop) value",
+                kind: .property,
+                replaceRange: repRange,
+                score: sc
+            ))
+        }
+        out.sort { $0.score > $1.score }
+        return out.isEmpty ? nil : out
     }
 
     // MARK: - Emmet HTML / JSX Abbreviation Expander
@@ -1255,10 +1772,15 @@ public final class CodeIntelligenceService: ObservableObject {
 
         case .javascript, .typescript, .tsx:
             return [
+                ("const", "const $0 = ", "Constant Binding", .keyword),
+                ("let", "let $0 = ", "Mutable Binding", .keyword),
+                ("return", "return $0;", "Return Value", .keyword),
+                ("if (...)", "if ($0) {\n  \n}", "Conditional Block", .snippet),
+                ("for (...)", "for (let i = 0; i < $0; i++) {\n  \n}", "For Loop", .snippet),
                 ("console.log", "console.log($0);", "Log Output", .method),
                 ("console.error", "console.error($0);", "Log Error", .method),
                 ("function", "function $0() {\n  \n}", "Function Declaration", .snippet),
-                ("async fn", "async function $0() {\n  \n}", "Async Function", .snippet),
+                ("async function", "async function $0() {\n  \n}", "Async Function", .snippet),
                 ("arrow fn", "const $0 = () => {\n  \n};", "Arrow Function", .snippet),
                 ("fetch", "const res = await fetch('$0');\nconst data = await res.json();", "Fetch JSON", .snippet),
                 ("try/catch", "try {\n  $0\n} catch (err) {\n  console.error(err);\n}", "Try/Catch Block", .snippet),
@@ -1327,13 +1849,23 @@ public final class CodeIntelligenceService: ObservableObject {
 
         case .html, .vue, .svelte, .astro:
             return [
-                ("div", "<div>$0</div>", "HTML Container", .emmet),
+                ("!", "<!DOCTYPE html>\n<html lang=\"vi\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>$0</title>\n</head>\n<body>\n  \n</body>\n</html>", "HTML5 Skeleton", .emmet),
+                ("div", "<div class=\"$0\"></div>", "HTML Container", .emmet),
+                ("p", "<p>$0</p>", "Paragraph", .emmet),
+                ("span", "<span>$0</span>", "Inline Span", .emmet),
+                ("h1", "<h1>$0</h1>", "Heading 1", .emmet),
+                ("h2", "<h2>$0</h2>", "Heading 2", .emmet),
                 ("section", "<section>$0</section>", "HTML Section", .emmet),
                 ("main", "<main>$0</main>", "HTML Main", .emmet),
                 ("header", "<header>$0</header>", "HTML Header", .emmet),
+                ("nav", "<nav>$0</nav>", "Navigation", .emmet),
                 ("footer", "<footer>$0</footer>", "HTML Footer", .emmet),
                 ("button", "<button type=\"button\">$0</button>", "HTML Button", .emmet),
                 ("input", "<input type=\"text\" placeholder=\"$0\" />", "HTML Input", .emmet),
+                ("form", "<form action=\"$0\" method=\"POST\">\n  \n</form>", "HTML Form", .emmet),
+                ("label", "<label for=\"$0\"></label>", "Form Label", .emmet),
+                ("ul", "<ul>\n  <li>$0</li>\n</ul>", "Unordered List", .emmet),
+                ("li", "<li>$0</li>", "List Item", .emmet),
                 ("a href", "<a href=\"$0\"></a>", "Anchor Link", .emmet),
                 ("img", "<img src=\"$0\" alt=\"\" />", "Image Element", .emmet),
                 ("script", "<script>\n  $0\n</script>", "Inline Script", .emmet),
@@ -1346,10 +1878,26 @@ public final class CodeIntelligenceService: ObservableObject {
                 ("display: flex", "display: flex;\nalign-items: center;\njustify-content: $0center;", "Flexbox Center", .snippet),
                 ("display: grid", "display: grid;\ngrid-template-columns: repeat($0, 1fr);\ngap: 16px;", "CSS Grid", .snippet),
                 ("background", "background: $0;", "Background", .property),
+                ("background-color", "background-color: $0;", "Background Color", .property),
+                ("color", "color: $0;", "Text Color", .property),
+                ("padding", "padding: $0px;", "Inner Spacing", .property),
+                ("margin", "margin: $0px;", "Outer Spacing", .property),
+                ("gap", "gap: $0px;", "Flex/Grid Gap", .property),
+                ("width", "width: $0;", "Width", .property),
+                ("height", "height: $0;", "Height", .property),
+                ("border", "border: 1px solid $0;", "Border", .property),
                 ("border-radius", "border-radius: $0px;", "Rounded Corners", .property),
                 ("box-shadow", "box-shadow: 0 10px 30px rgba(0, 0, 0, $00.25);", "Drop Shadow", .property),
+                ("font-size", "font-size: $0px;", "Font Size", .property),
+                ("font-weight", "font-weight: $0600;", "Font Weight", .property),
+                ("position", "position: $0relative;", "CSS Position", .property),
                 ("transition", "transition: all $00.2s ease;", "Smooth Transition", .property),
-                ("@media", "@media (max-width: $0768px) {\n  \n}", "Responsive Breakpoint", .snippet)
+                ("transform", "transform: $0;", "Transform", .property),
+                ("cursor", "cursor: $0pointer;", "Cursor Style", .property),
+                ("justify-content", "justify-content: $0center;", "Main Axis Align", .property),
+                ("align-items", "align-items: $0center;", "Cross Axis Align", .property),
+                ("@media", "@media (max-width: $0768px) {\n  \n}", "Responsive Breakpoint", .snippet),
+                ("@keyframes", "@keyframes $0fadeIn {\n  from { opacity: 0; }\n  to { opacity: 1; }\n}", "CSS Animation", .snippet)
             ]
 
         case .sql:

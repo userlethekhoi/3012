@@ -1,10 +1,18 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.8.0 Đã Phát Hành (`v3.8.0-b25` / CI Run `43569189881`)** — Hoàn tất kiểm chứng build xanh 100% trên GitHub Actions với toàn bộ 7 bản vá ổn định `v3.7.3` + nâng cấp UX soạn thảo Mobile Pro: Hàng Tab File chuẩn VS Code tách riêng (mới nhất bên trái, cũ đẩy sang phải, tô sáng tab đang mở), cụm thao tác nhanh `Undo`/`Redo`/`Copy`/`Paste` luôn hiện trên thanh đầu, thanh phụ cuộn ngang kèm menu `Sửa`, và thanh bàn phím 2 hàng `80pt` có phím mũi tên điều hướng con trỏ `←` `↓` `↑` `→` (giữ để lặp) cùng phím chọn khối `Select`, `Home`/`End`, `Dup Line`, `Del Line`.
+> **Trạng thái hiện tại:** **v3.9.0 Build 17 (`in_progress` — Đang chờ CI GitHub Actions build & phát hành `.ipa`)** — Nâng cấp toàn diện **VS Code Dimmed Inline Ghost Text** (`⇥ Tab` hoặc chạm vào chữ mờ để nhận gợi ý trực tiếp ngay cạnh con trỏ) + **Step-by-Step HTML/CSS/JS IntelliSense** (từ `<` -> tên thẻ -> thuộc tính -> giá trị thuộc tính -> auto-close `>` -> thẻ đóng `</...>`, nhận diện `<style>`/`<script>` trong `.html`), cùng **5 Nâng cấp Mobile Pro**: Mở lại Tab vừa đóng (`Cmd+Shift+T` / nút 1 chạm), Ghim Tab bên trái (`Pin Tab`), Nút & phím tắt Chú thích dòng thông minh (`//` hỗ trợ `<!-- -->`, `/* */`, `#`) + Đẩy dòng lên/xuống (`Alt+↑` / `Alt+↓`), Thanh Tìm kiếm & Thay thế trực tiếp Undo-safe (`Cmd+F`) kèm `Ln X, Col Y` + Đi tới dòng (`Ctrl+G`), và đầy đủ phím tắt bàn phím rời.
 
 ---
 
-## Tổng kết Toàn bộ 17 Giai Đoạn Triển Khai
+## Tổng kết Toàn bộ 18 Giai Đoạn Triển Khai
+
+### Phase 18 (v3.9.0): VS Code Inline Ghost Text, HTML/Web Step-by-Step IntelliSense & 5 Mobile Pro Upgrades (`in_progress`)
+- [x] **Tab Pinning & Reopen Closed Tab (`WorkspaceModels.swift`, `WorkspaceManager.swift`):** Thêm `OpenTab.isPinned`, `ClosedTabRecord`, danh sách lịch sử 25 tab vừa đóng (`recentlyClosedTabs`), `togglePinTab(_:)`, `reopenLastClosedTab()` (bảo vệ tab đã ghim khi đóng hàng loạt, đặt tab mới ngay sau các tab ghim).
+- [x] **VS Code Dimmed Inline Ghost Text (`RunestoneEditorView.swift`, `CodeIntelligenceService.swift`, `ProCodingAccessoryBar.swift`):** Bổ sung `GhostCompletionOverlayView` hiển thị gợi ý làm mờ + huy hiệu `⇥` ngay tại vị trí con trỏ (`caretRect`), chạm vào chữ mờ hoặc bấm phím `Tab` (tô xanh khi có gợi ý) để chèn code tức thì.
+- [x] **Step-by-Step HTML / CSS / JS IntelliSense (`CodeIntelligenceService.swift`):** Nhận diện bối cảnh `<style>` (CSS) và `<script>` (JS) trong HTML/Vue/Svelte/Astro; gợi ý từng bước thẻ đóng (`</>` dựa theo stack thẻ mở), tự đóng sau `>`, tên thuộc tính HTML theo từng thẻ, giá trị thuộc tính (`type`, `rel`, `target`, `charset`, ...), tên thẻ từ ký tự `<` đầu tiên, và gợi ý CSS/JS/ngôn ngữ khác ngay từ 1 ký tự.
+- [x] **Toggle Comment & Move Line Up/Down (`ProCodingAccessoryBar.swift`, `RunestoneEditorView.swift`):** Chuẩn hóa chú thích đa ngôn ngữ (`<!-- -->`, `/* */`, `#`, `//`) và đẩy dòng lên/xuống kèm nút `//`, `↑`, `↓`, `:Ln` ngay trên hàng phụ bàn phím + menu `Sửa`.
+- [x] **Inline Find & Replace + Go to Line + Phím tắt bàn phím rời (`App3012Main.swift`):** Thanh Tìm & Thay thế Undo-safe đếm vị trí (`1/N`), bật/tắt `Aa`, nhảy kết quả `↑`/`↓`, tô sáng match bằng `HighlightedRange`, hiển thị live `Ln X, Col Y` + popup Đi tới dòng, nút Ghim/Mở lại tab ở Tab Strip & placeholder, cùng full phím tắt (`Cmd+F`, `Cmd+G`, `Ctrl+G`, `Cmd+W`, `Cmd+Shift+T`, `Cmd+N`, `Opt+↑/↓`, `Esc`).
+- [ ] **CI/CD GitHub Actions Verification (`project.yml` v3.9.0 / Build 17):** Chờ build xanh 100% và xác thực `3012-Unsigned.ipa` trên GitHub Releases `v3.9.0`.
 
 ### Phase 17 (v3.8.0): Hàng Tab VS Code Riêng, Thao Tác Nhanh Undo/Copy/Paste & Phím Mũi Tên Con Trỏ (`completed`)
 - [x] **Tách hàng Tab File chuẩn VS Code (`WorkspaceManager.swift`, `App3012Main.swift`):** Tách danh sách tab khỏi thanh tiêu đề trên cùng thành `openFilesTabStrip` (`35pt`) cuộn ngang độc lập; file mới mở tự động chèn lên đầu bên trái, file mở lâu hơn đẩy dần sang phải; tab đang kích hoạt nổi bật với vạch accent 2.5pt phía trên, chữ đậm và viền sáng, kèm nút `+` tạo file nhanh và context menu đóng tab.
