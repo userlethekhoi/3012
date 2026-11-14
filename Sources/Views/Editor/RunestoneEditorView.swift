@@ -108,12 +108,22 @@ public struct RunestoneEditorView: UIViewRepresentable {
         codingBar.onTriggerFind = { [weak textView] in
             textView?.findInteraction?.presentFindNavigator(showingReplace: true)
         }
+        codingBar.onAfterProgrammaticEdit = { [weak coord] tv in
+            guard let coord else { return }
+            coord.isInternalEdit = true
+            coord.lastKnownText = tv.text
+            coord.parent.onTextChange(tv.text, tv.selectedRange)
+            DispatchQueue.main.async {
+                coord.isInternalEdit = false
+            }
+        }
         textView.inputAccessoryView = codingBar
 
         let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
         textView.addGestureRecognizer(pinch)
 
         applyAppearance(to: textView)
+        context.coordinator.loadedAppearanceSignature = "\(preferences.themeSignature)|\(preferences.fontName)|\(Int(preferences.fontSize * 2))"
         context.coordinator.loadState(into: textView, fileURL: fileURL, code: text, language: language, theme: preferences.makeRunestoneTheme())
         return textView
     }
@@ -140,6 +150,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
                 let targetCursor = min(max(0, safeLoc + cursorOffset), updatedLen)
                 textView.selectedRange = NSRange(location: targetCursor, length: 0)
             }
+            context.coordinator.lastKnownText = textView.text
             onTextChange(textView.text, textView.selectedRange)
             DispatchQueue.main.async {
                 context.coordinator.isInternalEdit = false
@@ -150,11 +161,11 @@ public struct RunestoneEditorView: UIViewRepresentable {
         // 2. Toggle Line Comment (Cmd+/ or Command Palette)
         if context.coordinator.lastToggleCommentToken != toggleCommentToken {
             context.coordinator.lastToggleCommentToken = toggleCommentToken
-            toggleLineComment(in: textView)
+            toggleLineComment(in: textView, coordinator: context.coordinator)
             return
         }
 
-        let externalTextChanged = (!context.coordinator.isInternalEdit && textView.text != text)
+        let externalTextChanged = (!context.coordinator.isInternalEdit && text != context.coordinator.lastKnownText && textView.text != text)
 
         if fileChanged || languageChanged || themeChanged || externalTextChanged {
             let preservedRange = textView.selectedRange
@@ -220,7 +231,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
         }
     }
 
-    private func toggleLineComment(in textView: TextView) {
+    private func toggleLineComment(in textView: TextView, coordinator: Coordinator) {
         guard language != .html && language != .css && language != .markdown else { return }
         let prefix = language.lineCommentPrefix
         let trimmedPrefix = prefix.trimmingCharacters(in: .whitespaces)
@@ -253,8 +264,13 @@ public struct RunestoneEditorView: UIViewRepresentable {
             }
         }
         let replacement = transformed.joined(separator: "\n") + (hasTrailingNewline ? "\n" : "")
+        coordinator.isInternalEdit = true
         textView.replace(lineRange, withText: replacement)
+        coordinator.lastKnownText = textView.text
         onTextChange(textView.text, textView.selectedRange)
+        DispatchQueue.main.async {
+            coordinator.isInternalEdit = false
+        }
     }
 
     public final class Coordinator: NSObject, TextViewDelegate {
@@ -262,6 +278,8 @@ public struct RunestoneEditorView: UIViewRepresentable {
         var loadedFileURL: URL?
         var loadedLanguage: CodeLanguage?
         var loadedAppearanceSignature: String = ""
+        var lastKnownText: String = ""
+        var stateLoadGeneration: Int = 0
         var isInternalEdit: Bool = false
         var lastFindToken: Int = 0
         var lastCompletionToken: Int = 0
@@ -287,6 +305,9 @@ public struct RunestoneEditorView: UIViewRepresentable {
         ) {
             self.loadedFileURL = fileURL
             self.loadedLanguage = language
+            self.lastKnownText = code
+            self.stateLoadGeneration += 1
+            let generation = self.stateLoadGeneration
             let tsLanguage = language.treeSitterLanguage
             DispatchQueue.global(qos: .userInitiated).async {
                 let state: TextViewState
@@ -296,7 +317,11 @@ public struct RunestoneEditorView: UIViewRepresentable {
                     state = TextViewState(text: code, theme: theme)
                 }
                 DispatchQueue.main.async { [weak self, weak textView] in
-                    guard let self, let textView, self.loadedFileURL == fileURL, self.loadedLanguage == language else { return }
+                    guard let self,
+                          let textView,
+                          self.stateLoadGeneration == generation,
+                          self.loadedFileURL == fileURL,
+                          self.loadedLanguage == language else { return }
                     textView.setState(state)
                     if let sel = restoreSelection, sel.location + sel.length <= (code as NSString).length {
                         textView.selectedRange = sel
@@ -349,6 +374,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
                     textView.replace(NSRange(location: safeLoc, length: safeEnd - safeLoc), withText: fullInsert)
                     let cursorTarget = safeLoc + (innerLine as NSString).length
                     textView.selectedRange = NSRange(location: min(cursorTarget, (textView.text as NSString).length), length: 0)
+                    lastKnownText = textView.text
                     parent.onTextChange(textView.text, textView.selectedRange)
                     DispatchQueue.main.async { [weak self] in self?.isInternalEdit = false }
                     return false
@@ -368,6 +394,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
                     let insert = "\n\(leadingIndent)\(indentUnit)"
                     isInternalEdit = true
                     textView.replace(NSRange(location: safeLoc, length: safeEnd - safeLoc), withText: insert)
+                    lastKnownText = textView.text
                     parent.onTextChange(textView.text, textView.selectedRange)
                     DispatchQueue.main.async { [weak self] in self?.isInternalEdit = false }
                     return false
@@ -378,6 +405,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
                     let insert = "\n\(leadingIndent)"
                     isInternalEdit = true
                     textView.replace(NSRange(location: safeLoc, length: safeEnd - safeLoc), withText: insert)
+                    lastKnownText = textView.text
                     parent.onTextChange(textView.text, textView.selectedRange)
                     DispatchQueue.main.async { [weak self] in self?.isInternalEdit = false }
                     return false
@@ -389,6 +417,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
 
         public func textViewDidChange(_ textView: TextView) {
             isInternalEdit = true
+            lastKnownText = textView.text
             parent.onTextChange(textView.text, textView.selectedRange)
             DispatchQueue.main.async { [weak self] in
                 self?.isInternalEdit = false

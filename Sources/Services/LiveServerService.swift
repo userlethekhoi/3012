@@ -103,9 +103,81 @@ public final class LiveServerService: ObservableObject {
         versionBox.value = reloadVersion
     }
 
+    nonisolated public static func encodeRelativePath(_ relativePath: String) -> String {
+        let segments = relativePath
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map { seg -> String in
+                let s = String(seg)
+                return s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? s
+            }
+        return segments.joined(separator: "/")
+    }
+
+    nonisolated private static func firstHTMLFile(in directory: URL) -> URL? {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+        return entries
+            .sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
+            .first { url in
+                let ext = url.pathExtension.lowercased()
+                return ext == "html" || ext == "htm"
+            }
+    }
+
+    nonisolated private static func buildDirectoryListingHTML(for directory: URL, relativePath: String) -> String {
+        let entries = ((try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []).sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
+
+        let baseRel = relativePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let listItems: String = entries.map { url in
+            let name = url.lastPathComponent
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            let display = isDir ? "\(name)/" : name
+            let hrefRel = baseRel.isEmpty ? name : "\(baseRel)/\(name)"
+            let hrefEncoded = "/" + encodeRelativePath(hrefRel)
+            let escapedDisplay = display
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+            return "<li><a href=\"\(hrefEncoded)\">\(escapedDisplay)</a></li>"
+        }.joined(separator: "\n")
+
+        let titlePath = baseRel.isEmpty ? "/" : "/\(baseRel)"
+        return """
+        <!DOCTYPE html>
+        <html lang="vi">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>3012 Live Server — \(titlePath)</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; padding: 1.5rem; line-height: 1.6; }
+            h2 { color: #10b981; margin-bottom: 0.5rem; }
+            ul { list-style: none; padding: 0; }
+            li { margin: 0.4rem 0; }
+            a { color: #38bdf8; text-decoration: none; font-family: monospace; font-size: 1rem; }
+          </style>
+        </head>
+        <body>
+          <h2>3012 Live Server — \(titlePath)</h2>
+          <p>Không có tệp <code>index.html</code>. Chọn tệp trong thư mục:</p>
+          <ul>\(listItems.isEmpty ? "<li><em>(Thư mục trống)</em></li>" : listItems)</ul>
+        </body>
+        </html>
+        """
+    }
+
     public func openInSafari(relativePath: String = "index.html") {
-        let clean = relativePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let urlString = clean.isEmpty ? serverBaseURLString : "http://localhost:\(port)/\(clean)"
+        let encoded = Self.encodeRelativePath(relativePath)
+        let urlString = encoded.isEmpty ? serverBaseURLString : "http://localhost:\(port)/\(encoded)"
         if let url = URL(string: urlString) {
             UIApplication.shared.open(url)
         }
@@ -161,23 +233,49 @@ public final class LiveServerService: ObservableObject {
             }
 
             let decodedPath = pathOnly.removingPercentEncoding ?? pathOnly
-            var relative = decodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            if relative.isEmpty { relative = "index.html" }
+            let relative = decodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
-            // Prevent path traversal outside workspace root
-            let targetURL = rootDir.appendingPathComponent(relative).standardizedFileURL
-            let rootPrefix = rootDir.standardizedFileURL.path
-            guard targetURL.path.hasPrefix(rootPrefix) else {
+            // Prevent path traversal outside workspace root (resolving /var vs /private/var symlinks)
+            let resolvedRoot = rootDir.resolvingSymlinksInPath().standardizedFileURL
+            let targetURL = (relative.isEmpty ? resolvedRoot : resolvedRoot.appendingPathComponent(relative))
+                .resolvingSymlinksInPath()
+                .standardizedFileURL
+            let rootPath = resolvedRoot.path
+            let isWithinRoot = (targetURL.path == rootPath) || targetURL.path.hasPrefix(rootPath.hasSuffix("/") ? rootPath : rootPath + "/")
+            guard isWithinRoot else {
                 let forbidden = Data("403 Forbidden".utf8)
                 let resp = Self.buildHTTPResponse(status: "403 Forbidden", contentType: "text/plain", body: forbidden)
                 connection.send(content: resp, completion: .contentProcessed { _ in connection.cancel() })
                 return
             }
 
+            let fm = FileManager.default
             var resolvedURL = targetURL
             var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: resolvedURL.path, isDirectory: &isDir), isDir.boolValue {
-                resolvedURL = resolvedURL.appendingPathComponent("index.html")
+            var directoryToList: URL? = nil
+
+            if fm.fileExists(atPath: resolvedURL.path, isDirectory: &isDir), isDir.boolValue {
+                let indexURL = resolvedURL.appendingPathComponent("index.html")
+                if fm.fileExists(atPath: indexURL.path) {
+                    resolvedURL = indexURL
+                } else if let fallbackHTML = Self.firstHTMLFile(in: resolvedURL) {
+                    resolvedURL = fallbackHTML
+                } else {
+                    directoryToList = resolvedURL
+                }
+            } else if relative == "index.html", !fm.fileExists(atPath: resolvedURL.path) {
+                if let fallbackHTML = Self.firstHTMLFile(in: resolvedRoot) {
+                    resolvedURL = fallbackHTML
+                } else {
+                    directoryToList = resolvedRoot
+                }
+            }
+
+            if let listDir = directoryToList {
+                let listingHTML = Self.buildDirectoryListingHTML(for: listDir, relativePath: relative)
+                let resp = Self.buildHTTPResponse(status: "200 OK", contentType: "text/html; charset=utf-8", body: Data(listingHTML.utf8))
+                connection.send(content: resp, completion: .contentProcessed { _ in connection.cancel() })
+                return
             }
 
             guard var fileData = try? Data(contentsOf: resolvedURL) else {

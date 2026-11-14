@@ -5,6 +5,7 @@ import UIKit
 public enum WorkspaceDocumentPickerMode: String, Identifiable {
     case folder
     case zip
+    case themeJSON
 
     public var id: String { rawValue }
 }
@@ -31,6 +32,9 @@ public struct SystemDocumentPickerSheet: UIViewControllerRepresentable {
             asCopy = false
         case .zip:
             types = [.zip, .archive, .data]
+            asCopy = true
+        case .themeJSON:
+            types = [.json, .data]
             asCopy = true
         }
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: asCopy)
@@ -447,6 +451,8 @@ public struct LeftExplorerDrawer: View {
                     if workspace.importAndOpenZip(from: pickedURL) {
                         liveServer.updateRootDirectory(workspace.rootURL)
                     }
+                case .themeJSON:
+                    break
                 }
             }
         }

@@ -500,11 +500,27 @@ public final class LocalDaemonService: ObservableObject {
         let pid = handle.pid
         let root = handle.workspaceRoot
 
-        ctx.exceptionHandler = { [weak self] _, exception in
+        ctx.exceptionHandler = { [weak self, weak handle] _, exception in
             guard let self, let exc = exception else { return }
             let msg = "[JS Error] \(exc)"
             Task { @MainActor in
                 self.appendLog(pid: pid, line: msg)
+                let currentRestartCount = self.jobs.first(where: { $0.pid == pid })?.restartCount ?? 0
+                if self.autoRestartOnError,
+                   let handle,
+                   !handle.cancelled,
+                   currentRestartCount < 5 {
+                    self.appendLog(pid: pid, line: "[Auto-Restart] Bot encountered an error; restarting in 3s...")
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        guard let self,
+                              self.autoRestartOnError,
+                              self.jobs.first(where: { $0.pid == pid })?.isRunning == true,
+                              let activeHandle = self.runtimes[pid],
+                              !activeHandle.cancelled else { return }
+                        self.restartJob(pid: pid, workspaceRoot: root)
+                    }
+                }
             }
         }
 

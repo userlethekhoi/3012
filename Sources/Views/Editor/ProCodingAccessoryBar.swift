@@ -8,6 +8,7 @@ public final class ProCodingAccessoryBar: UIInputView {
     public var onAcceptPrimaryCompletion: (() -> Bool)?
     public var onTriggerAI: (() -> Void)?
     public var onTriggerFind: (() -> Void)?
+    public var onAfterProgrammaticEdit: ((TextView) -> Void)?
 
     private var isSelectionMode: Bool = false {
         didSet {
@@ -110,6 +111,7 @@ public final class ProCodingAccessoryBar: UIInputView {
             }
             let spaces = String(repeating: " ", count: self.tabWidthProvider?() ?? 2)
             tv.insertText(spaces)
+            self.onAfterProgrammaticEdit?(tv)
         }
         stack.addArrangedSubview(tabBtn)
 
@@ -136,12 +138,16 @@ public final class ProCodingAccessoryBar: UIInputView {
 
         // 6. Undo / Redo / Find
         let undoBtn = makeActionButton(title: nil, systemIcon: "arrow.uturn.backward", accent: false) { [weak self] in
-            self?.feedback.impactOccurred()
-            self?.targetTextView?.undoManager?.undo()
+            guard let self, let tv = self.targetTextView else { return }
+            self.feedback.impactOccurred()
+            tv.undoManager?.undo()
+            self.onAfterProgrammaticEdit?(tv)
         }
         let redoBtn = makeActionButton(title: nil, systemIcon: "arrow.uturn.forward", accent: false) { [weak self] in
-            self?.feedback.impactOccurred()
-            self?.targetTextView?.undoManager?.redo()
+            guard let self, let tv = self.targetTextView else { return }
+            self.feedback.impactOccurred()
+            tv.undoManager?.redo()
+            self.onAfterProgrammaticEdit?(tv)
         }
         let findBtn = makeActionButton(title: nil, systemIcon: "magnifyingglass", accent: false) { [weak self] in
             self?.feedback.impactOccurred()
@@ -348,19 +354,29 @@ public final class ProCodingAccessoryBar: UIInputView {
         container.addAction(UIAction { [weak self] _ in
             guard let self, let tv = self.targetTextView else { return }
             self.feedback.impactOccurred()
-            if autoPairPrimary && secondary.count == 1 {
-                tv.insertText(primary + secondary)
-                let cur = tv.selectedRange
-                if cur.location > 0 {
-                    tv.selectedRange = NSRange(location: cur.location - 1, length: 0)
+            if autoPairPrimary, let closing = Self.closingPair(for: primary) {
+                let ns = tv.text as NSString
+                let sel = tv.selectedRange
+                if sel.length > 0 && sel.location >= 0 && sel.location + sel.length <= ns.length {
+                    let selectedText = ns.substring(with: sel)
+                    let wrapped = primary + selectedText + closing
+                    tv.replace(sel, withText: wrapped)
+                    let innerLoc = sel.location + (primary as NSString).length
+                    tv.selectedRange = NSRange(location: innerLoc, length: (selectedText as NSString).length)
+                } else {
+                    tv.insertText(primary + closing)
+                    let cur = tv.selectedRange
+                    let closeLen = (closing as NSString).length
+                    if cur.location >= closeLen {
+                        tv.selectedRange = NSRange(location: cur.location - closeLen, length: 0)
+                    }
                 }
             } else {
                 tv.insertText(primary)
             }
+            self.onAfterProgrammaticEdit?(tv)
         }, for: .touchUpInside)
 
-        let swipeUp = UISwipeGestureRecognizer(target: nil, action: nil)
-        swipeUp.direction = .up
         container.addGestureRecognizer(VerticalFlickGesture { [weak self] in
             guard let self, let tv = self.targetTextView else { return }
             self.feedback.impactOccurred()
@@ -370,9 +386,21 @@ public final class ProCodingAccessoryBar: UIInputView {
             } else {
                 tv.insertText(secondary)
             }
+            self.onAfterProgrammaticEdit?(tv)
         })
 
         return container
+    }
+
+    private static func closingPair(for opener: String) -> String? {
+        switch opener {
+        case "{": return "}"
+        case "(": return ")"
+        case "[": return "]"
+        case "\"": return "\""
+        case "'": return "'"
+        default: return nil
+        }
     }
 }
 

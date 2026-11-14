@@ -89,7 +89,11 @@ public final class ExtensionStoreService: ObservableObject {
         defer { installingID = nil }
 
         do {
-            let (tempFile, _) = try await URLSession.shared.download(from: dlURL)
+            let (tempFile, resp) = try await URLSession.shared.download(from: dlURL)
+            if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                storeMessage = "Không tải được \(item.displayName).vsix (HTTP \(http.statusCode))."
+                return
+            }
             let fm = FileManager.default
             let unzipDir = fm.temporaryDirectory.appendingPathComponent("vsix_\(UUID().uuidString)", isDirectory: true)
             try fm.createDirectory(at: unzipDir, withIntermediateDirectories: true)
@@ -182,7 +186,7 @@ public final class ExtensionStoreService: ObservableObject {
     }
 
     // Strip // and /* */ comments from JSONC files common in VS Code themes/snippets
-    private static func stripJSONComments(from data: Data) -> Data? {
+    nonisolated public static func stripJSONComments(from data: Data) -> Data? {
         guard let text = String(data: data, encoding: .utf8) else { return data }
         var out = ""
         var inString = false

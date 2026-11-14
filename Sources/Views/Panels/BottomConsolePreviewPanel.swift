@@ -610,7 +610,11 @@ public struct BottomConsolePreviewPanel: View {
             return URL(string: "http://127.0.0.1:\(tunnelPort)")
         }
         guard liveServer.isRunning else { return nil }
-        return URL(string: "\(liveServer.serverBaseURLString)/\(activeHTMLRelativePath())")
+        let encoded = LiveServerService.encodeRelativePath(activeHTMLRelativePath())
+        if encoded.isEmpty {
+            return URL(string: liveServer.serverBaseURLString)
+        }
+        return URL(string: "\(liveServer.serverBaseURLString)/\(encoded)")
     }
 
     private func triggerJSEval() {
@@ -642,6 +646,21 @@ public struct BottomConsolePreviewPanel: View {
     private func activeHTMLRelativePath() -> String {
         if let tab = workspace.activeTab, tab.language == .html {
             return workspace.relativePath(for: tab.fileURL)
+        }
+        if let htmlTab = workspace.openTabs.first(where: { $0.language == .html }) {
+            return workspace.relativePath(for: htmlTab.fileURL)
+        }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: workspace.rootURL.appendingPathComponent("index.html").path) {
+            return "index.html"
+        }
+        if let firstHTML = (try? fm.contentsOfDirectory(atPath: workspace.rootURL.path))?
+            .sorted()
+            .first(where: { name in
+                let lower = name.lowercased()
+                return lower.hasSuffix(".html") || lower.hasSuffix(".htm")
+            }) {
+            return firstHTML
         }
         return "index.html"
     }

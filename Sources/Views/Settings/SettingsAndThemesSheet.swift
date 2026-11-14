@@ -14,6 +14,7 @@ public struct SettingsAndThemesSheet: View {
     @State private var showThemeStudio: Bool = false
     @State private var copiedBanner: Bool = false
     @State private var copiedTelegram: Bool = false
+    @State private var themeImportMessage: String? = nil
 
     public init(
         preferences: EditorPreferences,
@@ -321,6 +322,12 @@ public struct SettingsAndThemesSheet: View {
                     } label: {
                         Label(preferences.tr("Import File Theme .json từ VS Code", "Import VS Code Theme .json", zh: "导入 VS Code .json 主题", ja: "VS Code .json テーマを読み込む", ko: "VS Code 테마 .json 가져오기", ru: "Импорт темы .json из VS Code", es: "Importar tema .json de VS Code"), systemImage: "square.and.arrow.down")
                     }
+
+                    if let msg = themeImportMessage {
+                        Text(msg)
+                            .font(.footnote)
+                            .foregroundColor(msg.hasPrefix("[OK]") ? .green : .red)
+                    }
                 }
 
                 // MARK: - 5. Font & Editor Layout
@@ -510,17 +517,28 @@ public struct SettingsAndThemesSheet: View {
             .sheet(isPresented: $showThemeStudio) {
                 ThemeStudioEditorSheet(preferences: preferences)
             }
-            .fileImporter(
-                isPresented: $showJSONImporter,
-                allowedContentTypes: [.json],
-                allowsMultipleSelection: false
-            ) { result in
-                if case .success(let urls) = result, let url = urls.first {
-                    _ = url.startAccessingSecurityScopedResource()
-                    defer { url.stopAccessingSecurityScopedResource() }
-                    if let data = try? Data(contentsOf: url),
-                       let imported = VSCodeThemeImporter.parse(jsonData: data, fallbackName: url.deletingPathExtension().lastPathComponent) {
+            .sheet(isPresented: $showJSONImporter) {
+                SystemDocumentPickerSheet(mode: .themeJSON) { pickedURL in
+                    let fallbackName = pickedURL.deletingPathExtension().lastPathComponent
+                    guard let raw = try? Data(contentsOf: pickedURL) else {
+                        themeImportMessage = preferences.tr(
+                            "Không đọc được file theme .json đã chọn.",
+                            "Could not read the selected theme .json file."
+                        )
+                        return
+                    }
+                    let cleaned = ExtensionStoreService.stripJSONComments(from: raw) ?? raw
+                    if let imported = VSCodeThemeImporter.parse(jsonData: cleaned, fallbackName: fallbackName) {
                         preferences.upsertCustomTheme(imported)
+                        themeImportMessage = preferences.tr(
+                            "[OK] Đã nhập & áp dụng theme \"\(imported.name)\".",
+                            "[OK] Imported & applied theme \"\(imported.name)\"."
+                        )
+                    } else {
+                        themeImportMessage = preferences.tr(
+                            "File .json không đúng cấu trúc VS Code Color Theme.",
+                            "Selected .json is not a valid VS Code Color Theme."
+                        )
                     }
                 }
             }

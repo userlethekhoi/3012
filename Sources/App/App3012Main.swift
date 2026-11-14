@@ -20,7 +20,7 @@ struct App3012Main: App {
     @StateObject private var sshService = SSHWorkspaceService()
     @StateObject private var extStore = ExtensionStoreService()
     @StateObject private var intelligence = CodeIntelligenceService()
-    @StateObject private var timelineService = FileTimelineAndArchiveService()
+    @StateObject private var timelineService = FileTimelineAndArchiveService.shared
     @StateObject private var theosService = TheosBuildService()
     @StateObject private var daemonService = LocalDaemonService()
 
@@ -374,6 +374,9 @@ public struct MainIDEWorkspaceView: View {
             workspace.handleIncomingURL(url)
             liveServer.updateRootDirectory(workspace.rootURL)
         }
+        .onChange(of: workspace.rootURL) { _, newRoot in
+            liveServer.updateRootDirectory(newRoot)
+        }
         .sheet(item: $rootDocumentPickerMode) { mode in
             SystemDocumentPickerSheet(mode: mode) { pickedURL in
                 switch mode {
@@ -384,6 +387,8 @@ public struct MainIDEWorkspaceView: View {
                     if workspace.importAndOpenZip(from: pickedURL) {
                         liveServer.updateRootDirectory(workspace.rootURL)
                     }
+                case .themeJSON:
+                    break
                 }
             }
         }
