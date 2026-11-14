@@ -1,17 +1,17 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.9.1 Đang Kiểm Chứng CI (Build 18)** — Bổ sung **Mở File Lẻ / Chọn Nhiều File từ Files.app** (`openExternalSingleFile` hỗ trợ đồng bộ 2 chiều qua `NSFileCoordinator`, hỗ trợ cả `Cmd+O` và tap trực tiếp file bên ngoài), **Trình Hướng Dẫn & Đồng Bộ Đường Dẫn `Makefile` Theos** (`syncMakefileSourceFiles` tự quét `.x`/`.xm`/`.m`/`.mm`/`.c`/`.cpp` & `-I./HeaderDir`), **Icon File Chuẩn VS Code Seti** theo từng đuôi file & tên file (`.x`, `.xm`, `.h`, `Makefile`, `control`, `.deb`, `.ipa`, ...), và **Kéo Điều Chỉnh Độ Rộng / Chiều Cao Khung Split View** (`resizableSplitBar` kèm double-tap reset cho Markdown Split, Bottom Preview/Console & AI Agent).
+> **Trạng thái hiện tại:** **v3.9.1 Đã Phát Hành (`v3.9.1-b28` / CI Run `43578172293`)** — Bổ sung **Mở File Lẻ / Chọn Nhiều File từ Files.app** (`openExternalSingleFile` hỗ trợ đồng bộ 2 chiều qua `NSFileCoordinator`, hỗ trợ cả `Cmd+O` và tap trực tiếp file bên ngoài), **Trình Hướng Dẫn & Đồng Bộ Đường Dẫn `Makefile` Theos** (`syncMakefileSourceFiles` tự quét `.x`/`.xm`/`.m`/`.mm`/`.c`/`.cpp` & `-I./HeaderDir`), **Icon File Chuẩn VS Code Seti** theo từng đuôi file & tên file (`.x`, `.xm`, `.h`, `Makefile`, `control`, `.deb`, `.ipa`, ...), và **Kéo Điều Chỉnh Độ Rộng / Chiều Cao Khung Split View** (`resizableSplitBar` kèm double-tap reset cho Markdown Split, Bottom Preview/Console & AI Agent).
 
 ---
 
 ## Tổng kết Toàn bộ 19 Giai Đoạn Triển Khai
 
-### Phase 19 (v3.9.1): Mở File Lẻ, Đồng Bộ Đường Dẫn Makefile Theos, Icon File VS Code & Split View Kéo Giãn (`in_progress`)
+### Phase 19 (v3.9.1): Mở File Lẻ, Đồng Bộ Đường Dẫn Makefile Theos, Icon File VS Code & Split View Kéo Giãn (`completed`)
 - [x] **Mở File Lẻ & Chọn Nhiều File (`WorkspaceManager.swift`, `LeftExplorerDrawer.swift`, `App3012Main.swift`):** Thêm `WorkspaceDocumentPickerMode.singleFile` (`UIDocumentPickerViewController` hỗ trợ `[.data, .content, .text, .sourceCode]`, cho phép chọn nhiều file cùng lúc) và `openExternalSingleFile(from:)` tự nạp vào Workspace, giữ security-scoped bookmark & đồng bộ 2 chiều về tệp gốc qua `NSFileCoordinator`, gắn nút mở nhanh trên Tab Strip, Explorer, Menu `⋯`, Màn hình chào, Command Palette & `Cmd+O`.
 - [x] **Trợ Lý Đường Dẫn `Makefile` Theos (`TheosBuildService.swift`, `TheosBuilderSheet.swift`):** Giải thích rõ biến `$(THEOS)` / `$(THEOS_MAKE_PATH)` vs `<Tweak>_FILES` / `-I` trong TheosBuilderSheet và bổ sung nút **Tự động quét & điền `_FILES` vào Makefile** (`syncMakefileSourceFiles`) + **Mở file Makefile**.
 - [x] **Icon File Chuẩn VS Code Seti (`IDEVectorIcons.swift`, `LeftExplorerDrawer.swift`, `App3012Main.swift`):** Nâng cấp `FileLanguageIconView(language:fileName:size:)` hiển thị màu & biểu tượng riêng biệt cho toàn bộ 64 ngôn ngữ cùng file đặc biệt (`.x`, `.xm`, `.h`/`.hpp`, `.m`/`.mm`, `Makefile`, `control`, `Package.swift`, `xtool.yml`, `.deb`/`.ipa`/`.dylib`/`.zip`).
 - [x] **Khung Chia Đôi (Split View) Kéo Giãn Tự Do (`App3012Main.swift`):** Bổ sung `resizableSplitBar` cho cả Markdown Split (ngang & dọc), Bottom Console/Live Preview Split (chiều cao 120pt–80%), và AI Agent Panel (chiều rộng 240pt–65%), kèm chạm đúp để đặt lại tỷ lệ mặc định.
-- [ ] **CI/CD GitHub Actions Verification (`project.yml` v3.9.1 / Build 18):** Kiểm chứng build xanh `3012-Unsigned.ipa`.
+- [x] **CI/CD GitHub Actions Verification (`project.yml` v3.9.1 / Build 18):** Build xanh 100% (`Run #43578172293`, tag `v3.9.1-b28`, `3012-Unsigned.ipa` `14,376,936` bytes).
 
 ### Phase 18 (v3.9.0): VS Code Inline Ghost Text, HTML/Web Step-by-Step IntelliSense & 5 Mobile Pro Upgrades (`completed`)
 - [x] **Tab Pinning & Reopen Closed Tab (`WorkspaceModels.swift`, `WorkspaceManager.swift`):** Thêm `OpenTab.isPinned`, `ClosedTabRecord`, danh sách lịch sử 25 tab vừa đóng (`recentlyClosedTabs`), `togglePinTab(_:)`, `reopenLastClosedTab()` (bảo vệ tab đã ghim khi đóng hàng loạt, đặt tab mới ngay sau các tab ghim).
