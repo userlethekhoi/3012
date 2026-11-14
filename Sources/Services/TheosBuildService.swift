@@ -878,6 +878,166 @@ public final class TheosBuildService: ObservableObject {
         }
     }
 
+    @MainActor
+    @discardableResult
+    public func syncMakefileSourceFiles(in workspace: WorkspaceManager, isEnglish: Bool = false) -> String {
+        let fm = FileManager.default
+        let rootURL = workspace.rootURL.standardizedFileURL
+        let makefileURL = ["Makefile", "GNUmakefile"]
+            .map { rootURL.appendingPathComponent($0) }
+            .first(where: { fm.fileExists(atPath: $0.path) })
+
+        guard let targetURL = makefileURL,
+              let rawContent = try? String(contentsOf: targetURL, encoding: .utf8) else {
+            return isEnglish
+                ? "Makefile not found in project root."
+                : "Chưa thấy file Makefile / GNUmakefile ở thư mục gốc."
+        }
+
+        let excludedDirs: Set<String> = [".git", ".theos", "packages", ".build", "node_modules", "__MACOSX"]
+        let sourceExts: Set<String> = ["x", "xm", "xi", "xmi", "m", "mm", "c", "cpp", "cc", "cxx"]
+        let headerExts: Set<String> = ["h", "hpp", "hh"]
+
+        var sourceFiles: [String] = []
+        var headerDirs: Set<String> = []
+        let rootPath = rootURL.path
+
+        if let enumerator = fm.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            for case let url as URL in enumerator {
+                let name = url.lastPathComponent
+                if excludedDirs.contains(name) || name.hasPrefix(".3012") {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                if isDir { continue }
+
+                let stdPath = url.standardizedFileURL.path
+                var relPath = stdPath
+                if relPath.hasPrefix(rootPath) {
+                    relPath = String(relPath.dropFirst(rootPath.count))
+                }
+                relPath = relPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                if relPath.isEmpty { continue }
+
+                let ext = url.pathExtension.lowercased()
+                if sourceExts.contains(ext) {
+                    sourceFiles.append(relPath)
+                } else if headerExts.contains(ext) {
+                    let parentRel = (relPath as NSString).deletingLastPathComponent
+                    if !parentRel.isEmpty && parentRel != "." {
+                        headerDirs.insert(parentRel)
+                    }
+                }
+            }
+        }
+
+        guard !sourceFiles.isEmpty else {
+            return isEnglish
+                ? "No .x/.xm/.m/.mm/.c/.cpp source files found in workspace."
+                : "Không tìm thấy file nguồn .x/.xm/.m/.mm/.c/.cpp nào trong thư mục dự án."
+        }
+
+        let sortedSources = sourceFiles.sorted { a, b in
+            let priorityNames = ["tweak.x", "tweak.xm", "main.m", "main.mm", "main.c"]
+            let aPri = priorityNames.contains((a as NSString).lastPathComponent.lowercased()) ? 0 : 1
+            let bPri = priorityNames.contains((b as NSString).lastPathComponent.lowercased()) ? 0 : 1
+            if aPri != bPri { return aPri < bPri }
+            return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+        }
+
+        var lines = rawContent.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+
+        // Detect TWEAK_NAME or existing *_FILES prefix
+        var detectedName: String? = nil
+        var existingFilesPrefix: String? = nil
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("#") || trimmed.isEmpty { continue }
+            if detectedName == nil, let eqRange = trimmed.range(of: "=") {
+                let lhsRaw = trimmed[..<eqRange.lowerBound].trimmingCharacters(in: CharacterSet(charactersIn: " :+?"))
+                if lhsRaw == "TWEAK_NAME" || lhsRaw == "APPLICATION_NAME" || lhsRaw == "TOOL_NAME" {
+                    let val = trimmed[eqRange.upperBound...].trimmingCharacters(in: .whitespaces)
+                    if let firstToken = val.split(separator: " ").first, !firstToken.isEmpty {
+                        detectedName = String(firstToken)
+                    }
+                } else if lhsRaw.hasSuffix("_FILES") && existingFilesPrefix == nil {
+                    existingFilesPrefix = String(lhsRaw.dropLast(6))
+                }
+            }
+        }
+
+        let targetName = detectedName ?? existingFilesPrefix ?? "Tweak3012"
+        let filesKey = "\(targetName)_FILES"
+        let cflagsKey = "\(targetName)_CFLAGS"
+        let replacementFilesLine = "\(filesKey) = \(sortedSources.joined(separator: " "))"
+
+        var newLines: [String] = []
+        var didReplaceFiles = false
+        var didUpdateCflags = false
+        let missingIncludeFlags = headerDirs.sorted().map { "-I./\($0)" }.filter { !rawContent.contains($0) }
+
+        var idx = 0
+        while idx < lines.count {
+            let line = lines[idx]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let isComment = trimmed.hasPrefix("#")
+
+            if !isComment, !didReplaceFiles, let eqRange = trimmed.range(of: "=") {
+                let lhs = trimmed[..<eqRange.lowerBound].trimmingCharacters(in: CharacterSet(charactersIn: " :+?"))
+                if lhs == filesKey || (existingFilesPrefix != nil && lhs == "\(existingFilesPrefix!)_FILES") {
+                    // Consume any trailing backslash-continuation lines
+                    while idx < lines.count - 1 && lines[idx].trimmingCharacters(in: .whitespaces).hasSuffix("\\") {
+                        idx += 1
+                    }
+                    newLines.append(replacementFilesLine)
+                    didReplaceFiles = true
+                    idx += 1
+                    continue
+                }
+                if lhs == cflagsKey, !missingIncludeFlags.isEmpty, !didUpdateCflags {
+                    newLines.append("\(line) \(missingIncludeFlags.joined(separator: " "))")
+                    didUpdateCflags = true
+                    idx += 1
+                    continue
+                }
+            }
+
+            newLines.append(line)
+            idx += 1
+        }
+
+        if !didReplaceFiles {
+            if let includeIdx = newLines.lastIndex(where: { $0.contains("tweak.mk") || $0.contains("application.mk") || $0.contains("tool.mk") }) {
+                newLines.insert(replacementFilesLine, at: includeIdx)
+            } else {
+                newLines.append(replacementFilesLine)
+            }
+        }
+
+        let updatedContent = newLines.joined(separator: "\n")
+        do {
+            try updatedContent.write(to: targetURL, atomically: true, encoding: .utf8)
+            workspace.reloadTree()
+            if let tabIdx = workspace.openTabs.firstIndex(where: { $0.fileURL.standardizedFileURL == targetURL.standardizedFileURL }) {
+                workspace.openTabs[tabIdx].content = updatedContent
+                workspace.openTabs[tabIdx].savedContent = updatedContent
+            }
+            let flagNote = missingIncludeFlags.isEmpty ? "" : " (\(missingIncludeFlags.joined(separator: " ")))"
+            return isEnglish
+                ? "Synced \(sortedSources.count) source file(s) into \(filesKey)\(flagNote)."
+                : "Đã đồng bộ \(sortedSources.count) file nguồn vào \(filesKey)\(flagNote)."
+        } catch {
+            return isEnglish
+                ? "Failed to write Makefile: \(error.localizedDescription)"
+                : "Không ghi được Makefile: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - Helpers
     private func appendLog(_ text: String, runner: CodeRunnerService?) {
         buildLog += text

@@ -96,6 +96,14 @@ public struct MainIDEWorkspaceView: View {
     @State private var showGoToLineAlert: Bool = false
     @State private var goToLineInput: String = ""
 
+    // Resizable Split View States (Editor/Markdown Split, Bottom Panel Height, Right AI Agent Width)
+    @State private var editorSplitRatio: CGFloat = 0.50
+    @State private var dragStartEditorSplitRatio: CGFloat? = nil
+    @State private var customBottomPanelHeight: CGFloat? = nil
+    @State private var dragStartBottomHeight: CGFloat? = nil
+    @State private var rightAIPanelRatio: CGFloat = 0.38
+    @State private var dragStartRightAIWidth: CGFloat? = nil
+
     public var body: some View {
         let palette = preferences.activePalette
 
@@ -133,7 +141,28 @@ public struct MainIDEWorkspaceView: View {
                             }
 
                             if showBottomPanel {
-                                Divider().overlay(Color.white.opacity(0.12))
+                                let maxBottomH = max(160, geo.size.height * 0.80)
+                                let activeBottomH = min(
+                                    max(customBottomPanelHeight ?? bottomDetent.height(in: geo.size.height), 120),
+                                    maxBottomH
+                                )
+                                resizableSplitBar(
+                                    isHorizontal: true,
+                                    palette: palette,
+                                    onDragChanged: { value in
+                                        if dragStartBottomHeight == nil {
+                                            dragStartBottomHeight = activeBottomH
+                                        }
+                                        let base = dragStartBottomHeight ?? activeBottomH
+                                        customBottomPanelHeight = min(max(base - value.translation.height, 120), maxBottomH)
+                                    },
+                                    onDragEnded: {
+                                        dragStartBottomHeight = nil
+                                    },
+                                    onDoubleTapReset: {
+                                        customBottomPanelHeight = nil
+                                    }
+                                )
                                 BottomConsolePreviewPanel(
                                     selectedTab: $bottomTab,
                                     detent: $bottomDetent,
@@ -161,13 +190,35 @@ public struct MainIDEWorkspaceView: View {
                                         }
                                     }
                                 )
-                                .frame(height: bottomDetent.height(in: geo.size.height))
+                                .frame(height: activeBottomH)
+                                .onChange(of: bottomDetent) { _, _ in
+                                    customBottomPanelHeight = nil
+                                }
                             }
                         }
 
                         // Side-by-side Coding Agent Panel when screen is wide (Landscape iPhone / iPad)
                         if showRightAIPanel && isWideLayout {
-                            Divider().overlay(Color.white.opacity(0.12))
+                            let maxAIW = max(280, geo.size.width * 0.65)
+                            let activeAIW = min(max(geo.size.width * rightAIPanelRatio, 240), maxAIW)
+                            resizableSplitBar(
+                                isHorizontal: false,
+                                palette: palette,
+                                onDragChanged: { value in
+                                    if dragStartRightAIWidth == nil {
+                                        dragStartRightAIWidth = activeAIW
+                                    }
+                                    let baseW = dragStartRightAIWidth ?? activeAIW
+                                    let clampedW = min(max(baseW - value.translation.width, 240), maxAIW)
+                                    rightAIPanelRatio = clampedW / max(geo.size.width, 1)
+                                },
+                                onDragEnded: {
+                                    dragStartRightAIWidth = nil
+                                },
+                                onDoubleTapReset: {
+                                    rightAIPanelRatio = 0.38
+                                }
+                            )
                             AIAgentSidePanel(
                                 aiService: aiService,
                                 workspace: workspace,
@@ -179,7 +230,7 @@ public struct MainIDEWorkspaceView: View {
                                     }
                                 }
                             )
-                            .frame(width: min(max(geo.size.width * 0.38, 300), 420))
+                            .frame(width: activeAIW)
                         }
                     }
                 }
@@ -213,6 +264,9 @@ public struct MainIDEWorkspaceView: View {
                         onOpenTheosBuilder: {
                             showLeftExplorer = false
                             showTheosBuilderSheet = true
+                        },
+                        onRequestOpenSingleFile: {
+                            rootDocumentPickerMode = .singleFile
                         },
                         onRequestOpenFolder: {
                             rootDocumentPickerMode = .folder
@@ -403,19 +457,31 @@ public struct MainIDEWorkspaceView: View {
             liveServer.updateRootDirectory(newRoot)
         }
         .sheet(item: $rootDocumentPickerMode) { mode in
-            SystemDocumentPickerSheet(mode: mode) { pickedURL in
-                switch mode {
-                case .folder:
-                    workspace.switchWorkspaceFolder(to: pickedURL)
-                    liveServer.updateRootDirectory(workspace.rootURL)
-                case .zip:
-                    if workspace.importAndOpenZip(from: pickedURL) {
+            SystemDocumentPickerSheet(
+                mode: mode,
+                onPickURL: { pickedURL in
+                    switch mode {
+                    case .singleFile:
+                        workspace.openExternalSingleFile(from: pickedURL)
                         liveServer.updateRootDirectory(workspace.rootURL)
+                    case .folder:
+                        workspace.switchWorkspaceFolder(to: pickedURL)
+                        liveServer.updateRootDirectory(workspace.rootURL)
+                    case .zip:
+                        if workspace.importAndOpenZip(from: pickedURL) {
+                            liveServer.updateRootDirectory(workspace.rootURL)
+                        }
+                    case .themeJSON:
+                        break
                     }
-                case .themeJSON:
-                    break
-                }
-            }
+                },
+                onPickURLs: mode == .singleFile ? { pickedURLs in
+                    for url in pickedURLs {
+                        workspace.openExternalSingleFile(from: url)
+                    }
+                    liveServer.updateRootDirectory(workspace.rootURL)
+                } : nil
+            )
         }
         .sheet(item: $shareZipItem) { item in
             ZipActivityShareSheet(fileURL: item.url)
@@ -464,22 +530,107 @@ public struct MainIDEWorkspaceView: View {
         if showMarkdownOnly {
             MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette)
         } else if showMarkdownSplit {
-            if isWide {
-                HStack(spacing: 0) {
-                    editorWithAutocompleteOverlay(activeTab: activeTab, palette: palette)
-                    Divider().overlay(Color.white.opacity(0.12))
-                    MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette)
-                }
-            } else {
-                VStack(spacing: 0) {
-                    editorWithAutocompleteOverlay(activeTab: activeTab, palette: palette)
-                    Divider().overlay(Color.white.opacity(0.12))
-                    MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette)
+            GeometryReader { splitGeo in
+                if isWide {
+                    let availW = max(160, splitGeo.size.width - 14)
+                    let leftW = min(max(availW * editorSplitRatio, 100), max(100, availW - 100))
+                    let rightW = max(100, availW - leftW)
+                    HStack(spacing: 0) {
+                        editorWithAutocompleteOverlay(activeTab: activeTab, palette: palette)
+                            .frame(width: leftW)
+                        resizableSplitBar(
+                            isHorizontal: false,
+                            palette: palette,
+                            onDragChanged: { value in
+                                if dragStartEditorSplitRatio == nil {
+                                    dragStartEditorSplitRatio = editorSplitRatio
+                                }
+                                let baseRatio = dragStartEditorSplitRatio ?? editorSplitRatio
+                                let delta = value.translation.width / max(availW, 1)
+                                editorSplitRatio = min(max(baseRatio + delta, 0.22), 0.78)
+                            },
+                            onDragEnded: {
+                                dragStartEditorSplitRatio = nil
+                            },
+                            onDoubleTapReset: {
+                                editorSplitRatio = 0.50
+                            }
+                        )
+                        MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette)
+                            .frame(width: rightW)
+                    }
+                } else {
+                    let availH = max(160, splitGeo.size.height - 14)
+                    let topH = min(max(availH * editorSplitRatio, 90), max(90, availH - 90))
+                    let bottomH = max(90, availH - topH)
+                    VStack(spacing: 0) {
+                        editorWithAutocompleteOverlay(activeTab: activeTab, palette: palette)
+                            .frame(height: topH)
+                        resizableSplitBar(
+                            isHorizontal: true,
+                            palette: palette,
+                            onDragChanged: { value in
+                                if dragStartEditorSplitRatio == nil {
+                                    dragStartEditorSplitRatio = editorSplitRatio
+                                }
+                                let baseRatio = dragStartEditorSplitRatio ?? editorSplitRatio
+                                let delta = value.translation.height / max(availH, 1)
+                                editorSplitRatio = min(max(baseRatio + delta, 0.22), 0.78)
+                            },
+                            onDragEnded: {
+                                dragStartEditorSplitRatio = nil
+                            },
+                            onDoubleTapReset: {
+                                editorSplitRatio = 0.50
+                            }
+                        )
+                        MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette)
+                            .frame(height: bottomH)
+                    }
                 }
             }
         } else {
             editorWithAutocompleteOverlay(activeTab: activeTab, palette: palette)
         }
+    }
+
+    @ViewBuilder
+    private func resizableSplitBar(
+        isHorizontal: Bool,
+        palette: IDEColorPalette,
+        onDragChanged: @escaping (DragGesture.Value) -> Void,
+        onDragEnded: @escaping () -> Void,
+        onDoubleTapReset: @escaping () -> Void
+    ) -> some View {
+        ZStack {
+            Rectangle()
+                .fill(Color(hex: palette.headerBackground).opacity(0.90))
+            Capsule()
+                .fill(Color(hex: palette.accent).opacity(0.65))
+                .frame(
+                    width: isHorizontal ? 38 : 3.5,
+                    height: isHorizontal ? 3.5 : 38
+                )
+        }
+        .frame(height: isHorizontal ? 14 : nil)
+        .frame(width: isHorizontal ? nil : 14)
+        .frame(maxWidth: isHorizontal ? .infinity : nil, maxHeight: isHorizontal ? nil : .infinity)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 2, coordinateSpace: .global)
+                .onChanged { value in
+                    onDragChanged(value)
+                }
+                .onEnded { _ in
+                    onDragEnded()
+                }
+        )
+        .onTapGesture(count: 2) {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                onDoubleTapReset()
+            }
+        }
+        .overlay(Divider().overlay(Color.white.opacity(0.12)))
     }
 
     @ViewBuilder
@@ -752,7 +903,7 @@ public struct MainIDEWorkspaceView: View {
                     showLanguagePickerSheet = true
                 } label: {
                     HStack(spacing: 3) {
-                        FileLanguageIconView(language: activeTab.language, size: 9.5)
+                        FileLanguageIconView(language: activeTab.language, fileName: activeTab.title, size: 9.5)
                         Text(activeTab.language.shortBadgeName)
                             .font(.system(size: 9.5, weight: .semibold))
                             .fixedSize(horizontal: true, vertical: false)
@@ -1364,6 +1515,12 @@ public struct MainIDEWorkspaceView: View {
                 }
 
                 Button {
+                    rootDocumentPickerMode = .singleFile
+                } label: {
+                    Label(preferences.tr("Mở File lẻ trên máy (Files)...", "Open File(s) on Device (Files)..."), systemImage: "doc.badge.arrow.up")
+                }
+
+                Button {
                     rootDocumentPickerMode = .folder
                 } label: {
                     Label(preferences.tr("Mở Thư mục trên máy (Files)...", "Open Folder on Device (Files)..."), systemImage: "folder.badge.gearshape")
@@ -1473,6 +1630,19 @@ public struct MainIDEWorkspaceView: View {
             }
             .buttonStyle(.plain)
 
+            // Quick 1-Tap Open Standalone File(s) from Files.app
+            Button {
+                rootDocumentPickerMode = .singleFile
+            } label: {
+                Image(systemName: "doc.badge.arrow.up")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color(hex: palette.foreground))
+                    .frame(width: 26, height: 26)
+                    .background(Color(hex: palette.currentLineBackground))
+                    .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+
             // 1-Tap Reopen Last Closed Tab Button
             if workspace.canReopenClosedTab {
                 Button {
@@ -1519,7 +1689,7 @@ public struct MainIDEWorkspaceView: View {
                                             .font(.system(size: 10.5, weight: .medium))
                                             .foregroundColor(.cyan)
                                     } else {
-                                        FileLanguageIconView(language: tab.language, size: 11)
+                                        FileLanguageIconView(language: tab.language, fileName: tab.title, size: 11)
                                     }
 
                                     Text(tab.title)
@@ -1632,6 +1802,8 @@ public struct MainIDEWorkspaceView: View {
     @ViewBuilder
     private var hardwareKeyboardShortcutsHost: some View {
         ZStack {
+            Button("") { rootDocumentPickerMode = .singleFile }
+                .keyboardShortcut("o", modifiers: .command)
             Button("") { saveActiveTabWithCheckpoint() }
                 .keyboardShortcut("s", modifiers: .command)
             Button("") { triggerSmartRun() }
@@ -1764,29 +1936,43 @@ public struct MainIDEWorkspaceView: View {
                 }
             }
 
-            HStack(spacing: 10) {
+            VStack(spacing: 9) {
                 Button {
-                    rootDocumentPickerMode = .folder
+                    rootDocumentPickerMode = .singleFile
                 } label: {
-                    Label(preferences.tr("Mở Thư mục (Files)", "Open Folder (Files)"), systemImage: "folder")
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(Color(hex: palette.currentLineBackground))
-                        .foregroundColor(Color(hex: palette.foreground))
-                        .cornerRadius(7)
-                }
-
-                Button {
-                    rootDocumentPickerMode = .zip
-                } label: {
-                    Label(preferences.tr("Nhập & Giải nén .zip", "Import & Extract .zip"), systemImage: "doc.zipper")
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
+                    Label(preferences.tr("Mở File lẻ (Files)", "Open Standalone File(s) (Files)"), systemImage: "doc.badge.arrow.up")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
                         .background(Color(hex: palette.accent).opacity(0.18))
                         .foregroundColor(Color(hex: palette.accent))
                         .cornerRadius(7)
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        rootDocumentPickerMode = .folder
+                    } label: {
+                        Label(preferences.tr("Mở Thư mục (Files)", "Open Folder (Files)"), systemImage: "folder")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color(hex: palette.currentLineBackground))
+                            .foregroundColor(Color(hex: palette.foreground))
+                            .cornerRadius(7)
+                    }
+
+                    Button {
+                        rootDocumentPickerMode = .zip
+                    } label: {
+                        Label(preferences.tr("Nhập & Giải nén .zip", "Import & Extract .zip"), systemImage: "doc.zipper")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color(hex: palette.currentLineBackground))
+                            .foregroundColor(Color(hex: palette.foreground))
+                            .cornerRadius(7)
+                    }
                 }
             }
 
@@ -2255,6 +2441,11 @@ public struct MainIDEWorkspaceView: View {
             (preferences.tr("Xem Problems & Báo lỗi trực tiếp", "Show Problems & Inline Diagnostics"), "checklist", { checkSyntaxAndLSPDiagnostics() }),
             (preferences.tr("Treo Bot Telegram & Chạy Ngầm Terminal 24/7 (Trên Máy)", "24/7 Background Terminal & Telegram Bot Runner (On-Device)"), "waveform.path.ecg", { showDaemonManagerSheet = true }),
             (preferences.tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)"), "hammer.fill", { showTheosBuilderSheet = true }),
+            (preferences.tr("Mở File lẻ trên máy (Files)... (Cmd+O)", "Open File(s) from Files... (Cmd+O)"), "doc.badge.arrow.up", {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    rootDocumentPickerMode = .singleFile
+                }
+            }),
             (preferences.tr("Mở Thư mục trên máy (Files)...", "Open Folder on Device (Files)..."), "folder.badge.gearshape", {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     rootDocumentPickerMode = .folder

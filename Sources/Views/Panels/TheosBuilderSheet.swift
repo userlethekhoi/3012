@@ -16,6 +16,7 @@ public struct TheosBuilderSheet: View {
     @State private var showTemplateCreator: Bool = false
     @State private var showPrivacyAlert: Bool = false
     @State private var templateCreatedNotice: String? = nil
+    @State private var makefileSyncNotice: String? = nil
 
     public init(
         theosService: TheosBuildService,
@@ -207,6 +208,59 @@ public struct TheosBuilderSheet: View {
                                  : preferences.tr("Chưa kết nối SSH — mở tab Remote SSH bên trái để đăng nhập VPS", "SSH Disconnected — open Remote SSH tab on the left to sign in"))
                                 .font(.system(size: 12))
                         }
+                    }
+                }
+
+                // MARK: - 3.5 Makefile Path Guide & Auto Sync
+                Section(preferences.tr("Đường Dẫn Makefile & Đồng Bộ File Nguồn", "Makefile Paths & Source Auto-Sync")) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(preferences.tr(
+                            "• Giữ nguyên biến $(THEOS) & $(THEOS_MAKE_PATH) (hệ thống tự trỏ đúng Theos SDK khi build, KHÔNG sửa thành /var/theos).",
+                            "• Keep $(THEOS) & $(THEOS_MAKE_PATH) unchanged (cloud/VPS sets them automatically — never hardcode local paths)."
+                        ))
+                        Text(preferences.tr(
+                            "• Bạn chỉ cần sửa dòng <TenTweak>_FILES = Tweak.xm ... (đường dẫn tương đối tính từ thư mục chứa Makefile) và thêm -I./ThuMucHeader vào _CFLAGS nếu có folder header.",
+                            "• Only edit <Tweak>_FILES = Tweak.xm ... (relative to Makefile folder) and add -I./Headers to _CFLAGS for subfolder headers."
+                        ))
+                    }
+                    .font(.system(size: 11.5))
+                    .foregroundColor(.secondary)
+
+                    Button {
+                        makefileSyncNotice = theosService.syncMakefileSourceFiles(
+                            in: workspace,
+                            isEnglish: !preferences.isVietnamese
+                        )
+                    } label: {
+                        Label(
+                            preferences.tr("Tự động quét & điền _FILES vào Makefile", "Auto-Scan & Sync _FILES into Makefile"),
+                            systemImage: "wand.and.stars"
+                        )
+                        .fontWeight(.semibold)
+                    }
+                    .disabled(!hasTheosProject)
+
+                    Button {
+                        let fm = FileManager.default
+                        let targetURL = ["Makefile", "GNUmakefile"]
+                            .map { workspace.rootURL.appendingPathComponent($0) }
+                            .first(where: { fm.fileExists(atPath: $0.path) })
+                        if let targetURL {
+                            workspace.openFile(at: targetURL)
+                            dismiss()
+                        }
+                    } label: {
+                        Label(
+                            preferences.tr("Mở file Makefile để sửa", "Open Makefile in Editor"),
+                            systemImage: "doc.text"
+                        )
+                    }
+                    .disabled(!hasTheosProject)
+
+                    if let notice = makefileSyncNotice {
+                        Text(notice)
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundColor(.green)
                     }
                 }
 

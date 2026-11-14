@@ -227,68 +227,242 @@ public struct Brand3012WordmarkView: View {
     }
 }
 
-/// Clean Apple SF Symbol + VS Code semantic color icon for all 64 languages (no emojis, no noisy fills).
+/// VS Code Seti-style language & filename icon renderer across all supported languages and special dev files (`.x`, `.xm`, `.h`, `Makefile`, `control`, `.deb`, `.ipa`, etc.).
 public struct FileLanguageIconView: View {
     public let language: CodeLanguage
+    public let fileName: String?
     public var size: CGFloat = 12
 
-    public init(language: CodeLanguage, size: CGFloat = 12) {
+    public init(language: CodeLanguage, fileName: String? = nil, size: CGFloat = 12) {
         self.language = language
+        self.fileName = fileName
         self.size = size
     }
 
-    public var body: some View {
-        Image(systemName: language.systemIcon)
-            .symbolRenderingMode(.hierarchical)
-            .font(.system(size: size, weight: .medium))
-            .foregroundColor(semanticColor(for: language))
-            .frame(width: size + 4, height: size + 4)
+    private enum IconGlyph {
+        case monogram(String, Color)
+        case symbol(String, Color)
     }
 
-    private func semanticColor(for lang: CodeLanguage) -> Color {
-        switch lang {
-        case .html, .svelte, .astro:
-            return Color(red: 0.94, green: 0.40, blue: 0.18) // Coral Orange
-        case .vue:
-            return Color(red: 0.26, green: 0.72, blue: 0.51) // Vue Emerald
+    public var body: some View {
+        let frameSide = size + 5
+        Group {
+            switch resolvedGlyph() {
+            case .monogram(let text, let color):
+                Text(text)
+                    .font(.system(size: max(8, size * (text.count >= 3 ? 0.68 : (text.count == 2 ? 0.78 : 0.94))), weight: .heavy, design: .rounded))
+                    .foregroundColor(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.45)
+            case .symbol(let symbolName, let color):
+                Image(systemName: symbolName)
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: size, weight: .semibold))
+                    .foregroundColor(color)
+            }
+        }
+        .frame(width: frameSide, height: frameSide, alignment: .center)
+    }
+
+    private func resolvedGlyph() -> IconGlyph {
+        if let rawName = fileName?.trimmingCharacters(in: .whitespacesAndNewlines), !rawName.isEmpty {
+            let lowerName = (rawName as NSString).lastPathComponent.lowercased()
+            let ext = (lowerName as NSString).pathExtension
+
+            // Special exact filenames (VS Code Seti style)
+            if lowerName == "makefile" || lowerName == "gnumakefile" {
+                return .symbol("hammer.fill", Color(red: 0.89, green: 0.48, blue: 0.22))
+            }
+            if lowerName == "control" {
+                return .symbol("shippingbox.fill", Color(red: 0.92, green: 0.54, blue: 0.22))
+            }
+            if lowerName == "dockerfile" || lowerName.hasPrefix("dockerfile.") {
+                return .symbol("shippingbox.circle.fill", Color(red: 0.22, green: 0.72, blue: 0.95))
+            }
+            if lowerName == "package.swift" {
+                return .symbol("swift", Color(red: 0.97, green: 0.45, blue: 0.15))
+            }
+            if lowerName == "package.json" || lowerName == "package-lock.json" || lowerName == "tsconfig.json" {
+                return .monogram("{}", Color(red: 0.94, green: 0.76, blue: 0.24))
+            }
+            if lowerName == "cmakelists.txt" {
+                return .monogram("CM", Color(red: 0.22, green: 0.82, blue: 0.62))
+            }
+            if lowerName == ".gitignore" || lowerName == ".gitattributes" || lowerName == ".gitmodules" {
+                return .symbol("arrow.triangle.branch", Color(red: 0.95, green: 0.34, blue: 0.22))
+            }
+            if lowerName == ".env" || lowerName.hasPrefix(".env.") {
+                return .symbol("key.fill", Color(red: 0.96, green: 0.74, blue: 0.20))
+            }
+            if lowerName == "xtool.yml" || lowerName == "project.yml" {
+                return .symbol("wrench.and.screwdriver.fill", Color(red: 0.76, green: 0.48, blue: 0.98))
+            }
+
+            // Extension-specific VS Code overrides (especially Tweaks, Headers, Archives & Binaries)
+            switch ext {
+            case "x", "xi":
+                return .monogram(".x", Color(red: 0.76, green: 0.42, blue: 0.98))
+            case "xm", "xmi":
+                return .monogram("xm", Color(red: 0.88, green: 0.40, blue: 0.96))
+            case "h":
+                return .monogram("H", Color(red: 0.64, green: 0.46, blue: 0.88))
+            case "hpp", "hh", "hxx":
+                return .monogram("H+", Color(red: 0.64, green: 0.46, blue: 0.88))
+            case "m":
+                return .monogram("M", Color(red: 0.34, green: 0.66, blue: 0.98))
+            case "mm":
+                return .monogram("M+", Color(red: 0.46, green: 0.56, blue: 0.98))
+            case "c":
+                return .monogram("C", Color(red: 0.32, green: 0.64, blue: 0.96))
+            case "cpp", "cc", "cxx":
+                return .monogram("C++", Color(red: 0.32, green: 0.64, blue: 0.96))
+            case "jsx":
+                return .symbol("atom", Color(red: 0.96, green: 0.78, blue: 0.22))
+            case "tsx":
+                return .symbol("atom", Color(red: 0.24, green: 0.72, blue: 0.98))
+            case "plist", "entitlements":
+                return .symbol("checklist", Color(red: 0.95, green: 0.55, blue: 0.24))
+            case "svg":
+                return .symbol("circle.square.fill", Color(red: 0.98, green: 0.72, blue: 0.20))
+            case "deb", "ipa", "apk":
+                return .symbol("shippingbox.fill", Color(red: 0.26, green: 0.82, blue: 0.52))
+            case "dylib", "so", "a", "framework":
+                return .symbol("cpu.fill", Color(red: 0.56, green: 0.64, blue: 0.98))
+            case "zip", "tar", "gz", "7z", "rar":
+                return .symbol("doc.zipper", Color(red: 0.82, green: 0.62, blue: 0.36))
+            case "png", "jpg", "jpeg", "gif", "webp", "ico":
+                return .symbol("photo.fill", Color(red: 0.64, green: 0.48, blue: 0.94))
+            case "log":
+                return .symbol("doc.text.magnifyingglass", Color(red: 0.58, green: 0.64, blue: 0.72))
+            default:
+                break
+            }
+        }
+
+        // Language-level VS Code Seti icons
+        switch language {
+        case .html:
+            return .monogram("<>", Color(red: 0.94, green: 0.40, blue: 0.18))
         case .css:
-            return Color(red: 0.22, green: 0.74, blue: 0.97) // Sky Blue
-        case .scss, .graphql:
-            return Color(red: 0.90, green: 0.33, blue: 0.60) // Pink Magenta
+            return .monogram("#", Color(red: 0.26, green: 0.66, blue: 0.96))
+        case .scss:
+            return .monogram("S", Color(red: 0.92, green: 0.35, blue: 0.62))
         case .javascript:
-            return Color(red: 0.96, green: 0.78, blue: 0.18) // JS Gold
-        case .typescript, .tsx:
-            return Color(red: 0.23, green: 0.51, blue: 0.96) // TS Blue
-        case .json, .json5, .yaml, .toml, .ini, .protobuf:
-            return Color(red: 0.96, green: 0.62, blue: 0.04) // Config Amber
-        case .python, .lua, .r:
-            return Color(red: 0.35, green: 0.65, blue: 0.98) // Scripting Blue
-        case .c, .cpp, .objectiveC, .assembly:
-            return Color(red: 0.42, green: 0.50, blue: 0.96) // Systems Indigo
-        case .rust, .dlang:
-            return Color(red: 0.92, green: 0.46, blue: 0.24) // Rust Copper
-        case .go, .dart, .dockerfile:
-            return Color(red: 0.00, green: 0.74, blue: 0.88) // Cyan
-        case .zig, .nim:
-            return Color(red: 0.96, green: 0.68, blue: 0.16) // Warm Gold
+            return .monogram("JS", Color(red: 0.96, green: 0.80, blue: 0.20))
+        case .typescript:
+            return .monogram("TS", Color(red: 0.24, green: 0.56, blue: 0.96))
+        case .tsx:
+            return .symbol("atom", Color(red: 0.24, green: 0.74, blue: 0.98))
+        case .vue:
+            return .monogram("V", Color(red: 0.26, green: 0.74, blue: 0.52))
+        case .svelte:
+            return .monogram("S", Color(red: 0.98, green: 0.34, blue: 0.14))
+        case .astro:
+            return .symbol("sparkles", Color(red: 0.98, green: 0.42, blue: 0.24))
+        case .graphql:
+            return .monogram("GQ", Color(red: 0.90, green: 0.30, blue: 0.64))
+        case .c:
+            return .monogram("C", Color(red: 0.32, green: 0.64, blue: 0.96))
+        case .cpp:
+            return .monogram("C++", Color(red: 0.32, green: 0.64, blue: 0.96))
+        case .objectiveC:
+            return .monogram("M", Color(red: 0.34, green: 0.66, blue: 0.98))
+        case .rust:
+            return .symbol("gearshape.2.fill", Color(red: 0.90, green: 0.48, blue: 0.28))
+        case .go:
+            return .monogram("Go", Color(red: 0.00, green: 0.74, blue: 0.88))
+        case .zig:
+            return .monogram("Z", Color(red: 0.96, green: 0.68, blue: 0.16))
+        case .dlang:
+            return .monogram("D", Color(red: 0.84, green: 0.32, blue: 0.30))
+        case .nim:
+            return .monogram("Nm", Color(red: 0.96, green: 0.76, blue: 0.22))
+        case .crystal:
+            return .symbol("diamond", Color(red: 0.74, green: 0.82, blue: 0.94))
+        case .assembly:
+            return .symbol("cpu", Color(red: 0.52, green: 0.58, blue: 0.96))
         case .swift:
-            return Color(red: 0.97, green: 0.45, blue: 0.15) // Swift Orange
-        case .java, .scala:
-            return Color(red: 0.93, green: 0.35, blue: 0.30) // JVM Red
-        case .kotlin, .elixir, .haskell, .hcl, .bicep:
-            return Color(red: 0.66, green: 0.42, blue: 0.96) // Violet
-        case .csharp, .php:
-            return Color(red: 0.54, green: 0.48, blue: 0.92) // Indigo Purple
-        case .ruby, .erlang, .crystal:
-            return Color(red: 0.88, green: 0.25, blue: 0.33) // Ruby Crimson
+            return .symbol("swift", Color(red: 0.97, green: 0.45, blue: 0.15))
+        case .dart:
+            return .monogram("D", Color(red: 0.08, green: 0.74, blue: 0.82))
+        case .java:
+            return .symbol("cup.and.saucer.fill", Color(red: 0.92, green: 0.34, blue: 0.28))
+        case .kotlin:
+            return .monogram("K", Color(red: 0.64, green: 0.38, blue: 0.98))
+        case .scala:
+            return .monogram("Sc", Color(red: 0.90, green: 0.30, blue: 0.28))
+        case .groovy:
+            return .monogram("Gv", Color(red: 0.38, green: 0.64, blue: 0.86))
+        case .csharp:
+            return .monogram("C#", Color(red: 0.48, green: 0.76, blue: 0.38))
+        case .python:
+            return .monogram("PY", Color(red: 0.32, green: 0.66, blue: 0.96))
+        case .php:
+            return .monogram("php", Color(red: 0.56, green: 0.48, blue: 0.94))
+        case .ruby:
+            return .symbol("diamond.fill", Color(red: 0.88, green: 0.25, blue: 0.33))
+        case .perl:
+            return .monogram("Pl", Color(red: 0.34, green: 0.62, blue: 0.86))
+        case .lua:
+            return .symbol("moon.circle.fill", Color(red: 0.30, green: 0.54, blue: 0.96))
+        case .r:
+            return .monogram("R", Color(red: 0.26, green: 0.56, blue: 0.92))
+        case .julia:
+            return .symbol("circle.grid.2x2.fill", Color(red: 0.62, green: 0.42, blue: 0.92))
+        case .elixir:
+            return .symbol("drop.fill", Color(red: 0.64, green: 0.40, blue: 0.92))
+        case .erlang:
+            return .monogram("e", Color(red: 0.84, green: 0.24, blue: 0.36))
+        case .haskell:
+            return .monogram("λ", Color(red: 0.62, green: 0.44, blue: 0.92))
+        case .ocaml:
+            return .monogram("Ml", Color(red: 0.94, green: 0.56, blue: 0.20))
+        case .elm:
+            return .monogram("El", Color(red: 0.36, green: 0.72, blue: 0.88))
+        case .lisp:
+            return .monogram("()", Color(red: 0.78, green: 0.54, blue: 0.92))
+        case .pascal:
+            return .monogram("Ps", Color(red: 0.34, green: 0.64, blue: 0.92))
+        case .solidity:
+            return .symbol("hexagon.fill", Color(red: 0.56, green: 0.64, blue: 0.82))
         case .sql:
-            return Color(red: 0.24, green: 0.70, blue: 0.90) // DB Cyan
-        case .shell, .fish, .powershell, .makefile, .cmake, .nix:
-            return Color(red: 0.20, green: 0.83, blue: 0.60) // Terminal Emerald
-        case .markdown, .latex, .xml, .diff, .regex:
-            return Color(red: 0.58, green: 0.64, blue: 0.72) // Slate
-        default:
-            return Color.secondary
+            return .symbol("cylinder.split.1x2.fill", Color(red: 0.26, green: 0.72, blue: 0.92))
+        case .json, .json5:
+            return .monogram("{}", Color(red: 0.95, green: 0.76, blue: 0.20))
+        case .yaml:
+            return .monogram("Y!", Color(red: 0.92, green: 0.34, blue: 0.58))
+        case .toml:
+            return .monogram("T", Color(red: 0.86, green: 0.48, blue: 0.26))
+        case .xml:
+            return .monogram("</>", Color(red: 0.94, green: 0.52, blue: 0.20))
+        case .protobuf:
+            return .monogram("Pb", Color(red: 0.44, green: 0.72, blue: 0.94))
+        case .ini:
+            return .symbol("slider.horizontal.3", Color(red: 0.64, green: 0.70, blue: 0.78))
+        case .shell, .fish:
+            return .monogram("$_", Color(red: 0.30, green: 0.84, blue: 0.52))
+        case .powershell:
+            return .monogram(">_", Color(red: 0.32, green: 0.66, blue: 0.96))
+        case .dockerfile:
+            return .symbol("shippingbox.circle.fill", Color(red: 0.22, green: 0.72, blue: 0.95))
+        case .makefile:
+            return .symbol("hammer.fill", Color(red: 0.89, green: 0.48, blue: 0.22))
+        case .cmake:
+            return .monogram("CM", Color(red: 0.22, green: 0.82, blue: 0.62))
+        case .hcl, .bicep:
+            return .monogram("TF", Color(red: 0.64, green: 0.42, blue: 0.96))
+        case .nix:
+            return .symbol("snowflake", Color(red: 0.42, green: 0.70, blue: 0.98))
+        case .markdown:
+            return .monogram("M↓", Color(red: 0.32, green: 0.68, blue: 0.96))
+        case .latex:
+            return .monogram("Te", Color(red: 0.22, green: 0.76, blue: 0.64))
+        case .regex:
+            return .monogram(".*", Color(red: 0.88, green: 0.54, blue: 0.28))
+        case .diff:
+            return .symbol("plus.forwardslash.minus", Color(red: 0.48, green: 0.82, blue: 0.56))
+        case .plainText:
+            return .symbol("doc.text", Color(red: 0.60, green: 0.66, blue: 0.74))
         }
     }
 }

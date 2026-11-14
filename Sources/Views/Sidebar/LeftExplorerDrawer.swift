@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 import UIKit
 
 public enum WorkspaceDocumentPickerMode: String, Identifiable {
+    case singleFile
     case folder
     case zip
     case themeJSON
@@ -13,20 +14,29 @@ public enum WorkspaceDocumentPickerMode: String, Identifiable {
 public struct SystemDocumentPickerSheet: UIViewControllerRepresentable {
     public let mode: WorkspaceDocumentPickerMode
     public let onPickURL: (URL) -> Void
+    public let onPickURLs: (([URL]) -> Void)?
 
-    public init(mode: WorkspaceDocumentPickerMode, onPickURL: @escaping (URL) -> Void) {
+    public init(
+        mode: WorkspaceDocumentPickerMode,
+        onPickURL: @escaping (URL) -> Void,
+        onPickURLs: (([URL]) -> Void)? = nil
+    ) {
         self.mode = mode
         self.onPickURL = onPickURL
+        self.onPickURLs = onPickURLs
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(onPickURL: onPickURL)
+        Coordinator(onPickURL: onPickURL, onPickURLs: onPickURLs)
     }
 
     public func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         let types: [UTType]
         let asCopy: Bool
         switch mode {
+        case .singleFile:
+            types = [.data, .content, .text, .sourceCode]
+            asCopy = false
         case .folder:
             types = [.folder]
             asCopy = false
@@ -38,7 +48,7 @@ public struct SystemDocumentPickerSheet: UIViewControllerRepresentable {
             asCopy = true
         }
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: asCopy)
-        picker.allowsMultipleSelection = false
+        picker.allowsMultipleSelection = (mode == .singleFile)
         picker.shouldShowFileExtensions = true
         picker.delegate = context.coordinator
         return picker
@@ -48,15 +58,23 @@ public struct SystemDocumentPickerSheet: UIViewControllerRepresentable {
 
     public final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let onPickURL: (URL) -> Void
+        let onPickURLs: (([URL]) -> Void)?
 
-        init(onPickURL: @escaping (URL) -> Void) {
+        init(onPickURL: @escaping (URL) -> Void, onPickURLs: (([URL]) -> Void)?) {
             self.onPickURL = onPickURL
+            self.onPickURLs = onPickURLs
         }
 
         public func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let picked = urls.first else { return }
-            DispatchQueue.main.async { [onPickURL] in
-                onPickURL(picked)
+            guard !urls.isEmpty else { return }
+            DispatchQueue.main.async { [onPickURL, onPickURLs] in
+                if let onPickURLs {
+                    onPickURLs(urls)
+                } else {
+                    for url in urls {
+                        onPickURL(url)
+                    }
+                }
             }
         }
 
@@ -104,6 +122,7 @@ public struct LeftExplorerDrawer: View {
     @ObservedObject var timelineService: FileTimelineAndArchiveService
     var onInsertSnippet: (String) -> Void
     var onOpenTheosBuilder: () -> Void
+    var onRequestOpenSingleFile: (() -> Void)?
     var onRequestOpenFolder: (() -> Void)?
     var onRequestImportZip: (() -> Void)?
     var onOpenSettings: () -> Void
@@ -151,6 +170,7 @@ public struct LeftExplorerDrawer: View {
         timelineService: FileTimelineAndArchiveService,
         onInsertSnippet: @escaping (String) -> Void,
         onOpenTheosBuilder: @escaping () -> Void = {},
+        onRequestOpenSingleFile: (() -> Void)? = nil,
         onRequestOpenFolder: (() -> Void)? = nil,
         onRequestImportZip: (() -> Void)? = nil,
         onOpenSettings: @escaping () -> Void,
@@ -165,10 +185,19 @@ public struct LeftExplorerDrawer: View {
         self.timelineService = timelineService
         self.onInsertSnippet = onInsertSnippet
         self.onOpenTheosBuilder = onOpenTheosBuilder
+        self.onRequestOpenSingleFile = onRequestOpenSingleFile
         self.onRequestOpenFolder = onRequestOpenFolder
         self.onRequestImportZip = onRequestImportZip
         self.onOpenSettings = onOpenSettings
         self.onCloseDrawer = onCloseDrawer
+    }
+
+    private func triggerOpenSingleFile() {
+        if let onRequestOpenSingleFile {
+            onRequestOpenSingleFile()
+        } else {
+            fallbackPickerMode = .singleFile
+        }
     }
 
     private func triggerOpenFolder() {
@@ -442,19 +471,31 @@ public struct LeftExplorerDrawer: View {
             Button(preferences.tr("Hủy", "Cancel"), role: .cancel) { newProjectName = "" }
         }
         .sheet(item: $fallbackPickerMode) { mode in
-            SystemDocumentPickerSheet(mode: mode) { pickedURL in
-                switch mode {
-                case .folder:
-                    workspace.switchWorkspaceFolder(to: pickedURL)
-                    liveServer.updateRootDirectory(workspace.rootURL)
-                case .zip:
-                    if workspace.importAndOpenZip(from: pickedURL) {
+            SystemDocumentPickerSheet(
+                mode: mode,
+                onPickURL: { pickedURL in
+                    switch mode {
+                    case .singleFile:
+                        workspace.openExternalSingleFile(from: pickedURL)
                         liveServer.updateRootDirectory(workspace.rootURL)
+                    case .folder:
+                        workspace.switchWorkspaceFolder(to: pickedURL)
+                        liveServer.updateRootDirectory(workspace.rootURL)
+                    case .zip:
+                        if workspace.importAndOpenZip(from: pickedURL) {
+                            liveServer.updateRootDirectory(workspace.rootURL)
+                        }
+                    case .themeJSON:
+                        break
                     }
-                case .themeJSON:
-                    break
-                }
-            }
+                },
+                onPickURLs: mode == .singleFile ? { pickedURLs in
+                    for url in pickedURLs {
+                        workspace.openExternalSingleFile(from: url)
+                    }
+                    liveServer.updateRootDirectory(workspace.rootURL)
+                } : nil
+            )
         }
         .sheet(isPresented: $showAddVPSSheet) {
             vpsEditorSheet()
@@ -484,6 +525,11 @@ public struct LeftExplorerDrawer: View {
                             }
                         }
                         Divider()
+                    }
+                    Button {
+                        triggerOpenSingleFile()
+                    } label: {
+                        Label(preferences.tr("Mở File lẻ trên máy (Files)...", "Open File(s) from Files..."), systemImage: "doc.badge.arrow.up")
                     }
                     Button {
                         triggerOpenFolder()
@@ -561,16 +607,33 @@ public struct LeftExplorerDrawer: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
 
-            // Prominent 1-Tap Import / Open Folder Strip
-            HStack(spacing: 6) {
+            // Prominent 1-Tap Open File / Open Folder / Import Zip Strip
+            HStack(spacing: 5) {
+                Button {
+                    triggerOpenSingleFile()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "doc.badge.arrow.up")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(preferences.tr("Mở File", "Open File"))
+                            .font(.system(size: 10, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(Color(hex: palette.accent).opacity(0.16))
+                    .foregroundColor(Color(hex: palette.accent))
+                    .cornerRadius(6)
+                }
+
                 Button {
                     triggerOpenFolder()
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         Image(systemName: "folder")
-                            .font(.system(size: 10.5, weight: .semibold))
-                        Text(preferences.tr("Mở Folder", "Open Folder"))
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(preferences.tr("Folder", "Folder"))
+                            .font(.system(size: 10, weight: .semibold))
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
@@ -583,17 +646,17 @@ public struct LeftExplorerDrawer: View {
                 Button {
                     triggerImportZip()
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         Image(systemName: "doc.zipper")
-                            .font(.system(size: 10.5, weight: .semibold))
-                        Text(preferences.tr("Nhập .zip", "Import .zip"))
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(preferences.tr(".zip", ".zip"))
+                            .font(.system(size: 10, weight: .semibold))
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 5)
-                    .background(Color(hex: palette.accent).opacity(0.18))
-                    .foregroundColor(Color(hex: palette.accent))
+                    .background(Color(hex: palette.currentLineBackground))
+                    .foregroundColor(Color(hex: palette.foreground))
                     .cornerRadius(6)
                 }
             }
@@ -1418,7 +1481,7 @@ private struct FileNodeRow: View {
                             .foregroundColor(Color(hex: palette.accent))
                     } else {
                         Spacer().frame(width: 12)
-                        FileLanguageIconView(language: node.language, size: 12)
+                        FileLanguageIconView(language: node.language, fileName: node.name, size: 12.5)
                             .opacity(node.isDeletedGhost ? 0.55 : 1.0)
                     }
 

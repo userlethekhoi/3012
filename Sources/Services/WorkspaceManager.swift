@@ -42,6 +42,14 @@ public final class WorkspaceManager: ObservableObject {
     private var deletedGhostContents: [String: String] = [:]
     private var externalMirroredFolderURL: URL? = nil
     private var externalMirrorHasSecurityScope: Bool = false
+    private var externalSingleFileURLs: [String: (url: URL, hasScope: Bool)] = [:]
+
+    private func releaseExternalSingleFileScopes() {
+        for entry in externalSingleFileURLs.values where entry.hasScope {
+            entry.url.stopAccessingSecurityScopedResource()
+        }
+        externalSingleFileURLs.removeAll()
+    }
 
     public var onFileSavedOrChanged: (() -> Void)?
     public var onAnyTabSavedWithURL: ((URL, String) -> Void)?
@@ -714,6 +722,7 @@ public final class WorkspaceManager: ObservableObject {
             externalMirroredFolderURL = nil
             externalMirrorHasSecurityScope = false
         }
+        releaseExternalSingleFileScopes()
 
         let fm = FileManager.default
         let docsStd = documentsDirectory.standardizedFileURL.path
@@ -772,6 +781,7 @@ public final class WorkspaceManager: ObservableObject {
             externalMirroredFolderURL = nil
             externalMirrorHasSecurityScope = false
         }
+        releaseExternalSingleFileScopes()
         self.rootURL = importedDir
         self.openTabs.removeAll()
         self.recentlyClosedTabs.removeAll()
@@ -800,53 +810,86 @@ public final class WorkspaceManager: ObservableObject {
         }
     }
 
-    public func handleIncomingURL(_ url: URL) {
-        let hasScope = url.startAccessingSecurityScopedResource()
-        defer {
-            if hasScope { url.stopAccessingSecurityScopedResource() }
-        }
-
-        let ext = url.pathExtension.lowercased()
-        let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+    public func openExternalSingleFile(from externalURL: URL) {
+        let hasScope = externalURL.startAccessingSecurityScopedResource()
+        let ext = externalURL.pathExtension.lowercased()
+        let isDir = (try? externalURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
 
         if ext == "zip" {
-            importAndOpenZip(from: url)
+            defer {
+                if hasScope { externalURL.stopAccessingSecurityScopedResource() }
+            }
+            importAndOpenZip(from: externalURL)
             return
         }
         if isDir {
-            switchWorkspaceFolder(to: url)
+            if hasScope { externalURL.stopAccessingSecurityScopedResource() }
+            switchWorkspaceFolder(to: externalURL)
             return
         }
 
-        // Single code file shared/opened from Files / Safari / Telegram -> copy into active workspace & open
         let docsStd = documentsDirectory.standardizedFileURL.path
-        let targetStd = url.standardizedFileURL.path
+        let targetStd = externalURL.standardizedFileURL.path
         if targetStd.hasPrefix(docsStd + "/") {
+            if hasScope { externalURL.stopAccessingSecurityScopedResource() }
             reloadTree()
-            openFile(at: url)
-            statusBannerMessage = "Đã mở file: \(url.lastPathComponent)"
-        } else {
-            let dest = rootURL.appendingPathComponent(url.lastPathComponent)
-            var copied = false
-            let coordinator = NSFileCoordinator(filePresenter: nil)
-            var coordErr: NSError?
-            coordinator.coordinate(readingItemAt: url, options: .withoutChanges, error: &coordErr) { coordURL in
-                if let data = try? Data(contentsOf: coordURL) {
-                    try? data.write(to: dest, options: .atomic)
-                    copied = FileManager.default.fileExists(atPath: dest.path)
-                }
-            }
-            if !copied, let data = try? Data(contentsOf: url) {
-                try? data.write(to: dest, options: .atomic)
-                copied = FileManager.default.fileExists(atPath: dest.path)
-            }
-            if copied {
-                reloadTree()
-                openFile(at: dest)
-                statusBannerMessage = "Đã nhập file: \(url.lastPathComponent)"
-                onFileSavedOrChanged?()
-            }
+            openFile(at: externalURL)
+            statusBannerMessage = "Đã mở file: \(externalURL.lastPathComponent)"
+            return
         }
+
+        // External standalone file from Files.app / iCloud Drive / Downloads:
+        // Copy into active workspace so Live Server, 1-Tap Run, Terminal & AI Agent work immediately,
+        // and retain security scope so edits sync back to the original external file on save.
+        let dest = rootURL.appendingPathComponent(externalURL.lastPathComponent)
+        var fileData: Data? = nil
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordErr: NSError?
+        coordinator.coordinate(readingItemAt: externalURL, options: .withoutChanges, error: &coordErr) { coordURL in
+            fileData = try? Data(contentsOf: coordURL)
+        }
+        if fileData == nil {
+            fileData = try? Data(contentsOf: externalURL)
+        }
+
+        guard let data = fileData else {
+            if hasScope { externalURL.stopAccessingSecurityScopedResource() }
+            statusBannerMessage = "Không đọc được file: \(externalURL.lastPathComponent)"
+            return
+        }
+
+        do {
+            try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: dest, options: .atomic)
+        } catch {
+            if hasScope { externalURL.stopAccessingSecurityScopedResource() }
+            statusBannerMessage = "Không thể lưu bản sao file \(externalURL.lastPathComponent): \(error.localizedDescription)"
+            return
+        }
+
+        let destKey = dest.standardizedFileURL.path
+        if let oldEntry = externalSingleFileURLs[destKey],
+           oldEntry.hasScope,
+           oldEntry.url.standardizedFileURL != externalURL.standardizedFileURL {
+            oldEntry.url.stopAccessingSecurityScopedResource()
+        }
+        externalSingleFileURLs[destKey] = (url: externalURL, hasScope: hasScope)
+
+        reloadTree()
+        if let existingIdx = openTabs.firstIndex(where: { $0.fileURL.standardizedFileURL == dest.standardizedFileURL }) {
+            let refreshed = readTextWithEncodingFallback(from: dest) ?? openTabs[existingIdx].content
+            openTabs[existingIdx].content = refreshed
+            openTabs[existingIdx].savedContent = refreshed
+            activeTabID = openTabs[existingIdx].id
+        } else {
+            openFile(at: dest)
+        }
+        statusBannerMessage = "Đã mở file lẻ: \(dest.lastPathComponent)"
+        onFileSavedOrChanged?()
+    }
+
+    public func handleIncomingURL(_ url: URL) {
+        openExternalSingleFile(from: url)
     }
 
     private func mirrorExternalDirectory(from externalURL: URL, to localMirror: URL) -> Bool {
@@ -907,6 +950,20 @@ public final class WorkspaceManager: ObservableObject {
     }
 
     private func syncFileChangeBackToExternalMirror(localFileURL: URL, content: String) {
+        let localKey = localFileURL.standardizedFileURL.path
+        if let linked = externalSingleFileURLs[localKey] {
+            let coordinator = NSFileCoordinator(filePresenter: nil)
+            var coordErr: NSError?
+            var wrote = false
+            coordinator.coordinate(writingItemAt: linked.url, options: .forReplacing, error: &coordErr) { coordinatedURL in
+                if (try? content.write(to: coordinatedURL, atomically: true, encoding: .utf8)) != nil {
+                    wrote = true
+                }
+            }
+            if !wrote {
+                try? content.write(to: linked.url, atomically: true, encoding: .utf8)
+            }
+        }
         guard let externalRoot = externalMirroredFolderURL else { return }
         let rel = relativePath(for: localFileURL)
         guard !rel.isEmpty else { return }
