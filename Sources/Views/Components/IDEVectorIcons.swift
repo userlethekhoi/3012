@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// Bespoke 120Hz vector brand mark (`30` / `12` with Programmer's Slashed Zero & Active Gutter Rail)

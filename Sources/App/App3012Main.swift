@@ -141,96 +141,13 @@ public struct MainIDEWorkspaceView: View {
                             }
 
                             if showBottomPanel {
-                                let maxBottomH = max(160, geo.size.height * 0.80)
-                                let activeBottomH = min(
-                                    max(customBottomPanelHeight ?? bottomDetent.height(in: geo.size.height), 120),
-                                    maxBottomH
-                                )
-                                resizableSplitBar(
-                                    isHorizontal: true,
-                                    palette: palette,
-                                    onDragChanged: { value in
-                                        if dragStartBottomHeight == nil {
-                                            dragStartBottomHeight = activeBottomH
-                                        }
-                                        let base = dragStartBottomHeight ?? activeBottomH
-                                        customBottomPanelHeight = min(max(base - value.translation.height, 120), maxBottomH)
-                                    },
-                                    onDragEnded: {
-                                        dragStartBottomHeight = nil
-                                    },
-                                    onDoubleTapReset: {
-                                        customBottomPanelHeight = nil
-                                    }
-                                )
-                                BottomConsolePreviewPanel(
-                                    selectedTab: $bottomTab,
-                                    detent: $bottomDetent,
-                                    runner: runner,
-                                    liveServer: liveServer,
-                                    sshService: sshService,
-                                    daemonService: daemonService,
-                                    workspace: workspace,
-                                    preferences: preferences,
-                                    intelligence: intelligence,
-                                    aiService: aiService,
-                                    gitService: gitService,
-                                    onJumpToLine: { line in
-                                        triggerJumpToLine(line)
-                                    },
-                                    onFixDiagnosticWithAgent: { diag in
-                                        fixDiagnosticWithAgent(diag)
-                                    },
-                                    onOpenDaemonManager: {
-                                        showDaemonManagerSheet = true
-                                    },
-                                    onClose: {
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            showBottomPanel = false
-                                        }
-                                    }
-                                )
-                                .frame(height: activeBottomH)
-                                .onChange(of: bottomDetent) { _, _ in
-                                    customBottomPanelHeight = nil
-                                }
+                                bottomSplitSection(totalHeight: geo.size.height, palette: palette)
                             }
                         }
 
                         // Side-by-side Coding Agent Panel when screen is wide (Landscape iPhone / iPad)
                         if showRightAIPanel && isWideLayout {
-                            let maxAIW = max(280, geo.size.width * 0.65)
-                            let activeAIW = min(max(geo.size.width * rightAIPanelRatio, 240), maxAIW)
-                            resizableSplitBar(
-                                isHorizontal: false,
-                                palette: palette,
-                                onDragChanged: { value in
-                                    if dragStartRightAIWidth == nil {
-                                        dragStartRightAIWidth = activeAIW
-                                    }
-                                    let baseW = dragStartRightAIWidth ?? activeAIW
-                                    let clampedW = min(max(baseW - value.translation.width, 240), maxAIW)
-                                    rightAIPanelRatio = clampedW / max(geo.size.width, 1)
-                                },
-                                onDragEnded: {
-                                    dragStartRightAIWidth = nil
-                                },
-                                onDoubleTapReset: {
-                                    rightAIPanelRatio = 0.38
-                                }
-                            )
-                            AIAgentSidePanel(
-                                aiService: aiService,
-                                workspace: workspace,
-                                runner: runner,
-                                preferences: preferences,
-                                onClose: {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        showRightAIPanel = false
-                                    }
-                                }
-                            )
-                            .frame(width: activeAIW)
+                            rightAISplitSection(totalWidth: geo.size.width, palette: palette)
                         }
                     }
                 }
@@ -592,6 +509,99 @@ public struct MainIDEWorkspaceView: View {
         } else {
             editorWithAutocompleteOverlay(activeTab: activeTab, palette: palette)
         }
+    }
+
+    @ViewBuilder
+    private func bottomSplitSection(totalHeight: CGFloat, palette: IDEColorPalette) -> some View {
+        let maxBottomH = max(160, totalHeight * 0.80)
+        let activeBottomH = min(
+            max(customBottomPanelHeight ?? bottomDetent.height(in: totalHeight), 120),
+            maxBottomH
+        )
+        resizableSplitBar(
+            isHorizontal: true,
+            palette: palette,
+            onDragChanged: { value in
+                if dragStartBottomHeight == nil {
+                    dragStartBottomHeight = activeBottomH
+                }
+                let base = dragStartBottomHeight ?? activeBottomH
+                customBottomPanelHeight = min(max(base - value.translation.height, 120), maxBottomH)
+            },
+            onDragEnded: {
+                dragStartBottomHeight = nil
+            },
+            onDoubleTapReset: {
+                customBottomPanelHeight = nil
+            }
+        )
+        BottomConsolePreviewPanel(
+            selectedTab: $bottomTab,
+            detent: $bottomDetent,
+            runner: runner,
+            liveServer: liveServer,
+            sshService: sshService,
+            daemonService: daemonService,
+            workspace: workspace,
+            preferences: preferences,
+            intelligence: intelligence,
+            aiService: aiService,
+            gitService: gitService,
+            onJumpToLine: { line in
+                triggerJumpToLine(line)
+            },
+            onFixDiagnosticWithAgent: { diag in
+                fixDiagnosticWithAgent(diag)
+            },
+            onOpenDaemonManager: {
+                showDaemonManagerSheet = true
+            },
+            onClose: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showBottomPanel = false
+                }
+            }
+        )
+        .frame(height: activeBottomH)
+        .onChange(of: bottomDetent) { _, _ in
+            customBottomPanelHeight = nil
+        }
+    }
+
+    @ViewBuilder
+    private func rightAISplitSection(totalWidth: CGFloat, palette: IDEColorPalette) -> some View {
+        let maxAIW = max(280, totalWidth * 0.65)
+        let activeAIW = min(max(totalWidth * rightAIPanelRatio, 240), maxAIW)
+        resizableSplitBar(
+            isHorizontal: false,
+            palette: palette,
+            onDragChanged: { value in
+                if dragStartRightAIWidth == nil {
+                    dragStartRightAIWidth = activeAIW
+                }
+                let baseW = dragStartRightAIWidth ?? activeAIW
+                let clampedW = min(max(baseW - value.translation.width, 240), maxAIW)
+                rightAIPanelRatio = clampedW / max(totalWidth, 1)
+            },
+            onDragEnded: {
+                dragStartRightAIWidth = nil
+            },
+            onDoubleTapReset: {
+                rightAIPanelRatio = 0.38
+            }
+        )
+        AIAgentSidePanel(
+            aiService: aiService,
+            workspace: workspace,
+            runner: runner,
+            preferences: preferences,
+            onClose: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showRightAIPanel = false
+                }
+            }
+        )
+        .frame(width: activeAIW)
     }
 
     @ViewBuilder

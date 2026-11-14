@@ -950,7 +950,7 @@ public final class TheosBuildService: ObservableObject {
             return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
         }
 
-        var lines = rawContent.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        let lines = rawContent.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
 
         // Detect TWEAK_NAME or existing *_FILES prefix
         var detectedName: String? = nil
@@ -989,7 +989,8 @@ public final class TheosBuildService: ObservableObject {
 
             if !isComment, !didReplaceFiles, let eqRange = trimmed.range(of: "=") {
                 let lhs = trimmed[..<eqRange.lowerBound].trimmingCharacters(in: CharacterSet(charactersIn: " :+?"))
-                if lhs == filesKey || (existingFilesPrefix != nil && lhs == "\(existingFilesPrefix!)_FILES") {
+                let matchesExistingFiles = existingFilesPrefix.map { lhs == "\($0)_FILES" } ?? false
+                if lhs == filesKey || matchesExistingFiles {
                     // Consume any trailing backslash-continuation lines
                     while idx < lines.count - 1 && lines[idx].trimmingCharacters(in: .whitespaces).hasSuffix("\\") {
                         idx += 1

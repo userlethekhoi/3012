@@ -229,7 +229,7 @@ public struct TheosBuilderSheet: View {
                     Button {
                         makefileSyncNotice = theosService.syncMakefileSourceFiles(
                             in: workspace,
-                            isEnglish: !preferences.isVietnamese
+                            isEnglish: preferences.appLanguage != .vietnamese
                         )
                     } label: {
                         Label(
