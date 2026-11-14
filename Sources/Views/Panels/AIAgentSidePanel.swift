@@ -201,17 +201,19 @@ public struct AIAgentSidePanel: View {
 
             // Composer Input
             HStack(alignment: .bottom, spacing: 8) {
-                if #available(iOS 16.0, *) {
-                    TextField(preferences.tr("Giao việc cho AI (tạo/sửa file, fix bug)...", "Ask AI (create/edit files, fix bugs)..."), text: $promptInput, axis: .vertical)
-                        .lineLimit(1...4)
-                } else {
-                    TextField(preferences.tr("Giao việc cho AI (tạo/sửa file, fix bug)...", "Ask AI (create/edit files, fix bugs)..."), text: $promptInput)
+                Group {
+                    if #available(iOS 16.0, *) {
+                        TextField(preferences.tr("Giao việc cho AI (tạo/sửa file, fix bug)...", "Ask AI (create/edit files, fix bugs)..."), text: $promptInput, axis: .vertical)
+                            .lineLimit(1...4)
+                    } else {
+                        TextField(preferences.tr("Giao việc cho AI (tạo/sửa file, fix bug)...", "Ask AI (create/edit files, fix bugs)..."), text: $promptInput)
+                    }
                 }
-                    .font(.system(size: 13))
-                    .padding(8)
-                    .background(Color(hex: palette.editorBackground))
-                    .foregroundColor(Color(hex: palette.foreground))
-                    .cornerRadius(8)
+                .font(.system(size: 13))
+                .padding(8)
+                .background(Color(hex: palette.editorBackground))
+                .foregroundColor(Color(hex: palette.foreground))
+                .cornerRadius(8)
 
                 if aiService.isThinking {
                     Button {

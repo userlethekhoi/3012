@@ -140,6 +140,13 @@ public final class WorkspaceManager: ObservableObject {
         ["zip", "rar", "7z", "tar", "gz", "deb", "ipa", "dylib", "o", "a", "so", "png", "jpg", "jpeg", "gif", "webp", "ico", "pdf", "woff", "woff2", "ttf", "otf", "mp3", "mp4", "mov", "sqlite", "db"].contains(ext)
     }
 
+    private func persistTabContentIfTextFile(_ tab: OpenTab) {
+        let ext = tab.fileURL.pathExtension.lowercased()
+        guard !isArchiveOrBinaryExtension(ext) else { return }
+        try? tab.content.write(to: tab.fileURL, atomically: true, encoding: .utf8)
+        syncFileChangeBackToExternalMirror(localFileURL: tab.fileURL, content: tab.content)
+    }
+
     private func bootstrapDefaultWorkspaceIfNeeded(at root: URL) {
         let fm = FileManager.default
         if !fm.fileExists(atPath: root.path) {
@@ -406,8 +413,7 @@ public final class WorkspaceManager: ObservableObject {
             openTabs[idx].selectedRangeLength = selectedRange.length
         }
         if autoSave {
-            try? newText.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
-            syncFileChangeBackToExternalMirror(localFileURL: openTabs[idx].fileURL, content: newText)
+            persistTabContentIfTextFile(openTabs[idx])
             openTabs[idx].savedContent = newText
             onFileSavedOrChanged?()
             onAnyTabSavedWithURL?(openTabs[idx].fileURL, newText)
@@ -442,8 +448,7 @@ public final class WorkspaceManager: ObservableObject {
     public func saveActiveTab() {
         guard let activeTabID,
               let idx = openTabs.firstIndex(where: { $0.id == activeTabID }) else { return }
-        try? openTabs[idx].content.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
-        syncFileChangeBackToExternalMirror(localFileURL: openTabs[idx].fileURL, content: openTabs[idx].content)
+        persistTabContentIfTextFile(openTabs[idx])
         openTabs[idx].savedContent = openTabs[idx].content
         updateSingleFileStatus(for: openTabs[idx].fileURL, liveContent: openTabs[idx].content)
         onFileSavedOrChanged?()
@@ -452,8 +457,7 @@ public final class WorkspaceManager: ObservableObject {
 
     public func saveAllTabs() {
         for idx in openTabs.indices {
-            try? openTabs[idx].content.write(to: openTabs[idx].fileURL, atomically: true, encoding: .utf8)
-            syncFileChangeBackToExternalMirror(localFileURL: openTabs[idx].fileURL, content: openTabs[idx].content)
+            persistTabContentIfTextFile(openTabs[idx])
             openTabs[idx].savedContent = openTabs[idx].content
         }
         recomputeAllFileStatuses()
@@ -489,8 +493,7 @@ public final class WorkspaceManager: ObservableObject {
     public func closeTab(_ tabID: URL) {
         guard let idx = openTabs.firstIndex(where: { $0.id == tabID }) else { return }
         let closing = openTabs[idx]
-        try? closing.content.write(to: closing.fileURL, atomically: true, encoding: .utf8)
-        syncFileChangeBackToExternalMirror(localFileURL: closing.fileURL, content: closing.content)
+        persistTabContentIfTextFile(closing)
         recordClosedTab(closing)
         openTabs.remove(at: idx)
         if activeTabID == tabID {
@@ -505,8 +508,7 @@ public final class WorkspaceManager: ObservableObject {
     public func closeOtherTabs(keeping tabID: URL) {
         let toClose = openTabs.filter { $0.id != tabID && !$0.isPinned }
         for tab in toClose {
-            try? tab.content.write(to: tab.fileURL, atomically: true, encoding: .utf8)
-            syncFileChangeBackToExternalMirror(localFileURL: tab.fileURL, content: tab.content)
+            persistTabContentIfTextFile(tab)
             recordClosedTab(tab)
         }
         openTabs.removeAll { $0.id != tabID && !$0.isPinned }
@@ -519,8 +521,7 @@ public final class WorkspaceManager: ObservableObject {
         let hasUnpinned = openTabs.contains { !$0.isPinned }
         let toClose = hasUnpinned ? openTabs.filter { !$0.isPinned } : openTabs
         for tab in toClose {
-            try? tab.content.write(to: tab.fileURL, atomically: true, encoding: .utf8)
-            syncFileChangeBackToExternalMirror(localFileURL: tab.fileURL, content: tab.content)
+            persistTabContentIfTextFile(tab)
             recordClosedTab(tab)
         }
         if hasUnpinned {

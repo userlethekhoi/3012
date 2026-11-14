@@ -60,7 +60,7 @@ public struct ActivePortTunnel: Identifiable, Equatable {
     public let remotePort: UInt16
 }
 
-private final class TunnelInboundBridgeHandler: ChannelInboundHandler {
+private final class TunnelInboundBridgeHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
     let nwConnection: NWConnection
 

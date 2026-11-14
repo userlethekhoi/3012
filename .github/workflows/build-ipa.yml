@@ -103,6 +103,7 @@ jobs:
           key: ${{ runner.os }}-spm-ios15-${{ hashFiles('project.yml') }}
           restore-keys: |
             ${{ runner.os }}-spm-ios15-
+          save-always: true
 
       - name: Resolve Swift Package Dependencies
         run: xcodebuild -resolvePackageDependencies -project App3012.xcodeproj -scheme App3012 -clonedSourcePackagesDirPath build/SourcePackages

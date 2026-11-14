@@ -6,6 +6,20 @@ import Citadel
 public enum KeychainVault {
     private static let serviceName = "com.dev.app3012.vault"
 
+    private static var fallbackDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let dir = base.appendingPathComponent(".3012vault", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func fallbackFileURL(forKey key: String) -> URL {
+        let safe = Data(key.utf8).base64EncodedString()
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return fallbackDirectory.appendingPathComponent(safe)
+    }
+
     public static func saveData(_ data: Data, forKey key: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -17,7 +31,13 @@ public enum KeychainVault {
         var insert = query
         insert[kSecValueData as String] = data
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(insert as CFDictionary, nil)
+        let status = SecItemAdd(insert as CFDictionary, nil)
+        let fallbackURL = fallbackFileURL(forKey: key)
+        if status == errSecSuccess {
+            try? FileManager.default.removeItem(at: fallbackURL)
+        } else {
+            try? data.write(to: fallbackURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
     }
 
     public static func loadData(forKey key: String) -> Data? {
@@ -30,8 +50,10 @@ public enum KeychainVault {
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else { return nil }
-        return result as? Data
+        if status == errSecSuccess, let data = result as? Data {
+            return data
+        }
+        return try? Data(contentsOf: fallbackFileURL(forKey: key))
     }
 
     public static func saveString(_ value: String, forKey key: String) {
@@ -50,6 +72,7 @@ public enum KeychainVault {
             kSecAttrAccount as String: key
         ]
         SecItemDelete(query as CFDictionary)
+        try? FileManager.default.removeItem(at: fallbackFileURL(forKey: key))
     }
 
     // MARK: - Ed25519 SSH Key Pair Generation & Storage

@@ -40,7 +40,7 @@ public struct SettingsAndThemesSheet: View {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(alignment: .center, spacing: 10) {
                                 Brand3012WordmarkView(height: 19, inkColor: .primary)
-                                Text("v" + ((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "3.7.1"))
+                                Text("v" + ((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "4.0.1"))
                                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)

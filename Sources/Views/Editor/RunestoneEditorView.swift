@@ -139,7 +139,9 @@ public struct RunestoneEditorView: UIViewRepresentable {
         textView.smartDashesType = .no
         textView.smartInsertDeleteType = .no
         textView.spellCheckingType = .no
-        textView.isFindInteractionEnabled = true
+        if #available(iOS 16.0, *) {
+            textView.isFindInteractionEnabled = true
+        }
         textView.lineSelectionDisplayType = .line
         textView.characterPairs = BasicPair.defaultPairs
         textView.characterPairTrailingComponentDeletionMode = .immediatelyFollowingLeadingComponent
@@ -166,7 +168,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
         codingBar.onTriggerFind = { [weak coord, weak textView] in
             if let customFind = coord?.parent.onTriggerFindBar {
                 customFind()
-            } else {
+            } else if #available(iOS 16.0, *) {
                 textView?.findInteraction?.presentFindNavigator(showingReplace: true)
             }
         }
@@ -320,7 +322,11 @@ public struct RunestoneEditorView: UIViewRepresentable {
         // 5. Native Find & Replace Navigator (Fallback)
         if context.coordinator.lastFindToken != findTriggerToken {
             context.coordinator.lastFindToken = findTriggerToken
-            textView.findInteraction?.presentFindNavigator(showingReplace: true)
+            if #available(iOS 16.0, *) {
+                textView.findInteraction?.presentFindNavigator(showingReplace: true)
+            } else {
+                onTriggerFindBar?()
+            }
         }
 
         // 6. VS Code Dimmed Inline Ghost Text Overlay + Tab Button Glow

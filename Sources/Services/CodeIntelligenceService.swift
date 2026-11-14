@@ -196,8 +196,9 @@ public final class CodeIntelligenceService: ObservableObject {
                     }
                 }
             }
+            let finalCollected = collected
             await MainActor.run { [weak self] in
-                self?.workspaceSymbols = collected
+                self?.workspaceSymbols = finalCollected
             }
         }
     }

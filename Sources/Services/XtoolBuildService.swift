@@ -915,20 +915,22 @@ public final class XtoolBuildService: ObservableObject {
         runner?.consoleOutput = buildLog
 
         do {
-            let outputURL = try await Task.detached(priority: .userInitiated) { [weak self] in
+            let progressHandler: @Sendable (String) -> Void = { [weak self, weak runner] msg in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.buildLog += msg + "\n"
+                    self.buildStatusText = msg
+                    runner?.consoleOutput = self.buildLog
+                }
+            }
+            let outputURL = try await Task.detached(priority: .userInitiated) {
                 try Self.performOnDeviceDylibInjection(
                     ipaURL: ipaURL,
                     dylibURL: dylibURL,
                     workspaceRoot: workspaceRoot,
-                    options: options
-                ) { msg in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.buildLog += msg + "\n"
-                        self.buildStatusText = msg
-                        runner?.consoleOutput = self.buildLog
-                    }
-                }
+                    options: options,
+                    onProgress: progressHandler
+                )
             }.value
             buildLog += "[3012 Dylib Injector] Hoàn tất: packages/\(outputURL.lastPathComponent)\n"
             buildStatusText = "Đã nhúng: \(outputURL.lastPathComponent)"
