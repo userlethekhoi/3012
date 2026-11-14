@@ -1,16 +1,16 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.8.0 Sẵn sàng Build CI (`Build 16`)** — Hoàn thiện toàn bộ 7 bản vá ổn định `v3.7.3` + nâng cấp UX soạn thảo Mobile Pro: Hàng Tab File chuẩn VS Code tách riêng (mới nhất bên trái, cũ đẩy sang phải, tô sáng tab đang mở), cụm thao tác nhanh `Undo`/`Redo`/`Copy`/`Paste` luôn hiện trên thanh đầu, thanh phụ cuộn ngang kèm menu `Sửa`, và thanh bàn phím 2 hàng `80pt` có phím mũi tên điều hướng con trỏ `←` `↓` `↑` `→` (giữ để lặp) cùng phím chọn khối `Select`, `Home`/`End`, `Dup Line`, `Del Line`.
+> **Trạng thái hiện tại:** **v3.8.0 Đã Phát Hành (`v3.8.0-b25` / CI Run `43569189881`)** — Hoàn tất kiểm chứng build xanh 100% trên GitHub Actions với toàn bộ 7 bản vá ổn định `v3.7.3` + nâng cấp UX soạn thảo Mobile Pro: Hàng Tab File chuẩn VS Code tách riêng (mới nhất bên trái, cũ đẩy sang phải, tô sáng tab đang mở), cụm thao tác nhanh `Undo`/`Redo`/`Copy`/`Paste` luôn hiện trên thanh đầu, thanh phụ cuộn ngang kèm menu `Sửa`, và thanh bàn phím 2 hàng `80pt` có phím mũi tên điều hướng con trỏ `←` `↓` `↑` `→` (giữ để lặp) cùng phím chọn khối `Select`, `Home`/`End`, `Dup Line`, `Del Line`.
 
 ---
 
 ## Tổng kết Toàn bộ 17 Giai Đoạn Triển Khai
 
-### Phase 17 (v3.8.0): Hàng Tab VS Code Riêng, Thao Tác Nhanh Undo/Copy/Paste & Phím Mũi Tên Con Trỏ (`in_progress`)
+### Phase 17 (v3.8.0): Hàng Tab VS Code Riêng, Thao Tác Nhanh Undo/Copy/Paste & Phím Mũi Tên Con Trỏ (`completed`)
 - [x] **Tách hàng Tab File chuẩn VS Code (`WorkspaceManager.swift`, `App3012Main.swift`):** Tách danh sách tab khỏi thanh tiêu đề trên cùng thành `openFilesTabStrip` (`35pt`) cuộn ngang độc lập; file mới mở tự động chèn lên đầu bên trái, file mở lâu hơn đẩy dần sang phải; tab đang kích hoạt nổi bật với vạch accent 2.5pt phía trên, chữ đậm và viền sáng, kèm nút `+` tạo file nhanh và context menu đóng tab.
 - [x] **Cụm thao tác nhanh `Undo`/`Redo`/`Copy`/`Paste` & Menu `Sửa` (`App3012Main.swift`, `RunestoneEditorView.swift`):** Thêm nút bấm 1 chạm `Undo` (khôi phục code lỡ xóa), `Redo`, `Copy`, `Paste` ngay trên `topHeaderBar` (dùng được cả khi ẩn bàn phím) và menu `Sửa` (`Select All`, `Cut`, `Duplicate Line`, `Delete Line`) trên thanh `editorSubToolbar` cuộn ngang không bị cắt chữ breadcrumb.
 - [x] **Thanh bàn phím `ProCodingAccessoryBar` 2 hàng `80pt` có mũi tên điều hướng (`ProCodingAccessoryBar.swift`):** Hàng 1 có `Undo`, `Redo`, `Copy` (vùng chọn hoặc nguyên dòng hiện tại), `Paste`, `Cut`, chế độ giữ bôi đen `Select`, cụm 4 phím mũi tên `←` `↓` `↑` `→` tự động lặp khi nhấn giữ (`RepeatableActionButton`), `Home`, `End`, `All`, `Trackpad`; Hàng 2 có `AI`, `Tab`, 12 phím Flick ký tự lập trình, `Dup Line`, `Del Line`, `Find`.
-- [ ] Bump version `3.8.0` (Build 16), commit & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100%.
+- [x] Bump version `3.8.0` (Build 16), commit (`3b17d5c`) & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100% (Run `43569189881`, phát hành `v3.8.0-b25`).
 
 ### Phase 16 (v3.7.3): Kiểm Tra Toàn Diện & Sửa Dứt Điểm Mọi Lỗi Ổn Định (`completed` - Gộp vào Build 16)
 - [x] **Sửa xung đột trạng thái `RunestoneEditorView` & `ProCodingAccessoryBar`:** Bổ sung `lastKnownText`, `stateLoadGeneration` chống ghi đè bất đồng bộ khi gõ nhanh/chuyển tab/Pinch-to-Zoom; giữ nguyên ngăn xếp Undo/Redo nhiều bước; bổ sung `onAfterProgrammaticEdit` đồng bộ Undo/Redo/Tab/Flick Keys lên tab đang mở; sửa lỗi nhấn phím `"` trên `ProCodingAccessoryBar` bị chèn thành `"'` thay vì `""` và hỗ trợ bôi đen văn bản để bọc ngoặc `{}`/`()`/`[]`/`""`.
