@@ -6,10 +6,12 @@ on:
     paths-ignore:
       - 'BuildServer/**'
       - '.github/workflows/build-server.yml'
+      - '**.md'
   pull_request:
     branches: [ main, master ]
     paths-ignore:
       - 'BuildServer/**'
+      - '**.md'
   workflow_dispatch:
 
 permissions:
