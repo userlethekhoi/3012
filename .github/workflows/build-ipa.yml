@@ -47,7 +47,47 @@ jobs:
           rm -rf VendorPackages/Citadel
           mkdir -p VendorPackages
           git clone --depth 1 --branch 0.12.1 https://github.com/orlandos-nl/Citadel.git VendorPackages/Citadel
-          sed -i '' 's/\.iOS(\.v17)/.iOS(.v15)/g' VendorPackages/Citadel/Package.swift
+          rm -rf VendorPackages/Citadel/Package.resolved VendorPackages/Citadel/Examples VendorPackages/Citadel/Tests
+          cat << 'EOF' > VendorPackages/Citadel/Package.swift
+          // swift-tools-version:5.9
+          import PackageDescription
+
+          let package = Package(
+              name: "Citadel",
+              platforms: [
+                  .macOS(.v14),
+                  .iOS(.v15)
+              ],
+              products: [
+                  .library(
+                      name: "Citadel",
+                      targets: ["Citadel"]
+                  ),
+              ],
+              dependencies: [
+                  .package(url: "https://github.com/Wellz26/swift-nio-ssh.git", "0.3.4" ..< "0.4.0"),
+                  .package(url: "https://github.com/apple/swift-nio.git", from: "2.81.0"),
+                  .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
+                  .package(url: "https://github.com/attaswift/BigInt.git", from: "5.2.0"),
+                  .package(url: "https://github.com/apple/swift-crypto.git", from: "3.12.3"),
+              ],
+              targets: [
+                  .target(name: "CCitadelBcrypt"),
+                  .target(
+                      name: "Citadel",
+                      dependencies: [
+                          .target(name: "CCitadelBcrypt"),
+                          .product(name: "NIOSSH", package: "swift-nio-ssh"),
+                          .product(name: "NIO", package: "swift-nio"),
+                          .product(name: "Crypto", package: "swift-crypto"),
+                          .product(name: "_CryptoExtras", package: "swift-crypto"),
+                          .product(name: "BigInt", package: "BigInt"),
+                          .product(name: "Logging", package: "swift-log"),
+                      ]
+                  ),
+              ]
+          )
+          EOF
 
       - name: Generate Xcode Project via XcodeGen
         run: xcodegen generate
@@ -58,9 +98,9 @@ jobs:
           path: |
             ~/Library/Caches/org.swift.swiftpm
             build/SourcePackages
-          key: ${{ runner.os }}-spm-${{ hashFiles('project.yml') }}
+          key: ${{ runner.os }}-spm-ios15-${{ hashFiles('project.yml') }}
           restore-keys: |
-            ${{ runner.os }}-spm-
+            ${{ runner.os }}-spm-ios15-
 
       - name: Resolve Swift Package Dependencies
         run: xcodebuild -resolvePackageDependencies -project App3012.xcodeproj -scheme App3012 -clonedSourcePackagesDirPath build/SourcePackages
