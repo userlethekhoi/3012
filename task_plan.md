@@ -1,18 +1,24 @@
 # Kế hoạch & Tiến độ Triển khai — Dự án `3012` (AI-Native Mobile IDE for iOS)
 
-> **Trạng thái hiện tại:** **v3.7.3 Sẵn sàng Build CI (`Build 15`)** — Kiểm tra toàn diện và khắc phục dứt điểm 7 lỗi cốt lõi về trình soạn thảo `Runestone` + `ProCodingAccessoryBar` (xung đột trạng thái bất đồng bộ, mất Undo, bôi đen bọc ngoặc/nháy kép), đồng bộ `LiveServer` & URL tiếng Việt/khoảng trắng, `FileTimelineAndArchiveService.shared`, nhập Theme `.json`/JSONC qua `UIDocumentPickerViewController` và `autoRestartOnError` cho Bot ngầm.
+> **Trạng thái hiện tại:** **v3.8.0 Sẵn sàng Build CI (`Build 16`)** — Hoàn thiện toàn bộ 7 bản vá ổn định `v3.7.3` + nâng cấp UX soạn thảo Mobile Pro: Hàng Tab File chuẩn VS Code tách riêng (mới nhất bên trái, cũ đẩy sang phải, tô sáng tab đang mở), cụm thao tác nhanh `Undo`/`Redo`/`Copy`/`Paste` luôn hiện trên thanh đầu, thanh phụ cuộn ngang kèm menu `Sửa`, và thanh bàn phím 2 hàng `80pt` có phím mũi tên điều hướng con trỏ `←` `↓` `↑` `→` (giữ để lặp) cùng phím chọn khối `Select`, `Home`/`End`, `Dup Line`, `Del Line`.
 
 ---
 
-## Tổng kết Toàn bộ 16 Giai Đoạn Triển Khai
+## Tổng kết Toàn bộ 17 Giai Đoạn Triển Khai
 
-### Phase 16 (v3.7.3): Kiểm Tra Toàn Diện & Sửa Dứt Điểm Mọi Lỗi Ổn Định (`in_progress`)
+### Phase 17 (v3.8.0): Hàng Tab VS Code Riêng, Thao Tác Nhanh Undo/Copy/Paste & Phím Mũi Tên Con Trỏ (`in_progress`)
+- [x] **Tách hàng Tab File chuẩn VS Code (`WorkspaceManager.swift`, `App3012Main.swift`):** Tách danh sách tab khỏi thanh tiêu đề trên cùng thành `openFilesTabStrip` (`35pt`) cuộn ngang độc lập; file mới mở tự động chèn lên đầu bên trái, file mở lâu hơn đẩy dần sang phải; tab đang kích hoạt nổi bật với vạch accent 2.5pt phía trên, chữ đậm và viền sáng, kèm nút `+` tạo file nhanh và context menu đóng tab.
+- [x] **Cụm thao tác nhanh `Undo`/`Redo`/`Copy`/`Paste` & Menu `Sửa` (`App3012Main.swift`, `RunestoneEditorView.swift`):** Thêm nút bấm 1 chạm `Undo` (khôi phục code lỡ xóa), `Redo`, `Copy`, `Paste` ngay trên `topHeaderBar` (dùng được cả khi ẩn bàn phím) và menu `Sửa` (`Select All`, `Cut`, `Duplicate Line`, `Delete Line`) trên thanh `editorSubToolbar` cuộn ngang không bị cắt chữ breadcrumb.
+- [x] **Thanh bàn phím `ProCodingAccessoryBar` 2 hàng `80pt` có mũi tên điều hướng (`ProCodingAccessoryBar.swift`):** Hàng 1 có `Undo`, `Redo`, `Copy` (vùng chọn hoặc nguyên dòng hiện tại), `Paste`, `Cut`, chế độ giữ bôi đen `Select`, cụm 4 phím mũi tên `←` `↓` `↑` `→` tự động lặp khi nhấn giữ (`RepeatableActionButton`), `Home`, `End`, `All`, `Trackpad`; Hàng 2 có `AI`, `Tab`, 12 phím Flick ký tự lập trình, `Dup Line`, `Del Line`, `Find`.
+- [ ] Bump version `3.8.0` (Build 16), commit & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100%.
+
+### Phase 16 (v3.7.3): Kiểm Tra Toàn Diện & Sửa Dứt Điểm Mọi Lỗi Ổn Định (`completed` - Gộp vào Build 16)
 - [x] **Sửa xung đột trạng thái `RunestoneEditorView` & `ProCodingAccessoryBar`:** Bổ sung `lastKnownText`, `stateLoadGeneration` chống ghi đè bất đồng bộ khi gõ nhanh/chuyển tab/Pinch-to-Zoom; giữ nguyên ngăn xếp Undo/Redo nhiều bước; bổ sung `onAfterProgrammaticEdit` đồng bộ Undo/Redo/Tab/Flick Keys lên tab đang mở; sửa lỗi nhấn phím `"` trên `ProCodingAccessoryBar` bị chèn thành `"'` thay vì `""` và hỗ trợ bôi đen văn bản để bọc ngoặc `{}`/`()`/`[]`/`""`.
 - [x] **Thống nhất `FileTimelineAndArchiveService.shared` & Auto-Sync `LiveServer` (`App3012Main.swift`):** Kết nối cùng một singleton giữa App và `WorkspaceManager`, đồng thời tự động cập nhật `liveServer.updateRootDirectory` ngay khi đổi thư mục hoặc giải nén dự án.
 - [x] **Sửa Live Server `:5500` & Web Preview cho đường dẫn có dấu/khoảng trắng (`LiveServerService.swift`, `BottomConsolePreviewPanel.swift`):** Chuẩn hóa URL percent-encoding, dùng `.resolvingSymlinksInPath()` chống lỗi `403` giả, tự tìm file `.html` dự phòng hoặc hiển thị danh sách tệp thư mục khi chưa có `index.html`.
 - [x] **Sửa nhập Theme `.json`/JSONC & kiểm tra tải `.vsix` (`ExtensionStoreService.swift`, `LeftExplorerDrawer.swift`, `SettingsAndThemesSheet.swift`):** Chuyển sang `SystemDocumentPickerSheet(mode: .themeJSON)` (`asCopy: true`), lọc comment `//` / `/* */` trước khi parse và hiện thông báo trạng thái rõ ràng.
 - [x] **Kích hoạt `autoRestartOnError` cho `LocalDaemonService`:** Tự động khởi động lại Bot/Daemon sau 3 giây khi gặp lỗi JS (tối đa 5 lần liên tiếp).
-- [ ] Bump version `3.7.3` (Build 15) & kiểm chứng GitHub Actions `Build 3012 Unsigned IPA` xanh 100%.
+- [x] Bump version `3.7.3` (Build 15) & gộp phát hành chung trong `v3.8.0` (Build 16).
 
 ### Phase 15 (v3.7.2): Sửa lỗi Mở Thư Mục, Nhập & Tự Giải Nén `.zip`, và Đồng Bộ Toàn Diện Workspace (`completed` ✅)
 - [x] **Bộ chọn Tệp & Thư mục UIKit (`SystemDocumentPickerSheet` trong `LeftExplorerDrawer.swift` & `App3012Main.swift`):** Thay thế 2 `.fileImporter` xung đột bằng `UIDocumentPickerViewController` gắn tại `MainIDEWorkspaceView`, đảm bảo bấm **Mở Thư mục (Files)** và **Nhập & Giải nén .zip** hoạt động 100% từ Sidebar, màn hình chào mừng, Menu header và Command Palette (`Cmd+P`).

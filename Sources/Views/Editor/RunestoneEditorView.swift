@@ -26,6 +26,33 @@ public struct JumpToLineRequest: Equatable {
     }
 }
 
+public enum EditorQuickActionKind: Equatable {
+    case undo
+    case redo
+    case copy
+    case paste
+    case cut
+    case selectAll
+    case duplicateLine
+    case deleteLine
+    case moveLeft
+    case moveRight
+    case moveUp
+    case moveDown
+    case moveLineStart
+    case moveLineEnd
+}
+
+public struct EditorQuickActionRequest: Equatable {
+    public let token: Int
+    public let kind: EditorQuickActionKind
+
+    public init(token: Int, kind: EditorQuickActionKind) {
+        self.token = token
+        self.kind = kind
+    }
+}
+
 public struct RunestoneEditorView: UIViewRepresentable {
     public let fileURL: URL
     public let text: String
@@ -34,6 +61,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
     public var highlightedRanges: [HighlightedRange]
     public var completionRequest: CompletionReplacementRequest?
     public var jumpRequest: JumpToLineRequest?
+    public var quickActionRequest: EditorQuickActionRequest?
     public var findTriggerToken: Int
     public var toggleCommentToken: Int
     public var onAcceptPrimaryCompletion: () -> Bool
@@ -49,6 +77,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
         highlightedRanges: [HighlightedRange] = [],
         completionRequest: CompletionReplacementRequest? = nil,
         jumpRequest: JumpToLineRequest? = nil,
+        quickActionRequest: EditorQuickActionRequest? = nil,
         findTriggerToken: Int,
         toggleCommentToken: Int = 0,
         onAcceptPrimaryCompletion: @escaping () -> Bool = { false },
@@ -63,6 +92,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
         self.highlightedRanges = highlightedRanges
         self.completionRequest = completionRequest
         self.jumpRequest = jumpRequest
+        self.quickActionRequest = quickActionRequest
         self.findTriggerToken = findTriggerToken
         self.toggleCommentToken = toggleCommentToken
         self.onAcceptPrimaryCompletion = onAcceptPrimaryCompletion
@@ -163,6 +193,21 @@ public struct RunestoneEditorView: UIViewRepresentable {
             context.coordinator.lastToggleCommentToken = toggleCommentToken
             toggleLineComment(in: textView, coordinator: context.coordinator)
             return
+        }
+
+        // 2.5 Quick Action (Undo / Redo / Copy / Paste / Cut / Line / Arrows from Top Bar)
+        if let action = quickActionRequest, action.token != context.coordinator.lastQuickActionToken {
+            context.coordinator.lastQuickActionToken = action.token
+            let mutated = ProCodingAccessoryBar.performAction(action.kind, on: textView)
+            if mutated {
+                context.coordinator.isInternalEdit = true
+                context.coordinator.lastKnownText = textView.text
+                onTextChange(textView.text, textView.selectedRange)
+                DispatchQueue.main.async {
+                    context.coordinator.isInternalEdit = false
+                }
+                return
+            }
         }
 
         let externalTextChanged = (!context.coordinator.isInternalEdit && text != context.coordinator.lastKnownText && textView.text != text)
@@ -285,6 +330,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
         var lastCompletionToken: Int = 0
         var lastJumpToken: Int = 0
         var lastToggleCommentToken: Int = 0
+        var lastQuickActionToken: Int = 0
         private var pinchStartFontSize: CGFloat = 14.0
 
         init(parent: RunestoneEditorView) {
@@ -293,6 +339,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
             self.lastToggleCommentToken = parent.toggleCommentToken
             self.lastCompletionToken = parent.completionRequest?.token ?? 0
             self.lastJumpToken = parent.jumpRequest?.token ?? 0
+            self.lastQuickActionToken = parent.quickActionRequest?.token ?? 0
         }
 
         func loadState(

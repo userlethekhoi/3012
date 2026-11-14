@@ -345,7 +345,7 @@ public final class WorkspaceManager: ObservableObject {
             text = readTextWithEncodingFallback(from: url) ?? ""
         }
         let tab = OpenTab(fileURL: url, content: text)
-        openTabs.append(tab)
+        openTabs.insert(tab, at: 0)
         activeTabID = tab.id
     }
 
@@ -431,8 +431,43 @@ public final class WorkspaceManager: ObservableObject {
         syncFileChangeBackToExternalMirror(localFileURL: openTabs[idx].fileURL, content: openTabs[idx].content)
         openTabs.remove(at: idx)
         if activeTabID == tabID {
-            activeTabID = openTabs.last?.id
+            if openTabs.indices.contains(idx) {
+                activeTabID = openTabs[idx].id
+            } else {
+                activeTabID = openTabs.first?.id
+            }
         }
+    }
+
+    public func closeOtherTabs(keeping tabID: URL) {
+        let toClose = openTabs.filter { $0.id != tabID }
+        for tab in toClose {
+            try? tab.content.write(to: tab.fileURL, atomically: true, encoding: .utf8)
+            syncFileChangeBackToExternalMirror(localFileURL: tab.fileURL, content: tab.content)
+        }
+        openTabs.removeAll { $0.id != tabID }
+        if activeTabID != tabID {
+            activeTabID = openTabs.first?.id
+        }
+    }
+
+    public func closeAllTabs() {
+        for tab in openTabs {
+            try? tab.content.write(to: tab.fileURL, atomically: true, encoding: .utf8)
+            syncFileChangeBackToExternalMirror(localFileURL: tab.fileURL, content: tab.content)
+        }
+        openTabs.removeAll()
+        activeTabID = nil
+    }
+
+    public func moveTabToFront(_ tabID: URL) {
+        guard let idx = openTabs.firstIndex(where: { $0.id == tabID }), idx > 0 else {
+            activeTabID = tabID
+            return
+        }
+        let tab = openTabs.remove(at: idx)
+        openTabs.insert(tab, at: 0)
+        activeTabID = tab.id
     }
 
     @discardableResult

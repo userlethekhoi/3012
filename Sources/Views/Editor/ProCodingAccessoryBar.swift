@@ -21,7 +21,7 @@ public final class ProCodingAccessoryBar: UIInputView {
     private let feedback = UIImpactFeedbackGenerator(style: .light)
 
     public init() {
-        super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 46), inputViewStyle: .keyboard)
+        super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 80), inputViewStyle: .keyboard)
         setupUI()
     }
 
@@ -36,28 +36,47 @@ public final class ProCodingAccessoryBar: UIInputView {
 
         let topBorder = UIView()
         topBorder.translatesAutoresizingMaskIntoConstraints = false
-        topBorder.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        topBorder.backgroundColor = UIColor.white.withAlphaComponent(0.14)
         addSubview(topBorder)
 
-        let scrollView = UIScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.alwaysBounceHorizontal = true
-        addSubview(scrollView)
+        let rowDivider = UIView()
+        rowDivider.translatesAutoresizingMaskIntoConstraints = false
+        rowDivider.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        addSubview(rowDivider)
 
-        let stack = UIStackView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .horizontal
-        stack.spacing = 6
-        stack.alignment = .center
-        scrollView.addSubview(stack)
+        // Row 1: Undo / Redo / Copy / Paste / Cut / Select / Arrows / Home / End / Trackpad + Fixed Hide Keyboard
+        let row1Scroll = UIScrollView()
+        row1Scroll.translatesAutoresizingMaskIntoConstraints = false
+        row1Scroll.showsHorizontalScrollIndicator = false
+        row1Scroll.alwaysBounceHorizontal = true
+        addSubview(row1Scroll)
 
-        // Fixed right button: dismiss keyboard
+        let row1Stack = UIStackView()
+        row1Stack.translatesAutoresizingMaskIntoConstraints = false
+        row1Stack.axis = .horizontal
+        row1Stack.spacing = 5
+        row1Stack.alignment = .center
+        row1Scroll.addSubview(row1Stack)
+
         let hideKBButton = makeActionButton(title: nil, systemIcon: "keyboard.chevron.compact.down", accent: false) { [weak self] in
             self?.targetTextView?.resignFirstResponder()
         }
         hideKBButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hideKBButton)
+
+        // Row 2: AI / Tab / Flick Symbols / Duplicate Line / Delete Line / Find
+        let row2Scroll = UIScrollView()
+        row2Scroll.translatesAutoresizingMaskIntoConstraints = false
+        row2Scroll.showsHorizontalScrollIndicator = false
+        row2Scroll.alwaysBounceHorizontal = true
+        addSubview(row2Scroll)
+
+        let row2Stack = UIStackView()
+        row2Stack.translatesAutoresizingMaskIntoConstraints = false
+        row2Stack.axis = .horizontal
+        row2Stack.spacing = 5
+        row2Stack.alignment = .center
+        row2Scroll.addSubview(row2Stack)
 
         NSLayoutConstraint.activate([
             topBorder.topAnchor.constraint(equalTo: topAnchor),
@@ -66,43 +85,95 @@ public final class ProCodingAccessoryBar: UIInputView {
             topBorder.heightAnchor.constraint(equalToConstant: 0.5),
 
             hideKBButton.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -6),
-            hideKBButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            hideKBButton.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             hideKBButton.widthAnchor.constraint(equalToConstant: 36),
-            hideKBButton.heightAnchor.constraint(equalToConstant: 34),
+            hideKBButton.heightAnchor.constraint(equalToConstant: 32),
 
-            scrollView.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 6),
-            scrollView.trailingAnchor.constraint(equalTo: hideKBButton.leadingAnchor, constant: -6),
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row1Scroll.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 6),
+            row1Scroll.trailingAnchor.constraint(equalTo: hideKBButton.leadingAnchor, constant: -6),
+            row1Scroll.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            row1Scroll.heightAnchor.constraint(equalToConstant: 38),
 
-            stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            stack.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+            row1Stack.leadingAnchor.constraint(equalTo: row1Scroll.contentLayoutGuide.leadingAnchor),
+            row1Stack.trailingAnchor.constraint(equalTo: row1Scroll.contentLayoutGuide.trailingAnchor),
+            row1Stack.topAnchor.constraint(equalTo: row1Scroll.contentLayoutGuide.topAnchor),
+            row1Stack.bottomAnchor.constraint(equalTo: row1Scroll.contentLayoutGuide.bottomAnchor),
+            row1Stack.heightAnchor.constraint(equalTo: row1Scroll.frameLayoutGuide.heightAnchor),
+
+            rowDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            rowDivider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            rowDivider.topAnchor.constraint(equalTo: row1Scroll.bottomAnchor),
+            rowDivider.heightAnchor.constraint(equalToConstant: 0.5),
+
+            row2Scroll.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 6),
+            row2Scroll.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -6),
+            row2Scroll.topAnchor.constraint(equalTo: rowDivider.bottomAnchor),
+            row2Scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            row2Stack.leadingAnchor.constraint(equalTo: row2Scroll.contentLayoutGuide.leadingAnchor),
+            row2Stack.trailingAnchor.constraint(equalTo: row2Scroll.contentLayoutGuide.trailingAnchor),
+            row2Stack.topAnchor.constraint(equalTo: row2Scroll.contentLayoutGuide.topAnchor),
+            row2Stack.bottomAnchor.constraint(equalTo: row2Scroll.contentLayoutGuide.bottomAnchor),
+            row2Stack.heightAnchor.constraint(equalTo: row2Scroll.frameLayoutGuide.heightAnchor)
         ])
 
-        // 1. Coding Agent Quick Button (Native iOS SF Symbol)
-        let aiBtn = makeActionButton(title: nil, systemIcon: "cpu", accent: true) { [weak self] in
-            self?.feedback.impactOccurred()
-            self?.onTriggerAI?()
+        // MARK: Populate Row 1 — Quick Undo/Redo, Copy/Paste/Cut, Arrows & Trackpad
+        let undoBtn = makeActionButton(title: nil, systemIcon: "arrow.uturn.backward", accent: false) { [weak self] in
+            self?.triggerQuick(.undo)
         }
-        stack.addArrangedSubview(aiBtn)
-
-        // 2. Trackpad Pill (Drag to move cursor / select code)
-        let trackpadView = makeTrackpadPill()
-        stack.addArrangedSubview(trackpadView)
-
-        // 3. Select Toggle
+        let redoBtn = makeActionButton(title: nil, systemIcon: "arrow.uturn.forward", accent: false) { [weak self] in
+            self?.triggerQuick(.redo)
+        }
+        let copyBtn = makeActionButton(title: nil, systemIcon: "doc.on.doc", accent: false) { [weak self] in
+            self?.triggerQuick(.copy)
+        }
+        let pasteBtn = makeActionButton(title: nil, systemIcon: "doc.on.clipboard", accent: false) { [weak self] in
+            self?.triggerQuick(.paste)
+        }
+        let cutBtn = makeActionButton(title: nil, systemIcon: "scissors", accent: false) { [weak self] in
+            self?.triggerQuick(.cut)
+        }
         let selBtn = makeActionButton(title: nil, systemIcon: "selection.pin.in.out", accent: false) { [weak self] in
             guard let self else { return }
             self.feedback.impactOccurred()
             self.isSelectionMode.toggle()
         }
         self.selectButton = selBtn
-        stack.addArrangedSubview(selBtn)
 
-        // 4. Tab Key (Accepts active Autocomplete suggestion if present, otherwise inserts spaces)
+        let leftArrow = makeRepeatableArrowButton(systemIcon: "arrow.left") { [weak self] in
+            self?.triggerQuick(.moveLeft, haptic: false)
+        }
+        let downArrow = makeRepeatableArrowButton(systemIcon: "arrow.down") { [weak self] in
+            self?.triggerQuick(.moveDown, haptic: false)
+        }
+        let upArrow = makeRepeatableArrowButton(systemIcon: "arrow.up") { [weak self] in
+            self?.triggerQuick(.moveUp, haptic: false)
+        }
+        let rightArrow = makeRepeatableArrowButton(systemIcon: "arrow.right") { [weak self] in
+            self?.triggerQuick(.moveRight, haptic: false)
+        }
+        let homeBtn = makeActionButton(title: nil, systemIcon: "arrow.left.to.line.compact", accent: false) { [weak self] in
+            self?.triggerQuick(.moveLineStart)
+        }
+        let endBtn = makeActionButton(title: nil, systemIcon: "arrow.right.to.line.compact", accent: false) { [weak self] in
+            self?.triggerQuick(.moveLineEnd)
+        }
+        let selectAllBtn = makeActionButton(title: "All", systemIcon: nil, accent: false) { [weak self] in
+            self?.triggerQuick(.selectAll)
+        }
+        let trackpadView = makeTrackpadPill()
+
+        for v in [undoBtn, redoBtn, makeGroupSpacer(), copyBtn, pasteBtn, cutBtn, makeGroupSpacer(), selBtn, leftArrow, downArrow, upArrow, rightArrow, homeBtn, endBtn, selectAllBtn, makeGroupSpacer(), trackpadView] {
+            row1Stack.addArrangedSubview(v)
+        }
+
+        // MARK: Populate Row 2 — AI, Tab, Flick Symbols, Line Ops, Find
+        let aiBtn = makeActionButton(title: nil, systemIcon: "cpu", accent: true) { [weak self] in
+            self?.feedback.impactOccurred()
+            self?.onTriggerAI?()
+        }
+        row2Stack.addArrangedSubview(aiBtn)
+
         let tabBtn = makeActionButton(title: nil, systemIcon: "arrow.right.to.line", accent: false) { [weak self] in
             guard let self, let tv = self.targetTextView else { return }
             self.feedback.impactOccurred()
@@ -113,9 +184,8 @@ public final class ProCodingAccessoryBar: UIInputView {
             tv.insertText(spaces)
             self.onAfterProgrammaticEdit?(tv)
         }
-        stack.addArrangedSubview(tabBtn)
+        row2Stack.addArrangedSubview(tabBtn)
 
-        // 5. Flick Keys (Tap = primary, Swipe Up = secondary!)
         let flickConfigs: [(String, String, Bool)] = [
             ("{", "}", true),
             ("(", ")", true),
@@ -133,36 +203,178 @@ public final class ProCodingAccessoryBar: UIInputView {
 
         for (primary, secondary, autoPair) in flickConfigs {
             let key = makeFlickKeyButton(primary: primary, secondary: secondary, autoPairPrimary: autoPair)
-            stack.addArrangedSubview(key)
+            row2Stack.addArrangedSubview(key)
         }
 
-        // 6. Undo / Redo / Find
-        let undoBtn = makeActionButton(title: nil, systemIcon: "arrow.uturn.backward", accent: false) { [weak self] in
-            guard let self, let tv = self.targetTextView else { return }
-            self.feedback.impactOccurred()
-            tv.undoManager?.undo()
-            self.onAfterProgrammaticEdit?(tv)
+        let dupLineBtn = makeActionButton(title: nil, systemIcon: "plus.square.on.square", accent: false) { [weak self] in
+            self?.triggerQuick(.duplicateLine)
         }
-        let redoBtn = makeActionButton(title: nil, systemIcon: "arrow.uturn.forward", accent: false) { [weak self] in
-            guard let self, let tv = self.targetTextView else { return }
-            self.feedback.impactOccurred()
-            tv.undoManager?.redo()
-            self.onAfterProgrammaticEdit?(tv)
+        let delLineBtn = makeActionButton(title: nil, systemIcon: "delete.left", accent: false) { [weak self] in
+            self?.triggerQuick(.deleteLine)
         }
         let findBtn = makeActionButton(title: nil, systemIcon: "magnifyingglass", accent: false) { [weak self] in
             self?.feedback.impactOccurred()
             self?.onTriggerFind?()
         }
-        stack.addArrangedSubview(undoBtn)
-        stack.addArrangedSubview(redoBtn)
-        stack.addArrangedSubview(findBtn)
+        row2Stack.addArrangedSubview(dupLineBtn)
+        row2Stack.addArrangedSubview(delLineBtn)
+        row2Stack.addArrangedSubview(findBtn)
     }
 
+    private func makeGroupSpacer() -> UIView {
+        let sep = UIView()
+        sep.translatesAutoresizingMaskIntoConstraints = false
+        sep.backgroundColor = UIColor.white.withAlphaComponent(0.14)
+        NSLayoutConstraint.activate([
+            sep.widthAnchor.constraint(equalToConstant: 1),
+            sep.heightAnchor.constraint(equalToConstant: 18)
+        ])
+        return sep
+    }
+
+    private func triggerQuick(_ kind: EditorQuickActionKind, haptic: Bool = true) {
+        guard let tv = targetTextView else { return }
+        if haptic {
+            feedback.impactOccurred()
+        }
+        let mutated = Self.performAction(kind, on: tv, isSelectionMode: isSelectionMode)
+        if mutated {
+            onAfterProgrammaticEdit?(tv)
+        }
+    }
+
+    // MARK: - Shared Action Execution (Used by both Accessory Bar and SwiftUI Header/Toolbar)
+    @MainActor
+    @discardableResult
+    public static func performAction(_ kind: EditorQuickActionKind, on tv: TextView, isSelectionMode: Bool = false) -> Bool {
+        switch kind {
+        case .undo:
+            tv.undoManager?.undo()
+            return true
+        case .redo:
+            tv.undoManager?.redo()
+            return true
+        case .copy:
+            performCopy(in: tv)
+            return false
+        case .paste:
+            return performPaste(in: tv)
+        case .cut:
+            return performCut(in: tv)
+        case .selectAll:
+            let len = (tv.text as NSString).length
+            tv.selectedRange = NSRange(location: 0, length: len)
+            return false
+        case .duplicateLine:
+            return performDuplicateLine(in: tv)
+        case .deleteLine:
+            return performDeleteLine(in: tv)
+        case .moveLeft:
+            moveCursorHorizontally(in: tv, offset: -1, isSelectionMode: isSelectionMode)
+            return false
+        case .moveRight:
+            moveCursorHorizontally(in: tv, offset: 1, isSelectionMode: isSelectionMode)
+            return false
+        case .moveUp:
+            moveCursorVertically(in: tv, down: false, isSelectionMode: isSelectionMode)
+            return false
+        case .moveDown:
+            moveCursorVertically(in: tv, down: true, isSelectionMode: isSelectionMode)
+            return false
+        case .moveLineStart:
+            moveCursorToLineEdge(in: tv, toEnd: false, isSelectionMode: isSelectionMode)
+            return false
+        case .moveLineEnd:
+            moveCursorToLineEdge(in: tv, toEnd: true, isSelectionMode: isSelectionMode)
+            return false
+        }
+    }
+
+    @MainActor
+    private static func performCopy(in tv: TextView) {
+        let ns = tv.text as NSString
+        guard ns.length > 0 else { return }
+        let safeSel = clampRange(tv.selectedRange, maxLength: ns.length)
+        if safeSel.length > 0 {
+            UIPasteboard.general.string = ns.substring(with: safeSel)
+        } else {
+            let lineRange = ns.lineRange(for: NSRange(location: safeSel.location, length: 0))
+            UIPasteboard.general.string = ns.substring(with: lineRange)
+        }
+    }
+
+    @MainActor
+    private static func performPaste(in tv: TextView) -> Bool {
+        guard let clip = UIPasteboard.general.string, !clip.isEmpty else { return false }
+        let ns = tv.text as NSString
+        let safeSel = clampRange(tv.selectedRange, maxLength: ns.length)
+        tv.replace(safeSel, withText: clip)
+        let cursor = min(safeSel.location + (clip as NSString).length, (tv.text as NSString).length)
+        tv.selectedRange = NSRange(location: cursor, length: 0)
+        tv.scrollRangeToVisible(tv.selectedRange)
+        return true
+    }
+
+    @MainActor
+    private static func performCut(in tv: TextView) -> Bool {
+        let ns = tv.text as NSString
+        guard ns.length > 0 else { return false }
+        let safeSel = clampRange(tv.selectedRange, maxLength: ns.length)
+        let targetRange: NSRange = safeSel.length > 0
+            ? safeSel
+            : ns.lineRange(for: NSRange(location: safeSel.location, length: 0))
+        UIPasteboard.general.string = ns.substring(with: targetRange)
+        tv.replace(targetRange, withText: "")
+        let newLen = (tv.text as NSString).length
+        tv.selectedRange = NSRange(location: min(targetRange.location, newLen), length: 0)
+        tv.scrollRangeToVisible(tv.selectedRange)
+        return true
+    }
+
+    @MainActor
+    private static func performDuplicateLine(in tv: TextView) -> Bool {
+        let ns = tv.text as NSString
+        let safeSel = clampRange(tv.selectedRange, maxLength: ns.length)
+        let lineRange = ns.lineRange(for: safeSel)
+        let lineText = ns.substring(with: lineRange)
+        let insertionText = lineText.hasSuffix("\n") ? lineText : "\n" + lineText
+        let insertLoc = lineRange.location + lineRange.length
+        tv.replace(NSRange(location: insertLoc, length: 0), withText: insertionText)
+        let targetCursor = min(insertLoc + (lineText.hasSuffix("\n") ? (safeSel.location - lineRange.location) : 1 + (safeSel.location - lineRange.location)), (tv.text as NSString).length)
+        tv.selectedRange = NSRange(location: max(0, targetCursor), length: 0)
+        tv.scrollRangeToVisible(tv.selectedRange)
+        return true
+    }
+
+    @MainActor
+    private static func performDeleteLine(in tv: TextView) -> Bool {
+        let ns = tv.text as NSString
+        guard ns.length > 0 else { return false }
+        let safeSel = clampRange(tv.selectedRange, maxLength: ns.length)
+        var lineRange = ns.lineRange(for: safeSel)
+        // If deleting the final line without trailing newline and a previous newline exists, include it
+        if lineRange.location > 0 && lineRange.location + lineRange.length == ns.length && !ns.substring(with: lineRange).hasSuffix("\n") {
+            lineRange = NSRange(location: lineRange.location - 1, length: lineRange.length + 1)
+        }
+        tv.replace(lineRange, withText: "")
+        let newLen = (tv.text as NSString).length
+        tv.selectedRange = NSRange(location: min(lineRange.location, newLen), length: 0)
+        tv.scrollRangeToVisible(tv.selectedRange)
+        return true
+    }
+
+    private static func clampRange(_ range: NSRange, maxLength: Int) -> NSRange {
+        let loc = min(max(0, range.location), maxLength)
+        let len = min(max(0, range.length), maxLength - loc)
+        return NSRange(location: loc, length: len)
+    }
+
+    // MARK: - Trackpad Pill
     private func makeTrackpadPill() -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.backgroundColor = UIColor.systemIndigo.withAlphaComponent(0.30)
-        pill.layer.cornerRadius = 8
+        pill.layer.cornerRadius = 7
         pill.layer.borderWidth = 1
         pill.layer.borderColor = UIColor.systemIndigo.withAlphaComponent(0.65).cgColor
 
@@ -176,14 +388,14 @@ public final class ProCodingAccessoryBar: UIInputView {
         let iconView = UIImageView(
             image: UIImage(
                 systemName: "dpad",
-                withConfiguration: UIImage.SymbolConfiguration(pointSize: 11.5, weight: .semibold)
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
             )
         )
         iconView.tintColor = .white
 
         let label = UILabel()
         label.text = "Trackpad"
-        label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        label.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
         label.textColor = .white
 
         row.addArrangedSubview(iconView)
@@ -191,8 +403,8 @@ public final class ProCodingAccessoryBar: UIInputView {
         pill.addSubview(row)
 
         NSLayoutConstraint.activate([
-            pill.widthAnchor.constraint(equalToConstant: 88),
-            pill.heightAnchor.constraint(equalToConstant: 34),
+            pill.widthAnchor.constraint(equalToConstant: 82),
+            pill.heightAnchor.constraint(equalToConstant: 32),
             row.centerXAnchor.constraint(equalTo: pill.centerXAnchor),
             row.centerYAnchor.constraint(equalTo: pill.centerYAnchor)
         ])
@@ -221,14 +433,14 @@ public final class ProCodingAccessoryBar: UIInputView {
             while abs(accumulatedX) >= stepX {
                 let delta = accumulatedX > 0 ? 1 : -1
                 accumulatedX -= CGFloat(delta) * stepX
-                moveCursorHorizontally(in: tv, offset: delta)
+                Self.moveCursorHorizontally(in: tv, offset: delta, isSelectionMode: isSelectionMode)
                 feedback.impactOccurred()
             }
 
             while abs(accumulatedY) >= stepY {
                 let goingDown = accumulatedY > 0
                 accumulatedY -= (goingDown ? 1 : -1) * stepY
-                moveCursorVertically(in: tv, down: goingDown)
+                Self.moveCursorVertically(in: tv, down: goingDown, isSelectionMode: isSelectionMode)
                 feedback.impactOccurred()
             }
         default:
@@ -236,9 +448,10 @@ public final class ProCodingAccessoryBar: UIInputView {
         }
     }
 
-    private func moveCursorHorizontally(in tv: TextView, offset: Int) {
+    @MainActor
+    private static func moveCursorHorizontally(in tv: TextView, offset: Int, isSelectionMode: Bool) {
         let totalLen = (tv.text as NSString).length
-        let current = tv.selectedRange
+        let current = clampRange(tv.selectedRange, maxLength: totalLen)
         if isSelectionMode {
             let newEnd = min(max(0, current.location + current.length + offset), totalLen)
             if newEnd >= current.location {
@@ -254,11 +467,13 @@ public final class ProCodingAccessoryBar: UIInputView {
         tv.scrollRangeToVisible(tv.selectedRange)
     }
 
-    private func moveCursorVertically(in tv: TextView, down: Bool) {
+    @MainActor
+    private static func moveCursorVertically(in tv: TextView, down: Bool, isSelectionMode: Bool) {
         let nsText = tv.text as NSString
         let totalLen = nsText.length
         guard totalLen > 0 else { return }
-        let pos = min(tv.selectedRange.location, totalLen)
+        let safeSel = clampRange(tv.selectedRange, maxLength: totalLen)
+        let pos = safeSel.location
         let currentLineRange = nsText.lineRange(for: NSRange(location: pos, length: 0))
         let colOffset = pos - currentLineRange.location
 
@@ -266,26 +481,42 @@ public final class ProCodingAccessoryBar: UIInputView {
         if down {
             let nextLineStart = currentLineRange.location + currentLineRange.length
             guard nextLineStart < totalLen else {
-                targetLocation = totalLen
-                applyVerticalMove(in: tv, to: targetLocation)
+                applyVerticalMove(in: tv, to: totalLen, isSelectionMode: isSelectionMode)
                 return
             }
             let nextLineRange = nsText.lineRange(for: NSRange(location: nextLineStart, length: 0))
-            let usableLen = max(0, nextLineRange.length - 1)
+            let hasNewline = nextLineRange.length > 0 && nsText.substring(with: NSRange(location: nextLineRange.location + nextLineRange.length - 1, length: 1)) == "\n"
+            let usableLen = hasNewline ? max(0, nextLineRange.length - 1) : nextLineRange.length
             targetLocation = nextLineRange.location + min(colOffset, usableLen)
         } else {
             guard currentLineRange.location > 0 else {
-                applyVerticalMove(in: tv, to: 0)
+                applyVerticalMove(in: tv, to: 0, isSelectionMode: isSelectionMode)
                 return
             }
             let prevLineRange = nsText.lineRange(for: NSRange(location: currentLineRange.location - 1, length: 0))
-            let usableLen = max(0, prevLineRange.length - 1)
+            let hasNewline = prevLineRange.length > 0 && nsText.substring(with: NSRange(location: prevLineRange.location + prevLineRange.length - 1, length: 1)) == "\n"
+            let usableLen = hasNewline ? max(0, prevLineRange.length - 1) : prevLineRange.length
             targetLocation = prevLineRange.location + min(colOffset, usableLen)
         }
-        applyVerticalMove(in: tv, to: min(max(0, targetLocation), totalLen))
+        applyVerticalMove(in: tv, to: min(max(0, targetLocation), totalLen), isSelectionMode: isSelectionMode)
     }
 
-    private func applyVerticalMove(in tv: TextView, to location: Int) {
+    @MainActor
+    private static func moveCursorToLineEdge(in tv: TextView, toEnd: Bool, isSelectionMode: Bool) {
+        let nsText = tv.text as NSString
+        let totalLen = nsText.length
+        guard totalLen > 0 else { return }
+        let safeSel = clampRange(tv.selectedRange, maxLength: totalLen)
+        let lineRange = nsText.lineRange(for: NSRange(location: safeSel.location, length: 0))
+        let hasNewline = lineRange.length > 0 && nsText.substring(with: NSRange(location: lineRange.location + lineRange.length - 1, length: 1)) == "\n"
+        let targetLoc = toEnd
+            ? (lineRange.location + (hasNewline ? lineRange.length - 1 : lineRange.length))
+            : lineRange.location
+        applyVerticalMove(in: tv, to: min(max(0, targetLoc), totalLen), isSelectionMode: isSelectionMode)
+    }
+
+    @MainActor
+    private static func applyVerticalMove(in tv: TextView, to location: Int, isSelectionMode: Bool) {
         if isSelectionMode {
             let anchor = tv.selectedRange.location
             let start = min(anchor, location)
@@ -304,18 +535,32 @@ public final class ProCodingAccessoryBar: UIInputView {
         btn.tintColor = .white
         btn.layer.cornerRadius = 7
         if let systemIcon {
-            btn.setImage(UIImage(systemName: systemIcon, withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)), for: .normal)
+            btn.setImage(UIImage(systemName: systemIcon, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12.5, weight: .semibold)), for: .normal)
         } else if let title {
             btn.setTitle(title, for: .normal)
-            btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .semibold)
+            btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
             btn.setTitleColor(.white, for: .normal)
         }
-        let width: CGFloat = (title?.count ?? 1) > 2 ? 54 : 36
+        let width: CGFloat = (title?.count ?? 1) > 2 ? 42 : 34
         NSLayoutConstraint.activate([
             btn.widthAnchor.constraint(equalToConstant: width),
-            btn.heightAnchor.constraint(equalToConstant: 34)
+            btn.heightAnchor.constraint(equalToConstant: 32)
         ])
         btn.addAction(UIAction { _ in action() }, for: .touchUpInside)
+        return btn
+    }
+
+    private func makeRepeatableArrowButton(systemIcon: String, action: @escaping () -> Void) -> UIButton {
+        let btn = RepeatableActionButton(onStep: action)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.backgroundColor = UIColor.white.withAlphaComponent(0.14)
+        btn.tintColor = .white
+        btn.layer.cornerRadius = 7
+        btn.setImage(UIImage(systemName: systemIcon, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12.5, weight: .semibold)), for: .normal)
+        NSLayoutConstraint.activate([
+            btn.widthAnchor.constraint(equalToConstant: 33),
+            btn.heightAnchor.constraint(equalToConstant: 32)
+        ])
         return btn
     }
 
@@ -335,7 +580,7 @@ public final class ProCodingAccessoryBar: UIInputView {
         let mainLbl = UILabel()
         mainLbl.translatesAutoresizingMaskIntoConstraints = false
         mainLbl.text = primary
-        mainLbl.font = UIFont.monospacedSystemFont(ofSize: 14, weight: .bold)
+        mainLbl.font = UIFont.monospacedSystemFont(ofSize: 13.5, weight: .bold)
         mainLbl.textColor = .white
         mainLbl.isUserInteractionEnabled = false
 
@@ -343,11 +588,11 @@ public final class ProCodingAccessoryBar: UIInputView {
         container.addSubview(mainLbl)
 
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: 34),
-            container.heightAnchor.constraint(equalToConstant: 34),
-            topHint.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
+            container.widthAnchor.constraint(equalToConstant: 33),
+            container.heightAnchor.constraint(equalToConstant: 32),
+            topHint.topAnchor.constraint(equalTo: container.topAnchor, constant: 1.5),
             topHint.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            mainLbl.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -3),
+            mainLbl.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2.5),
             mainLbl.centerXAnchor.constraint(equalTo: container.centerXAnchor)
         ])
 
@@ -401,6 +646,51 @@ public final class ProCodingAccessoryBar: UIInputView {
         case "'": return "'"
         default: return nil
         }
+    }
+}
+
+private final class RepeatableActionButton: UIButton {
+    private let onStep: () -> Void
+    private var repeatTask: Task<Void, Never>?
+
+    init(onStep: @escaping () -> Void) {
+        self.onStep = onStep
+        super.init(frame: .zero)
+        addTarget(self, action: #selector(touchBegan), for: .touchDown)
+        addTarget(self, action: #selector(touchEnded), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func willMove(toWindow newWindow: UIWindow?) {
+        super.willMove(toWindow: newWindow)
+        if newWindow == nil {
+            stopRepeating()
+        }
+    }
+
+    @objc private func touchBegan() {
+        stopRepeating()
+        onStep()
+        repeatTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 280_000_000)
+            while !Task.isCancelled {
+                guard let self, self.isHighlighted || self.isTracking else { break }
+                self.onStep()
+                try? await Task.sleep(nanoseconds: 65_000_000)
+            }
+        }
+    }
+
+    @objc private func touchEnded() {
+        stopRepeating()
+    }
+
+    private func stopRepeating() {
+        repeatTask?.cancel()
+        repeatTask = nil
     }
 }
 

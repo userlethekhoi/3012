@@ -81,6 +81,9 @@ public struct MainIDEWorkspaceView: View {
     @State private var toggleCommentToken: Int = 0
     @State private var completionRequest: CompletionReplacementRequest? = nil
     @State private var jumpRequest: JumpToLineRequest? = nil
+    @State private var quickActionRequest: EditorQuickActionRequest? = nil
+    @State private var showQuickNewFileAlert: Bool = false
+    @State private var quickNewFileName: String = ""
 
     public var body: some View {
         let palette = preferences.activePalette
@@ -93,10 +96,15 @@ public struct MainIDEWorkspaceView: View {
                 hardwareKeyboardShortcutsHost
 
                 VStack(spacing: 0) {
-                    // 1. Ultra-Slim 38pt Top Header Bar
+                    // 1. Ultra-Slim 38pt Top Header Bar (Workspace + Quick Undo/Redo/Copy/Paste + Run + Agent)
                     topHeaderBar(palette: palette)
 
-                    // 2. Slim 26pt Breadcrumb, Diagnostics, Quick Toggles & Markdown/Timeline Strip
+                    // 2. Dedicated VS Code File Tab Bar Row (Newest on Left -> Older pushed Right)
+                    if !workspace.openTabs.isEmpty {
+                        openFilesTabStrip(palette: palette)
+                    }
+
+                    // 3. Slim 27pt Breadcrumb, Diagnostics, Quick Toggles & Markdown/Timeline Strip
                     if let activeTab = workspace.activeTab {
                         editorSubToolbar(activeTab: activeTab, palette: palette)
                     }
@@ -395,6 +403,21 @@ public struct MainIDEWorkspaceView: View {
         .sheet(item: $shareZipItem) { item in
             ZipActivityShareSheet(fileURL: item.url)
         }
+        .alert(preferences.tr("Tạo File Mới", "New File"), isPresented: $showQuickNewFileAlert) {
+            TextField(preferences.tr("Tên file (vd: script.py)", "File name (e.g. script.py)"), text: $quickNewFileName)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            Button(preferences.tr("Tạo", "Create")) {
+                let name = quickNewFileName
+                quickNewFileName = ""
+                if let created = workspace.createFile(named: name) {
+                    workspace.openFile(at: created)
+                }
+            }
+            Button(preferences.tr("Hủy", "Cancel"), role: .cancel) {
+                quickNewFileName = ""
+            }
+        }
     }
 
     // MARK: - Central Editor + Floating Live Autocomplete + Markdown/Mermaid View
@@ -435,6 +458,7 @@ public struct MainIDEWorkspaceView: View {
                 highlightedRanges: intelligence.makeRunestoneHighlightedRanges(enabled: preferences.enableLiveDiagnostics),
                 completionRequest: completionRequest,
                 jumpRequest: jumpRequest,
+                quickActionRequest: quickActionRequest,
                 findTriggerToken: findTriggerToken,
                 toggleCommentToken: toggleCommentToken,
                 onAcceptPrimaryCompletion: {
@@ -600,195 +624,237 @@ public struct MainIDEWorkspaceView: View {
         .shadow(color: .black.opacity(0.32), radius: 8, x: 0, y: 3)
     }
 
-    // MARK: - Slim Sub-Toolbar (Breadcrumbs + Language Mode + Format + Quick Toggles + Diagnostics + Timeline)
+    // MARK: - Slim Sub-Toolbar (Breadcrumbs + Language Mode + Format + Quick Tools + Diagnostics + Timeline)
     @ViewBuilder
     private func editorSubToolbar(activeTab: OpenTab, palette: IDEColorPalette) -> some View {
-        HStack(spacing: 6) {
-            // 1. Breadcrumb & Symbol Outline Trigger
-            if preferences.showBreadcrumbs {
-                Button {
-                    showSymbolOutlineSheet = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(workspace.relativePath(for: activeTab.fileURL))
-                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(hex: palette.gutterForeground))
-                            .lineLimit(1)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                // 1. Breadcrumb & Symbol Outline Trigger
+                if preferences.showBreadcrumbs {
+                    Button {
+                        showSymbolOutlineSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(workspace.relativePath(for: activeTab.fileURL))
+                                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                .foregroundColor(Color(hex: palette.gutterForeground))
+                                .fixedSize(horizontal: true, vertical: false)
 
-                        if let activeSym = intelligence.activeBreadcrumbSymbol {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 8.5, weight: .semibold))
-                                .foregroundColor(Color(hex: palette.gutterForeground))
-                            Text(activeSym)
-                                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                                .foregroundColor(Color(hex: palette.accent))
-                                .lineLimit(1)
-                        } else if !intelligence.symbols.isEmpty {
-                            Image(systemName: "list.bullet.indent")
-                                .font(.system(size: 9.5))
-                                .foregroundColor(Color(hex: palette.gutterForeground))
+                            if let activeSym = intelligence.activeBreadcrumbSymbol {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 8.5, weight: .semibold))
+                                    .foregroundColor(Color(hex: palette.gutterForeground))
+                                Text(activeSym)
+                                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(Color(hex: palette.accent))
+                                    .fixedSize(horizontal: true, vertical: false)
+                            } else if !intelligence.symbols.isEmpty {
+                                Image(systemName: "list.bullet.indent")
+                                    .font(.system(size: 9.5))
+                                    .foregroundColor(Color(hex: palette.gutterForeground))
+                            }
                         }
                     }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-            }
 
-            Spacer(minLength: 4)
-
-            // 2. Markdown & Mermaid Live Preview Mode Picker
-            if activeTab.language == .markdown {
-                HStack(spacing: 2) {
-                    ForEach(MarkdownDisplayMode.allCases) { mode in
-                        Button {
-                            markdownMode = mode
-                        } label: {
-                            Text(mode.rawValue)
-                                .font(.system(size: 9.5, weight: markdownMode == mode ? .bold : .regular))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(markdownMode == mode ? Color(hex: palette.accent) : Color.clear)
-                                .foregroundColor(markdownMode == mode ? .white : Color(hex: palette.gutterForeground))
-                                .cornerRadius(4)
+                // 2. Markdown & Mermaid Live Preview Mode Picker
+                if activeTab.language == .markdown {
+                    HStack(spacing: 2) {
+                        ForEach(MarkdownDisplayMode.allCases) { mode in
+                            Button {
+                                markdownMode = mode
+                            } label: {
+                                Text(mode.rawValue)
+                                    .font(.system(size: 9.5, weight: markdownMode == mode ? .bold : .regular))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(markdownMode == mode ? Color(hex: palette.accent) : Color.clear)
+                                    .foregroundColor(markdownMode == mode ? .white : Color(hex: palette.gutterForeground))
+                                    .cornerRadius(4)
+                            }
                         }
                     }
+                    .padding(1)
+                    .background(Color(hex: palette.currentLineBackground))
+                    .cornerRadius(5)
                 }
-                .padding(1)
-                .background(Color(hex: palette.currentLineBackground))
-                .cornerRadius(5)
-            }
 
-            // 3. VS Code Language Mode Selector Badge (64 Languages + Auto-Detect)
-            Button {
-                showLanguagePickerSheet = true
-            } label: {
-                HStack(spacing: 3) {
-                    FileLanguageIconView(language: activeTab.language, size: 9.5)
-                    Text(activeTab.language.shortBadgeName)
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color(hex: palette.currentLineBackground))
-                .foregroundColor(Color(hex: palette.foreground))
-                .cornerRadius(4)
-            }
-            .buttonStyle(.plain)
-
-            // 4. 1-Tap Format Code Button
-            Button {
-                formatActiveFile()
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "text.alignleft")
-                        .font(.system(size: 9.5, weight: .semibold))
-                    Text(preferences.tr("Format", "Format"))
-                        .font(.system(size: 9.5, weight: .semibold))
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color(hex: palette.currentLineBackground))
-                .foregroundColor(Color(hex: palette.foreground))
-                .cornerRadius(4)
-            }
-            .buttonStyle(.plain)
-
-            // 4.5 Theos Build Pill (when inside a Theos project or Logos/control file)
-            if isTheosBuildContext(activeTab: activeTab) {
+                // 3. VS Code Language Mode Selector Badge (64 Languages + Auto-Detect)
                 Button {
-                    showTheosBuilderSheet = true
+                    showLanguagePickerSheet = true
                 } label: {
                     HStack(spacing: 3) {
-                        if theosService.isBuilding {
-                            ProgressView().scaleEffect(0.55)
-                        } else {
-                            Image(systemName: "hammer.fill")
-                                .font(.system(size: 9.5, weight: .semibold))
-                        }
-                        Text("Theos .deb")
-                            .font(.system(size: 9.5, weight: .bold))
+                        FileLanguageIconView(language: activeTab.language, size: 9.5)
+                        Text(activeTab.language.shortBadgeName)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color(hex: palette.accent).opacity(0.18))
-                    .foregroundColor(Color(hex: palette.accent))
+                    .background(Color(hex: palette.currentLineBackground))
+                    .foregroundColor(Color(hex: palette.foreground))
                     .cornerRadius(4)
                 }
                 .buttonStyle(.plain)
-            }
 
-            // 5. Quick Smart Autocomplete Status Pill (1-Tap Toggle)
-            Button {
-                preferences.enableCodeCompletion.toggle()
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "text.cursor")
-                        .font(.system(size: 9.5, weight: .semibold))
-                    Text(preferences.enableCodeCompletion
-                         ? preferences.tr("Gợi ý: ON", "Hint: ON", zh: "提示: 开", ja: "補完: ON", ko: "자동완성: ON", ru: "Подсказки: ВКЛ", es: "Sugerir: ON")
-                         : preferences.tr("Gợi ý: OFF", "Hint: OFF", zh: "提示: 关", ja: "補完: OFF", ko: "자동완성: OFF", ru: "Подсказки: ВЫКЛ", es: "Sugerir: OFF"))
-                        .font(.system(size: 9.5, weight: .semibold))
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(preferences.enableCodeCompletion ? Color(hex: palette.accent).opacity(0.16) : Color(hex: palette.currentLineBackground))
-                .foregroundColor(preferences.enableCodeCompletion ? Color(hex: palette.accent) : Color(hex: palette.gutterForeground))
-                .cornerRadius(4)
-            }
-
-            // 6. Inline Error / Warning Status Pill (Tap opens Problems or jumps to error)
-            Button {
-                if !preferences.enableLiveDiagnostics {
-                    preferences.enableLiveDiagnostics = true
-                } else {
-                    bottomTab = .problems
-                    withAnimation { showBottomPanel = true }
-                    if let firstDiag = intelligence.diagnostics.first {
-                        triggerJumpToLine(firstDiag.line)
+                // 4. 1-Tap Format Code Button
+                Button {
+                    formatActiveFile()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "text.alignleft")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text(preferences.tr("Format", "Format"))
+                            .font(.system(size: 9.5, weight: .semibold))
                     }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color(hex: palette.currentLineBackground))
+                    .foregroundColor(Color(hex: palette.foreground))
+                    .cornerRadius(4)
                 }
-            } label: {
-                HStack(spacing: 3) {
+                .buttonStyle(.plain)
+
+                // 4.2 Quick Line / Clipboard Menu (Cut, Select All, Duplicate/Delete Line)
+                Menu {
+                    Button { triggerQuickAction(.undo) } label: {
+                        Label(preferences.tr("Hoàn tác (Ctrl+Z)", "Undo (Ctrl+Z)"), systemImage: "arrow.uturn.backward")
+                    }
+                    Button { triggerQuickAction(.redo) } label: {
+                        Label(preferences.tr("Làm lại (Ctrl+Y)", "Redo (Ctrl+Y)"), systemImage: "arrow.uturn.forward")
+                    }
+                    Divider()
+                    Button { triggerQuickAction(.copy) } label: {
+                        Label(preferences.tr("Sao chép / Dòng hiện tại (Ctrl+C)", "Copy / Current Line (Ctrl+C)"), systemImage: "doc.on.doc")
+                    }
+                    Button { triggerQuickAction(.paste) } label: {
+                        Label(preferences.tr("Dán (Ctrl+V)", "Paste (Ctrl+V)"), systemImage: "doc.on.clipboard")
+                    }
+                    Button { triggerQuickAction(.cut) } label: {
+                        Label(preferences.tr("Cắt / Dòng hiện tại (Ctrl+X)", "Cut / Current Line (Ctrl+X)"), systemImage: "scissors")
+                    }
+                    Button { triggerQuickAction(.selectAll) } label: {
+                        Label(preferences.tr("Chọn tất cả (Ctrl+A)", "Select All (Ctrl+A)"), systemImage: "selection.pin.in.out")
+                    }
+                    Divider()
+                    Button { triggerQuickAction(.duplicateLine) } label: {
+                        Label(preferences.tr("Nhân đôi dòng", "Duplicate Line"), systemImage: "plus.square.on.square")
+                    }
+                    Button { triggerQuickAction(.deleteLine) } label: {
+                        Label(preferences.tr("Xóa dòng hiện tại", "Delete Line"), systemImage: "delete.left")
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "scissors")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text(preferences.tr("Sửa", "Edit"))
+                            .font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color(hex: palette.currentLineBackground))
+                    .foregroundColor(Color(hex: palette.foreground))
+                    .cornerRadius(4)
+                }
+
+                // 4.5 Theos Build Pill (when inside a Theos project or Logos/control file)
+                if isTheosBuildContext(activeTab: activeTab) {
+                    Button {
+                        showTheosBuilderSheet = true
+                    } label: {
+                        HStack(spacing: 3) {
+                            if theosService.isBuilding {
+                                ProgressView().scaleEffect(0.55)
+                            } else {
+                                Image(systemName: "hammer.fill")
+                                    .font(.system(size: 9.5, weight: .semibold))
+                            }
+                            Text("Theos .deb")
+                                .font(.system(size: 9.5, weight: .bold))
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(hex: palette.accent).opacity(0.18))
+                        .foregroundColor(Color(hex: palette.accent))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // 5. Quick Smart Autocomplete Status Pill (1-Tap Toggle)
+                Button {
+                    preferences.enableCodeCompletion.toggle()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "text.cursor")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text(preferences.enableCodeCompletion
+                             ? preferences.tr("Gợi ý: ON", "Hint: ON", zh: "提示: 开", ja: "補完: ON", ko: "자동완성: ON", ru: "Подсказки: ВКЛ", es: "Sugerir: ON")
+                             : preferences.tr("Gợi ý: OFF", "Hint: OFF", zh: "提示: 关", ja: "補完: OFF", ko: "자동완성: OFF", ru: "Подсказки: ВЫКЛ", es: "Sugerir: OFF"))
+                            .font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(preferences.enableCodeCompletion ? Color(hex: palette.accent).opacity(0.16) : Color(hex: palette.currentLineBackground))
+                    .foregroundColor(preferences.enableCodeCompletion ? Color(hex: palette.accent) : Color(hex: palette.gutterForeground))
+                    .cornerRadius(4)
+                }
+
+                // 6. Inline Error / Warning Status Pill (Tap opens Problems or jumps to error)
+                Button {
                     if !preferences.enableLiveDiagnostics {
-                        Image(systemName: "eye.slash")
-                            .font(.system(size: 9.5))
-                        Text(preferences.tr("Báo lỗi: OFF", "Lint: OFF", zh: "诊断: 关", ja: "診断: OFF", ko: "진단: OFF", ru: "Ошибки: ВЫКЛ", es: "Errores: OFF"))
-                            .font(.system(size: 9.5, weight: .semibold))
-                    } else if intelligence.errorCount > 0 {
-                        Image(systemName: "xmark.octagon")
-                            .font(.system(size: 9.5, weight: .bold))
-                        Text("\(intelligence.errorCount) \(preferences.tr("lỗi", "err", zh: "错", ja: "エラー", ko: "오류", ru: "ош.", es: "err"))")
-                            .font(.system(size: 9.5, weight: .bold))
-                    } else if intelligence.warningCount > 0 {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 9.5, weight: .bold))
-                        Text("\(intelligence.warningCount) \(preferences.tr("cảnh báo", "warn", zh: "警", ja: "警告", ko: "경고", ru: "пред.", es: "aviso"))")
-                            .font(.system(size: 9.5, weight: .bold))
+                        preferences.enableLiveDiagnostics = true
                     } else {
-                        Image(systemName: "checkmark.circle")
-                            .font(.system(size: 9.5, weight: .semibold))
-                        Text("0 \(preferences.tr("lỗi", "err", zh: "错", ja: "エラー", ko: "오류", ru: "ош.", es: "err"))")
-                            .font(.system(size: 9.5, weight: .semibold))
+                        bottomTab = .problems
+                        withAnimation { showBottomPanel = true }
+                        if let firstDiag = intelligence.diagnostics.first {
+                            triggerJumpToLine(firstDiag.line)
+                        }
                     }
+                } label: {
+                    HStack(spacing: 3) {
+                        if !preferences.enableLiveDiagnostics {
+                            Image(systemName: "eye.slash")
+                                .font(.system(size: 9.5))
+                            Text(preferences.tr("Báo lỗi: OFF", "Lint: OFF", zh: "诊断: 关", ja: "診断: OFF", ko: "진단: OFF", ru: "Ошибки: ВЫКЛ", es: "Errores: OFF"))
+                                .font(.system(size: 9.5, weight: .semibold))
+                        } else if intelligence.errorCount > 0 {
+                            Image(systemName: "xmark.octagon")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text("\(intelligence.errorCount) \(preferences.tr("lỗi", "err", zh: "错", ja: "エラー", ko: "오류", ru: "ош.", es: "err"))")
+                                .font(.system(size: 9.5, weight: .bold))
+                        } else if intelligence.warningCount > 0 {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text("\(intelligence.warningCount) \(preferences.tr("cảnh báo", "warn", zh: "警", ja: "警告", ko: "경고", ru: "пред.", es: "aviso"))")
+                                .font(.system(size: 9.5, weight: .bold))
+                        } else {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 9.5, weight: .semibold))
+                            Text("0 \(preferences.tr("lỗi", "err", zh: "错", ja: "エラー", ko: "오류", ru: "ош.", es: "err"))")
+                                .font(.system(size: 9.5, weight: .semibold))
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(diagnosticPillBackground(palette: palette))
+                    .foregroundColor(diagnosticPillForeground(palette: palette))
+                    .cornerRadius(4)
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(diagnosticPillBackground(palette: palette))
-                .foregroundColor(diagnosticPillForeground(palette: palette))
-                .cornerRadius(4)
-            }
 
-            // 7. Local File Version Timeline Button
-            Button {
-                showTimelineSheet = true
-            } label: {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(Color(hex: palette.gutterForeground))
+                // 7. Local File Version Timeline Button
+                Button {
+                    showTimelineSheet = true
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Color(hex: palette.gutterForeground))
+                }
             }
+            .padding(.horizontal, 10)
         }
-        .padding(.horizontal, 10)
-        .frame(height: 25)
+        .frame(height: 27)
         .background(Color(hex: palette.sidebarBackground))
         .overlay(alignment: .bottom) {
             Divider().overlay(Color.white.opacity(0.06))
@@ -809,7 +875,7 @@ public struct MainIDEWorkspaceView: View {
         return .green
     }
 
-    // MARK: - Top Header Bar
+    // MARK: - Top Header Bar (Workspace + Quick Undo/Redo/Copy/Paste + Run + Agent)
     @ViewBuilder
     private func topHeaderBar(palette: IDEColorPalette) -> some View {
         HStack(spacing: 5) {
@@ -819,7 +885,7 @@ public struct MainIDEWorkspaceView: View {
                     showLeftExplorer.toggle()
                 }
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: 4) {
                     IDECodeMarkVector(size: 22)
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "sidebar.left")
@@ -833,63 +899,48 @@ public struct MainIDEWorkspaceView: View {
                 }
             }
 
-            // Compact Scrollable Tab Strip with VS Code Working-Tree Status Colors (U / A / M / D)
-            ScrollView(.horizontal, showsIndicators: false) {
+            // Current Workspace Badge (Tap for Command Palette & Quick Open)
+            Button {
+                showCommandPalette = true
+            } label: {
                 HStack(spacing: 4) {
-                    ForEach(workspace.openTabs) { tab in
-                        let isSelected = (workspace.activeTabID == tab.id)
-                        let isRemoteSFTP = (sshService.remotePathBound(to: tab.fileURL) != nil)
-                        let tabDiffStatus = workspace.diffStatus(for: tab.fileURL)
-                        let tabStatusColor: Color = {
-                            if let hex = tabDiffStatus.colorHex(isDark: palette.isDark) {
-                                return Color(hex: hex)
-                            }
-                            return Color(hex: isSelected ? palette.foreground : palette.gutterForeground)
-                        }()
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(Color(hex: palette.accent))
+                    Text(workspace.rootURL.lastPathComponent)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(Color(hex: palette.currentLineBackground))
+                .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+            .layoutPriority(-1)
 
-                        HStack(spacing: 4) {
-                            if isRemoteSFTP {
-                                Image(systemName: "icloud")
-                                    .font(.system(size: 10.5, weight: .medium))
-                                    .foregroundColor(.cyan)
-                            } else {
-                                FileLanguageIconView(language: tab.language, size: 10.5)
-                            }
+            Spacer(minLength: 2)
 
-                            Text(tab.title)
-                                .font(.system(size: 12, weight: isSelected ? .bold : .medium))
-                                .foregroundColor(tabStatusColor)
-                                .strikethrough(tabDiffStatus.isStrikethrough, color: tabStatusColor)
-                                .lineLimit(1)
-
-                            if let badge = tabDiffStatus.badgeText {
-                                Text(badge)
-                                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                                    .foregroundColor(tabStatusColor)
-                            } else if tab.isDirty {
-                                Circle()
-                                    .fill(Color(hex: palette.accent))
-                                    .frame(width: 5.5, height: 5.5)
-                            }
-
-                            Button {
-                                workspace.closeTab(tab.id)
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 8.5, weight: .bold))
-                                    .foregroundColor(Color(hex: palette.gutterForeground))
-                                    .padding(2)
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(isSelected ? Color(hex: palette.editorBackground) : Color.clear)
-                        .cornerRadius(6)
-                        .onTapGesture {
-                            workspace.activeTabID = tab.id
-                        }
+            // Quick Top Edit Strip: Undo (Ctrl+Z) / Redo / Copy / Paste (always accessible)
+            if workspace.activeTab != nil {
+                HStack(spacing: 1) {
+                    quickHeaderEditButton(icon: "arrow.uturn.backward", palette: palette) {
+                        triggerQuickAction(.undo)
+                    }
+                    quickHeaderEditButton(icon: "arrow.uturn.forward", palette: palette) {
+                        triggerQuickAction(.redo)
+                    }
+                    quickHeaderEditButton(icon: "doc.on.doc", palette: palette) {
+                        triggerQuickAction(.copy)
+                    }
+                    quickHeaderEditButton(icon: "doc.on.clipboard", palette: palette) {
+                        triggerQuickAction(.paste)
                     }
                 }
+                .padding(2)
+                .background(Color(hex: palette.currentLineBackground))
+                .cornerRadius(6)
             }
 
             // 1-Tap Smart Run Button
@@ -1104,6 +1155,154 @@ public struct MainIDEWorkspaceView: View {
         .background(Color(hex: palette.headerBackground))
     }
 
+    @ViewBuilder
+    private func quickHeaderEditButton(icon: String, palette: IDEColorPalette, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Color(hex: palette.foreground))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Dedicated VS Code Open File Tab Strip (Newest Left -> Older pushed Right)
+    @ViewBuilder
+    private func openFilesTabStrip(palette: IDEColorPalette) -> some View {
+        HStack(spacing: 4) {
+            // Quick '+' New File Button
+            Button {
+                quickNewFileName = ""
+                showQuickNewFileAlert = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color(hex: palette.accent))
+                    .frame(width: 26, height: 26)
+                    .background(Color(hex: palette.currentLineBackground))
+                    .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+
+            ScrollViewReader { scrollProxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        ForEach(workspace.openTabs) { tab in
+                            let isSelected = (workspace.activeTabID == tab.id)
+                            let isRemoteSFTP = (sshService.remotePathBound(to: tab.fileURL) != nil)
+                            let tabDiffStatus = workspace.diffStatus(for: tab.fileURL)
+                            let tabStatusColor: Color = {
+                                if let hex = tabDiffStatus.colorHex(isDark: palette.isDark) {
+                                    return Color(hex: hex)
+                                }
+                                return Color(hex: isSelected ? palette.foreground : palette.gutterForeground)
+                            }()
+
+                            VStack(spacing: 0) {
+                                // Top VS Code active tab accent bar
+                                Rectangle()
+                                    .fill(isSelected ? Color(hex: palette.accent) : Color.clear)
+                                    .frame(height: 2.5)
+
+                                HStack(spacing: 5) {
+                                    if isRemoteSFTP {
+                                        Image(systemName: "icloud")
+                                            .font(.system(size: 10.5, weight: .medium))
+                                            .foregroundColor(.cyan)
+                                    } else {
+                                        FileLanguageIconView(language: tab.language, size: 11)
+                                    }
+
+                                    Text(tab.title)
+                                        .font(.system(size: 12, weight: isSelected ? .bold : .regular))
+                                        .foregroundColor(tabStatusColor)
+                                        .strikethrough(tabDiffStatus.isStrikethrough, color: tabStatusColor)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+
+                                    if let badge = tabDiffStatus.badgeText {
+                                        Text(badge)
+                                            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                            .foregroundColor(tabStatusColor)
+                                    } else if tab.isDirty {
+                                        Circle()
+                                            .fill(Color(hex: palette.accent))
+                                            .frame(width: 5.5, height: 5.5)
+                                    }
+
+                                    Button {
+                                        workspace.closeTab(tab.id)
+                                    } label: {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 8.5, weight: .bold))
+                                            .foregroundColor(Color(hex: palette.gutterForeground))
+                                            .frame(width: 16, height: 16)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                            }
+                            .background(isSelected ? Color(hex: palette.editorBackground) : Color(hex: palette.sidebarBackground).opacity(0.65))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(isSelected ? Color(hex: palette.accent).opacity(0.45) : Color.white.opacity(0.06), lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .opacity(isSelected ? 1.0 : 0.76)
+                            .id(tab.id)
+                            .onTapGesture {
+                                workspace.activeTabID = tab.id
+                            }
+                            .contextMenu {
+                                Button {
+                                    workspace.moveTabToFront(tab.id)
+                                } label: {
+                                    Label(preferences.tr("Đưa sang trái (Đầu danh sách)", "Move Tab to Leftmost"), systemImage: "arrow.left.to.line")
+                                }
+                                Button {
+                                    UIPasteboard.general.string = workspace.relativePath(for: tab.fileURL)
+                                } label: {
+                                    Label(preferences.tr("Sao chép đường dẫn", "Copy Relative Path"), systemImage: "doc.on.doc")
+                                }
+                                Divider()
+                                Button {
+                                    workspace.closeTab(tab.id)
+                                } label: {
+                                    Label(preferences.tr("Đóng Tab này", "Close Tab"), systemImage: "xmark")
+                                }
+                                Button {
+                                    workspace.closeOtherTabs(keeping: tab.id)
+                                } label: {
+                                    Label(preferences.tr("Đóng các Tab khác", "Close Other Tabs"), systemImage: "xmark.square")
+                                }
+                                Button(role: .destructive) {
+                                    workspace.closeAllTabs()
+                                } label: {
+                                    Label(preferences.tr("Đóng tất cả Tab", "Close All Tabs"), systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+                }
+                .onChange(of: workspace.activeTabID) { _, newID in
+                    if let newID {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            scrollProxy.scrollTo(newID, anchor: .center)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 35)
+        .background(Color(hex: palette.headerBackground).opacity(0.92))
+        .overlay(alignment: .bottom) {
+            Divider().overlay(Color.white.opacity(0.08))
+        }
+    }
+
     // MARK: - Hidden Bluetooth / Magic Keyboard Shortcuts Responder
     @ViewBuilder
     private var hardwareKeyboardShortcutsHost: some View {
@@ -1290,6 +1489,11 @@ public struct MainIDEWorkspaceView: View {
     private func triggerJumpToLine(_ line: Int) {
         let nextToken = (jumpRequest?.token ?? 0) + 1
         jumpRequest = JumpToLineRequest(token: nextToken, line: line)
+    }
+
+    private func triggerQuickAction(_ kind: EditorQuickActionKind) {
+        let nextToken = (quickActionRequest?.token ?? 0) + 1
+        quickActionRequest = EditorQuickActionRequest(token: nextToken, kind: kind)
     }
 
     private func refreshIntelligenceForActiveTab() {
