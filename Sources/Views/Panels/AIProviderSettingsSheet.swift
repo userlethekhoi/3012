@@ -64,21 +64,16 @@ public struct AIProviderSettingsSheet: View {
                     Button("Xong") { dismiss() }
                 }
             }
-            .background(
-                NavigationLink(
-                    isActive: Binding(
-                        get: { editingProfileID != nil },
-                        set: { if !$0 { editingProfileID = nil } }
-                    )
-                ) {
-                    if let profileID = editingProfileID {
-                        AIProviderProfileEditor(aiService: aiService, profileID: profileID)
-                    }
-                } label: {
-                    EmptyView()
+            .compatibleNavigationDestination(
+                isPresented: Binding(
+                    get: { editingProfileID != nil },
+                    set: { if !$0 { editingProfileID = nil } }
+                )
+            ) {
+                if let profileID = editingProfileID {
+                    AIProviderProfileEditor(aiService: aiService, profileID: profileID)
                 }
-                .hidden()
-            )
+            }
         }
     }
 

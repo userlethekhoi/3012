@@ -662,7 +662,8 @@ public final class PCSyncService: NSObject, ObservableObject {
                   let url = URL(string: cleanLAN) else { return }
 
             let cfg = URLSessionConfiguration.default
-            cfg.timeoutIntervalForRequest = 1.5
+            // Timeout probe quickly via receiveMessageWithTimeout, but keep promoted LAN session healthy when idle
+            cfg.timeoutIntervalForRequest = 60
             cfg.waitsForConnectivity = false
             let lanSession = URLSession(configuration: cfg)
             let lanTask = lanSession.webSocketTask(with: url)
@@ -725,6 +726,9 @@ public final class PCSyncService: NSObject, ObservableObject {
                 self.appendLog("SYS", "Đã tự nâng cấp lên kết nối Wi-Fi LAN <5ms.")
                 self.startReceiveLoop(for: lanTask, generation: lanGen)
                 self.startPingLoop(generation: lanGen)
+                if !self.outbox.isEmpty {
+                    await self.flushOutbox()
+                }
             } catch {
                 lanTask.cancel()
                 lanSession.invalidateAndCancel()
@@ -927,9 +931,7 @@ public final class PCSyncService: NSObject, ObservableObject {
             Task { @MainActor [weak self] () -> Void in
                 guard let self, self.connectionGeneration == generation else { return }
                 if !self.outbox.isEmpty {
-                    self.isFlushingOutbox = true
                     await self.flushOutbox()
-                    self.isFlushingOutbox = false
                 }
                 guard self.connectionGeneration == generation,
                       self.isConnected,
@@ -1210,6 +1212,15 @@ public final class PCSyncService: NSObject, ObservableObject {
     }
 
     // MARK: - Zero-Dependency Node.js Companion Script (Matches GET https://build.kaydus.xyz/sync.mjs)
+    private static func jsStringLiteral(_ value: String) -> String {
+        if let data = try? JSONSerialization.data(withJSONObject: [value]),
+           let arr = String(data: data, encoding: .utf8),
+           arr.hasPrefix("["), arr.hasSuffix("]") {
+            return String(arr.dropFirst().dropLast())
+        }
+        return "\"\""
+    }
+
     public static func generateCompanionScript(
         port: Int = 30120,
         suggestedToken: String,
@@ -1218,6 +1229,8 @@ public final class PCSyncService: NSObject, ObservableObject {
         let keyLiteral = suggestedToken.isEmpty ? "3012-replace-with-your-key" : suggestedToken
         let relayClean = relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let relayDefault = relayClean.isEmpty ? defaultRelayBaseURL : relayClean
+        let keyJS = jsStringLiteral(keyLiteral)
+        let relayJS = jsStringLiteral(relayDefault)
         return """
         #!/usr/bin/env node
         // 3012 Zero-Dependency PC <-> Mobile 2-Way E2EE Companion (Node.js 18+)
@@ -1243,8 +1256,8 @@ public final class PCSyncService: NSObject, ObservableObject {
 
         const ROOT = path.resolve(getArg("dir", process.cwd()));
         const PORT = Number(getArg("port", "\(port)"));
-        const RELAY_BASE = getArg("relay", "\(relayDefault)").replace(/\\/+$/, "");
-        const PERMANENT_KEY = getArg("key", getArg("token", "\(keyLiteral)")).trim();
+        const RELAY_BASE = getArg("relay", \(relayJS)).replace(/\\/+$/, "");
+        const PERMANENT_KEY = getArg("key", getArg("token", \(keyJS))).trim();
         const QUICK_PIN = getArg("pin", "").trim();
         const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
         const IGNORED = new Set([".git", "node_modules", ".next", "dist", "build", ".DS_Store", ".3012"]);
@@ -1271,10 +1284,21 @@ public final class PCSyncService: NSObject, ObservableObject {
           return JSON.parse(dec.toString("utf8"));
         }
         function safeResolve(rel) {
-          const clean = String(rel || "").replace(/^\\/+/, "");
-          if (!clean || clean.includes("\\\\")) return null;
+          const clean = String(rel || "").replace(/\\\\/g, "/").replace(/^\\/+/, "");
+          if (!clean || clean === "." || clean.split("/").some((s) => s === ".." || s === "")) return null;
           const resolved = path.resolve(ROOT, clean);
           if (resolved !== ROOT && !resolved.startsWith(ROOT + path.sep)) return null;
+          try {
+            let probe = resolved;
+            while (probe !== ROOT && !fs.existsSync(probe)) {
+              probe = path.dirname(probe);
+            }
+            const realProbe = fs.realpathSync(probe);
+            const realRoot = fs.realpathSync(ROOT);
+            if (realProbe !== realRoot && !realProbe.startsWith(realRoot + path.sep)) return null;
+          } catch {
+            return null;
+          }
           return resolved;
         }
         function isTextBuffer(buf) {
@@ -1428,43 +1452,55 @@ public final class PCSyncService: NSObject, ObservableObject {
           }, () => clients.delete(c));
         });
         function startRelay(secret, isPin) {
-          if (!secret) return;
-          const u = new URL(RELAY_BASE.replace(/^http/, "ws") + "/v1/sync");
+          if (!secret) return null;
+          const wsRaw = RELAY_BASE.replace(/^http/i, "ws");
+          const u = new URL(wsRaw);
+          if (!u.pathname || u.pathname === "/") u.pathname = "/v1/sync";
+          const pathWithQuery = u.pathname + (u.search || "");
           const isTLS = u.protocol === "wss:", p = Number(u.port || (isTLS ? 443 : 80));
           const room = deriveRoom(secret), aesKey = deriveAESKey(secret);
-          const rw = { ready: false, sendApp: () => {} };
+          const rw = { ready: false, closed: false, sock: null, sendApp: () => {}, close: () => {} };
           relayWorkers.push(rw);
           const connectOnce = () => {
+            if (rw.closed) return;
             const s = isTLS ? tls.connect({ host: u.hostname, port: p, servername: u.hostname }) : net.connect({ host: u.hostname, port: p });
+            rw.sock = s;
             let hdrDone = false, hBuf = Buffer.alloc(0);
             const rawSend = (o) => !s.destroyed && s.write(encodeWsFrame(0x1, Buffer.from(JSON.stringify(o), "utf8"), true));
             rw.sendApp = (o) => rw.ready && rawSend({ type: "relay_packet", p: encryptE2EE(o, aesKey) });
             const pt = setInterval(() => rw.ready && rawSend({ type: "relay_ping", ts: Date.now() }), 20000);
-            s.on("connect", () => s.write([`GET ${u.pathname} HTTP/1.1`, `Host: ${u.host}`, "Upgrade: websocket", "Connection: Upgrade", `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString("base64")}`, "Sec-WebSocket-Version: 13", "\\r\\n"].join("\\r\\n")));
+            rw.close = () => { rw.closed = true; rw.ready = false; clearInterval(pt); try { s.destroy(); } catch {} };
+            s.on("connect", () => s.write([`GET ${pathWithQuery} HTTP/1.1`, `Host: ${u.host}`, "Upgrade: websocket", "Connection: Upgrade", `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString("base64")}`, "Sec-WebSocket-Version: 13", "\\r\\n"].join("\\r\\n")));
             const onD = (chunk) => {
               if (hdrDone) return;
               hBuf = Buffer.concat([hBuf, chunk]);
               const i = hBuf.indexOf("\\r\\n\\r\\n");
               if (i < 0) return;
-              hdrDone = true;
+              const head = hBuf.subarray(0, i).toString("latin1");
               const left = hBuf.subarray(i + 4);
               s.removeListener("data", onD);
+              if (!/^HTTP\\/1\\.[01]\\s+101\\b/i.test(head)) { s.destroy(); return; }
+              hdrDone = true;
               rw.ready = true;
               rawSend({ type: "relay_join", room, role: "pc", clientId: CLIENT_ID });
               attachWsDecoder(s, (b) => {
                 let env; try { env = JSON.parse(b.toString("utf8")); } catch { return; }
                 if (env.type === "relay_packet" && typeof env.p === "string") {
                   let msg; try { msg = decryptE2EE(env.p, aesKey); } catch { return; }
-                  msg && handleMsg(msg, rw.sendApp, null, isPin);
+                  if (msg) {
+                    handleMsg(msg, rw.sendApp, null, isPin);
+                    if (isPin && msg.type === "hello") setTimeout(() => rw.close(), 1500);
+                  }
                 }
               }, () => { clearInterval(pt); rw.ready = false; });
               if (left.length) s.emit("data", left);
             };
             s.on("data", onD);
-            s.on("close", () => { clearInterval(pt); rw.ready = false; setTimeout(connectOnce, 3500); });
+            s.on("close", () => { clearInterval(pt); rw.ready = false; if (!rw.closed) setTimeout(connectOnce, 3500); });
             s.on("error", () => {});
           };
           connectOnce();
+          return rw;
         }
         fs.watch(ROOT, { recursive: true }, (_, filename) => {
           if (!filename) return;
@@ -1475,9 +1511,12 @@ public final class PCSyncService: NSObject, ObservableObject {
           setTimeout(() => {
             try {
               if (!fs.existsSync(abs)) broadcastAll({ type: "delete", path: rel, isDir: false });
-              else if (fs.lstatSync(abs).isFile() && fs.statSync(abs).size <= 512 * 1024) {
-                const b = fs.readFileSync(abs);
-                if (isTextBuffer(b)) broadcastAll({ type: "upsert", path: rel, content: b.toString("utf8") });
+              else {
+                const st = fs.lstatSync(abs);
+                if (!st.isSymbolicLink() && st.isFile() && st.size <= 512 * 1024) {
+                  const b = fs.readFileSync(abs);
+                  if (isTextBuffer(b)) broadcastAll({ type: "upsert", path: rel, content: b.toString("utf8") });
+                }
               }
             } catch {}
           }, 120);
@@ -1487,7 +1526,10 @@ public final class PCSyncService: NSObject, ObservableObject {
           console.log("Key :", PERMANENT_KEY);
           if (QUICK_PIN) console.log("PIN :", QUICK_PIN);
           startRelay(PERMANENT_KEY, false);
-          if (QUICK_PIN) startRelay(QUICK_PIN, true);
+          if (QUICK_PIN) {
+            const pinWorker = startRelay(QUICK_PIN, true);
+            if (pinWorker) setTimeout(() => pinWorker.close(), 180000);
+          }
         });
         """
     }

@@ -293,4 +293,23 @@ public extension View {
             )
         )
     }
+
+    @ViewBuilder
+    func compatibleNavigationDestination<Destination: View>(
+        isPresented: Binding<Bool>,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) -> some View {
+        if #available(iOS 16.0, *) {
+            self.navigationDestination(isPresented: isPresented, destination: destination)
+        } else {
+            self.background(
+                NavigationLink(isActive: isPresented) {
+                    destination()
+                } label: {
+                    EmptyView()
+                }
+                .hidden()
+            )
+        }
+    }
 }

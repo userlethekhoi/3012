@@ -116,6 +116,7 @@ public final class LocalDaemonService: ObservableObject {
         let workspaceRoot: URL
         var context: JSContext?
         var timerTasks: [Int: Task<Void, Never>] = [:]
+        var cancelledTimerIDs: Set<Int> = []
         var fetchTasks: [Int: Task<Void, Never>] = [:]
         var cancelled: Bool = false
         var restartScheduled: Bool = false
@@ -129,6 +130,7 @@ public final class LocalDaemonService: ObservableObject {
 
         func teardown() {
             cancelled = true
+            cancelledTimerIDs.removeAll()
             _ = context?.evaluateScript("if (typeof __teardownAll === 'function') __teardownAll();")
             for (_, task) in timerTasks { task.cancel() }
             timerTasks.removeAll()
@@ -140,6 +142,7 @@ public final class LocalDaemonService: ObservableObject {
 
     private var runtimes: [Int: JobRuntimeHandle] = [:]
     private var jobSources: [Int: (fileURL: URL?, inlineCode: String?)] = [:]
+    private let statusSnapshot = DeviceStatusSnapshotBox()
 
     private static let logDateFormatter: DateFormatter = {
         let df = DateFormatter()
@@ -174,6 +177,12 @@ public final class LocalDaemonService: ObservableObject {
         } else {
             stopSilentAudioLoop()
         }
+        statusSnapshot.updateMetrics(
+            battery: batteryPercentage,
+            charging: isCharging,
+            networkOnline: networkOnline,
+            keepAliveActive: isKeepAliveActive
+        )
     }
 
     private func startSilentAudioLoopIfNeeded() {
@@ -215,7 +224,14 @@ public final class LocalDaemonService: ObservableObject {
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let isUp = (path.status == .satisfied)
             Task { @MainActor [weak self] in
-                self?.networkOnline = isUp
+                guard let self else { return }
+                self.networkOnline = isUp
+                self.statusSnapshot.updateMetrics(
+                    battery: self.batteryPercentage,
+                    charging: self.isCharging,
+                    networkOnline: isUp,
+                    keepAliveActive: self.isKeepAliveActive
+                )
             }
         }
         pathMonitor.start(queue: monitorQueue)
@@ -228,6 +244,12 @@ public final class LocalDaemonService: ObservableObject {
         }
         let st = UIDevice.current.batteryState
         isCharging = (st == .charging || st == .full)
+        statusSnapshot.updateMetrics(
+            battery: batteryPercentage,
+            charging: isCharging,
+            networkOnline: networkOnline,
+            keepAliveActive: isKeepAliveActive
+        )
     }
 
     private func registerLifecycleObservers() {
@@ -320,6 +342,7 @@ public final class LocalDaemonService: ObservableObject {
         let handle = JobRuntimeHandle(pid: pid, fileURL: fileURL, inlineCode: nil, workspaceRoot: workspaceRoot)
         runtimes[pid] = handle
         jobSources[pid] = (fileURL: fileURL, inlineCode: nil)
+        statusSnapshot.setStartedAt(pid: pid, date: job.startedAt)
         syncKeepAliveState()
 
         appendLog(pid: pid, line: "[PID \(pid)] Started on-device daemon: \(relPath)")
@@ -347,6 +370,7 @@ public final class LocalDaemonService: ObservableObject {
         let handle = JobRuntimeHandle(pid: pid, fileURL: nil, inlineCode: jsCode, workspaceRoot: workspaceRoot)
         runtimes[pid] = handle
         jobSources[pid] = (fileURL: nil, inlineCode: jsCode)
+        statusSnapshot.setStartedAt(pid: pid, date: job.startedAt)
         syncKeepAliveState()
 
         appendLog(pid: pid, line: "[PID \(pid)] Started on-device task: \(name)")
@@ -360,6 +384,7 @@ public final class LocalDaemonService: ObservableObject {
             handle.teardown()
             runtimes.removeValue(forKey: pid)
         }
+        statusSnapshot.removePID(pid)
         if let idx = jobs.firstIndex(where: { $0.pid == pid }) {
             jobs[idx].isRunning = false
         }
@@ -386,11 +411,13 @@ public final class LocalDaemonService: ObservableObject {
             runtimes.removeValue(forKey: pid)
         }
 
+        let startedNow = Date()
         if let idx = jobs.firstIndex(where: { $0.pid == pid }) {
             jobs[idx].isRunning = true
-            jobs[idx].startedAt = Date()
+            jobs[idx].startedAt = startedNow
             jobs[idx].restartCount += 1
         }
+        statusSnapshot.setStartedAt(pid: pid, date: startedNow)
 
         let newHandle = JobRuntimeHandle(
             pid: pid,
@@ -589,6 +616,9 @@ public final class LocalDaemonService: ObservableObject {
         let scheduleTimer: @convention(block) (Int, Double, Bool) -> Void = { [weak self, weak handle] timerID, delayMs, repeats in
             Task { @MainActor [weak self, weak handle] in
                 guard let self, let handle, !handle.cancelled else { return }
+                if handle.cancelledTimerIDs.remove(timerID) != nil {
+                    return
+                }
                 let safeMs = delayMs.isFinite ? min(max(delayMs, 1.0), 86_400_000.0) : 1000.0
                 let clampedNs = UInt64(safeMs * 1_000_000)
                 let task = Task { @MainActor [weak self, weak handle] in
@@ -608,8 +638,12 @@ public final class LocalDaemonService: ObservableObject {
         }
         let cancelTimer: @convention(block) (Int) -> Void = { [weak handle] timerID in
             Task { @MainActor [weak handle] in
-                handle?.timerTasks[timerID]?.cancel()
-                handle?.timerTasks.removeValue(forKey: timerID)
+                guard let handle else { return }
+                if let activeTask = handle.timerTasks.removeValue(forKey: timerID) {
+                    activeTask.cancel()
+                } else {
+                    handle.cancelledTimerIDs.insert(timerID)
+                }
             }
         }
         ctx.setObject(scheduleTimer, forKeyedSubscript: "_nativeScheduleTimer" as NSString)
@@ -717,19 +751,10 @@ public final class LocalDaemonService: ObservableObject {
         let envDict = Self.loadDotEnv(in: root)
         if let processObj = JSValue(newObjectIn: ctx) {
             processObj.setObject(envDict, forKeyedSubscript: "env" as NSString)
-            let deviceStatusBlock: @convention(block) () -> [String: Any] = { [weak self, weak handle] in
-                guard let self else { return [:] }
-                let uptime = handle.flatMap { h in
-                    self.jobs.first(where: { $0.pid == h.pid }).map { max(0, Int(Date().timeIntervalSince($0.startedAt))) }
-                } ?? 0
-                return [
-                    "battery": self.batteryPercentage,
-                    "charging": self.isCharging,
-                    "networkOnline": self.networkOnline,
-                    "uptimeSeconds": uptime,
-                    "keepAliveActive": self.isKeepAliveActive,
-                    "platform": "iOS-Local-3012"
-                ]
+            let snapshotBox = self.statusSnapshot
+            let jobPID = handle.pid
+            let deviceStatusBlock: @convention(block) () -> [String: Any] = {
+                snapshotBox.readStatus(forPID: jobPID)
             }
             processObj.setObject(deviceStatusBlock, forKeyedSubscript: "deviceStatus" as NSString)
             ctx.setObject(processObj, forKeyedSubscript: "process" as NSString)
@@ -1063,5 +1088,55 @@ public final class LocalDaemonService: ObservableObject {
         data.append(withUnsafeBytes(of: dataSize.littleEndian) { Data($0) })
         data.append(Data(count: Int(dataSize)))
         return data
+    }
+}
+
+private final class DeviceStatusSnapshotBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var battery: Int = 100
+    private var charging: Bool = false
+    private var networkOnline: Bool = true
+    private var keepAliveActive: Bool = false
+    private var startedAtByPID: [Int: Date] = [:]
+
+    func updateMetrics(battery: Int, charging: Bool, networkOnline: Bool, keepAliveActive: Bool) {
+        lock.lock()
+        self.battery = battery
+        self.charging = charging
+        self.networkOnline = networkOnline
+        self.keepAliveActive = keepAliveActive
+        lock.unlock()
+    }
+
+    func setStartedAt(pid: Int, date: Date) {
+        lock.lock()
+        startedAtByPID[pid] = date
+        lock.unlock()
+    }
+
+    func removePID(_ pid: Int) {
+        lock.lock()
+        startedAtByPID.removeValue(forKey: pid)
+        lock.unlock()
+    }
+
+    func readStatus(forPID pid: Int) -> [String: Any] {
+        lock.lock()
+        let b = battery
+        let c = charging
+        let n = networkOnline
+        let k = keepAliveActive
+        let startedAt = startedAtByPID[pid]
+        lock.unlock()
+
+        let uptime = startedAt.map { max(0, Int(Date().timeIntervalSince($0))) } ?? 0
+        return [
+            "battery": b,
+            "charging": c,
+            "networkOnline": n,
+            "uptimeSeconds": uptime,
+            "keepAliveActive": k,
+            "platform": "iOS-Local-3012"
+        ]
     }
 }

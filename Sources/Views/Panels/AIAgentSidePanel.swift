@@ -573,6 +573,7 @@ public struct AIAgentSidePanel: View {
                                     Image(systemName: "trash")
                                         .foregroundColor(.red)
                                 }
+                                .buttonStyle(.borderless)
                             }
                         }
                     }
@@ -863,8 +864,12 @@ public struct AIAgentSidePanel: View {
                 diagnosticsSummary: diagText,
                 gitDiffSummary: gitText,
                 existingFileReader: { relPath in
+                    guard WorkspaceManager.isSafeRelativeSyncPath(relPath) else { return nil }
                     let clean = relPath.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
                     let url = workspace.rootURL.appendingPathComponent(clean)
+                    let canonRoot = WorkspaceManager.canonicalPath(workspace.rootURL)
+                    let canonTarget = WorkspaceManager.canonicalPath(url)
+                    guard canonTarget == canonRoot || canonTarget.hasPrefix(canonRoot + "/") else { return nil }
                     if let tab = workspace.openTabs.first(where: { $0.fileURL.standardizedFileURL == url.standardizedFileURL }) {
                         return tab.content
                     }

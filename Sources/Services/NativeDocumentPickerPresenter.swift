@@ -159,6 +159,11 @@ public final class NativeDocumentPickerPresenter: NSObject, UIDocumentPickerDele
     ) {
         presentResourcePicker(mode: mode, initialDelay: initialDelay) { resources in
             guard !resources.isEmpty else { return }
+            defer {
+                for res in resources where res.hasSecurityScope && !res.isTemporaryCopy {
+                    res.url.stopAccessingSecurityScopedResource()
+                }
+            }
             if let onPickURLs {
                 onPickURLs(resources.map(\.url))
             } else {
@@ -328,11 +333,18 @@ public final class NativeDocumentPickerPresenter: NSObject, UIDocumentPickerDele
                 guard !resources.isEmpty else { return }
                 if let resourcesCallback {
                     resourcesCallback(resources)
-                } else if let multi {
-                    multi(resources.map(\.url))
-                } else if let single {
-                    for res in resources {
-                        single(res.url)
+                } else {
+                    defer {
+                        for entry in scopedEntries where entry.acquired {
+                            entry.url.stopAccessingSecurityScopedResource()
+                        }
+                    }
+                    if let multi {
+                        multi(resources.map(\.url))
+                    } else if let single {
+                        for res in resources {
+                            single(res.url)
+                        }
                     }
                 }
             }

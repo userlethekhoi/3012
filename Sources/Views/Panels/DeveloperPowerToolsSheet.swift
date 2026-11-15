@@ -54,6 +54,7 @@ public struct DeveloperPowerToolsSheet: View {
     @State private var newEnvKey: String = ""
     @State private var newEnvValue: String = ""
     @State private var envSaveNotice: String? = nil
+    @State private var envHasUnsavedEdits: Bool = false
 
     // 4. Color Picker & Clipboard History State
     @State private var pickedColor: Color = .blue
@@ -102,8 +103,17 @@ public struct DeveloperPowerToolsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(preferences.tr("Đóng", "Done")) { dismiss() }
+                    Button(preferences.tr("Đóng", "Done")) {
+                        if envHasUnsavedEdits { saveEnvPairs() }
+                        dismiss()
+                    }
                 }
+            }
+            .onChange(of: selectedTab) { _ in
+                if envHasUnsavedEdits { saveEnvPairs() }
+            }
+            .onDisappear {
+                if envHasUnsavedEdits { saveEnvPairs() }
             }
             .onAppear {
                 loadEnvPairs()
@@ -603,6 +613,7 @@ public struct DeveloperPowerToolsSheet: View {
             set: { newValue in
                 if let idx = envPairs.firstIndex(where: { $0.id == id }) {
                     envPairs[idx].value = newValue
+                    envHasUnsavedEdits = true
                 }
             }
         )
@@ -637,6 +648,7 @@ public struct DeveloperPowerToolsSheet: View {
             loaded.append((id: UUID(), key: parsed.key, value: parsed.value, hidden: true))
         }
         envPairs = loaded
+        envHasUnsavedEdits = false
     }
 
     private func sanitizeEnvField(_ raw: String) -> String {
@@ -693,6 +705,7 @@ public struct DeveloperPowerToolsSheet: View {
 
         let text = outputLines.isEmpty ? "" : outputLines.joined(separator: "\n") + "\n"
         workspace.applyAgentFileEdit(relativePath: ".env", newContent: text)
+        envHasUnsavedEdits = false
         envSaveNotice = preferences.tr("Đã lưu .env (\(sanitizedPairs.count) biến).", "Saved .env (\(sanitizedPairs.count) keys).")
     }
 

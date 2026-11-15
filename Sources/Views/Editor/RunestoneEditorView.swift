@@ -77,7 +77,6 @@ public struct RunestoneEditorView: UIViewRepresentable {
     public var jumpRequest: JumpToLineRequest?
     public var selectRangeRequest: SelectRangeRequest?
     public var quickActionRequest: EditorQuickActionRequest?
-    public var findTriggerToken: Int
     public var toggleCommentToken: Int
     public var onAcceptPrimaryCompletion: () -> Bool
     public var onTextChange: (String, NSRange) -> Void
@@ -98,7 +97,6 @@ public struct RunestoneEditorView: UIViewRepresentable {
         jumpRequest: JumpToLineRequest? = nil,
         selectRangeRequest: SelectRangeRequest? = nil,
         quickActionRequest: EditorQuickActionRequest? = nil,
-        findTriggerToken: Int,
         toggleCommentToken: Int = 0,
         onAcceptPrimaryCompletion: @escaping () -> Bool = { false },
         onTextChange: @escaping (String, NSRange) -> Void,
@@ -118,7 +116,6 @@ public struct RunestoneEditorView: UIViewRepresentable {
         self.jumpRequest = jumpRequest
         self.selectRangeRequest = selectRangeRequest
         self.quickActionRequest = quickActionRequest
-        self.findTriggerToken = findTriggerToken
         self.toggleCommentToken = toggleCommentToken
         self.onAcceptPrimaryCompletion = onAcceptPrimaryCompletion
         self.onTextChange = onTextChange
@@ -324,17 +321,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
             textView.scrollRangeToVisible(safeRange)
         }
 
-        // 5. Native Find & Replace Navigator (Fallback)
-        if context.coordinator.lastFindToken != findTriggerToken {
-            context.coordinator.lastFindToken = findTriggerToken
-            if #available(iOS 16.0, *) {
-                textView.findInteraction?.presentFindNavigator(showingReplace: true)
-            } else {
-                onTriggerFindBar?()
-            }
-        }
-
-        // 6. VS Code Dimmed Inline Ghost Text Overlay + Tab Button Glow
+        // 5. VS Code Dimmed Inline Ghost Text Overlay + Tab Button Glow
         context.coordinator.updateGhostOverlay(in: textView)
     }
 
@@ -368,7 +355,6 @@ public struct RunestoneEditorView: UIViewRepresentable {
         var lastKnownText: String = ""
         var stateLoadGeneration: Int = 0
         var isInternalEdit: Bool = false
-        var lastFindToken: Int = 0
         var lastCompletionToken: Int = 0
         var lastJumpToken: Int = 0
         var lastSelectRangeToken: Int = 0
@@ -378,7 +364,6 @@ public struct RunestoneEditorView: UIViewRepresentable {
 
         init(parent: RunestoneEditorView) {
             self.parent = parent
-            self.lastFindToken = parent.findTriggerToken
             self.lastToggleCommentToken = parent.toggleCommentToken
             self.lastCompletionToken = parent.completionRequest?.token ?? 0
             self.lastJumpToken = parent.jumpRequest?.token ?? 0
@@ -478,11 +463,14 @@ public struct RunestoneEditorView: UIViewRepresentable {
                           let textView,
                           self.stateLoadGeneration == generation,
                           self.loadedFileURL == fileURL,
-                          self.loadedLanguage == language else { return }
+                          self.loadedLanguage == language,
+                          self.lastKnownText == code else { return }
+                    self.isInternalEdit = true
                     textView.setState(state)
                     if let sel = restoreSelection, sel.location + sel.length <= (code as NSString).length {
                         textView.selectedRange = sel
                     }
+                    self.isInternalEdit = false
                     let docLen = (textView.text as NSString).length
                     textView.highlightedRanges = self.parent.highlightedRanges.filter {
                         $0.range.location >= 0 && $0.range.location + $0.range.length <= docLen && $0.range.length > 0

@@ -445,10 +445,3 @@ public final class ExtensionStoreService: ObservableObject {
         )
     ]
 }
-
-private extension JSONSerialization {
-    static func data(withPrettyObject obj: Any) throws -> String {
-        let d = try JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
-        return String(data: d, encoding: .utf8) ?? ""
-    }
-}

@@ -11,15 +11,10 @@ public enum CodeFormatterService {
         tabWidth: Int,
         sshService: SSHWorkspaceService?
     ) async -> String {
-        if let ssh = sshService, ssh.isConnected, let remoteCmd = vpsFormatterCommand(for: language, code: code) {
-            let res = await ssh.executeCommandOnVPS(remoteCmd)
-            let trimmedCheck = res.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedCheck.isEmpty
-                && !trimmedCheck.hasPrefix("[Process exited")
-                && !trimmedCheck.hasPrefix("[SSH Error]")
-                && !trimmedCheck.hasPrefix("Chưa kết nối") {
-                return res
-            }
+        if let ssh = sshService, ssh.isConnected, let remoteCmd = vpsFormatterCommand(for: language, code: code),
+           let res = await ssh.executeCommandStdoutOnZeroExit(remoteCmd),
+           !res.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return res
         }
         return formatOfflineSynchronously(code, language: language, tabWidth: tabWidth)
     }

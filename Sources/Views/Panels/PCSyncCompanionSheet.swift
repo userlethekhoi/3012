@@ -226,8 +226,8 @@ public struct PCSyncCompanionSheet: View {
                 HStack(spacing: 8) {
                     TextField("3012-XXXX-...", text: $pcSync.permanentSyncKey)
                         .font(.system(.caption, design: .monospaced))
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
                         .textFieldStyle(.roundedBorder)
 
                     Button {
@@ -333,8 +333,8 @@ public struct PCSyncCompanionSheet: View {
                 HStack(spacing: 8) {
                     TextField("3012sync://pair?...", text: $pairingInput)
                         .font(.system(.caption, design: .monospaced))
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
                         .textFieldStyle(.roundedBorder)
 
                     Button(preferences.tr("Áp dụng", "Apply")) {
@@ -437,8 +437,8 @@ public struct PCSyncCompanionSheet: View {
                 HStack(spacing: 8) {
                     TextField("npm run build", text: $remoteCommand)
                         .font(.system(.caption, design: .monospaced))
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
                         .textFieldStyle(.roundedBorder)
 
                     Button {
@@ -527,8 +527,8 @@ public struct PCSyncCompanionSheet: View {
                 .foregroundColor(.secondary)
             TextField(placeholder, text: text)
                 .font(.system(.caption, design: .monospaced))
-                .autocapitalization(.none)
-                .disableAutocorrection(true)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
                 .textFieldStyle(.roundedBorder)
         }
     }

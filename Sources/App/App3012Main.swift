@@ -66,6 +66,7 @@ public struct MainIDEWorkspaceView: View {
     @ObservedObject var xtoolService: XtoolBuildService
     @ObservedObject var daemonService: LocalDaemonService
     @ObservedObject var pcSyncService: PCSyncService
+    @ObservedObject private var githubAuth = GitHubAccountService.shared
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -87,6 +88,8 @@ public struct MainIDEWorkspaceView: View {
     @State private var showLiveShareSheet: Bool = false
     @State private var showPowerToolsSheet: Bool = false
     @State private var showOpenFolderHubSheet: Bool = false
+    @State private var showGitHubSheet: Bool = false
+    @State private var githubSheetInitialTab: Int = 0
 
     @State private var isFullScreenZenMode: Bool = false
     @State private var isEditorKeyboardActive: Bool = false
@@ -95,7 +98,6 @@ public struct MainIDEWorkspaceView: View {
     @State private var findAdvanceMinLocation: Int? = nil
 
     @State private var markdownMode: MarkdownDisplayMode = .editor
-    @State private var findTriggerToken: Int = 0
     @State private var toggleCommentToken: Int = 0
     @State private var completionRequest: CompletionReplacementRequest? = nil
     @State private var jumpRequest: JumpToLineRequest? = nil
@@ -281,6 +283,11 @@ public struct MainIDEWorkspaceView: View {
                                 showLeftExplorer = false
                                 showPowerToolsSheet = true
                             },
+                            onOpenGitHubSheet: { tab in
+                                showLeftExplorer = false
+                                githubSheetInitialTab = tab
+                                showGitHubSheet = true
+                            },
                             onJumpToSearchHit: { url, line in
                                 workspace.openFile(at: url)
                                 showLeftExplorer = false
@@ -363,6 +370,17 @@ public struct MainIDEWorkspaceView: View {
         }
         .onChange(of: workspace.fileTree) { updatedTree in
             intelligence.reindexWorkspaceFiles(workspace.flattenFiles(in: updatedTree))
+        }
+        .onChange(of: workspace.rootURL) { newRoot in
+            liveServer.updateRootDirectory(newRoot)
+            Task { @MainActor () -> Void in
+                await gitService.refreshStatus(workspaceRoot: newRoot, sshService: sshService)
+            }
+            intelligence.reindexWorkspaceFiles(workspace.flattenFiles(in: workspace.fileTree))
+            if workspace.activeTab?.language != .markdown {
+                markdownMode = .editor
+            }
+            refreshIntelligenceForActiveTab()
         }
         .onChange(of: workspace.activeTabID) { _ in
             flushPendingSaveSideEffects()
@@ -497,6 +515,11 @@ public struct MainIDEWorkspaceView: View {
             }
         }
         .onOpenURL { url in
+            if githubAuth.handleIncomingURL(url) {
+                githubSheetInitialTab = 0
+                showGitHubSheet = true
+                return
+            }
             if url.scheme?.lowercased() == "3012sync" {
                 if pcSyncService.applyPairingString(url.absoluteString) {
                     showPCSyncSheet = true
@@ -505,9 +528,6 @@ public struct MainIDEWorkspaceView: View {
             }
             workspace.handleIncomingURL(url)
             liveServer.updateRootDirectory(workspace.rootURL)
-        }
-        .onChange(of: workspace.rootURL) { newRoot in
-            liveServer.updateRootDirectory(newRoot)
         }
         .sheet(isPresented: $showPCSyncSheet) {
             PCSyncCompanionSheet(
@@ -538,7 +558,24 @@ public struct MainIDEWorkspaceView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                         showOpenFolderHubSheet = true
                     }
+                },
+                onOpenGitHubRepos: {
+                    githubSheetInitialTab = githubAuth.isSignedIn ? 1 : 0
+                    showGitHubSheet = true
                 }
+            )
+            .onDisappear {
+                liveServer.updateRootDirectory(workspace.rootURL)
+            }
+        }
+        .sheet(isPresented: $showGitHubSheet) {
+            GitHubAccountAndReposSheet(
+                githubAuth: githubAuth,
+                gitService: gitService,
+                workspace: workspace,
+                liveServer: liveServer,
+                preferences: preferences,
+                initialTab: githubSheetInitialTab
             )
             .onDisappear {
                 liveServer.updateRootDirectory(workspace.rootURL)
@@ -656,9 +693,10 @@ public struct MainIDEWorkspaceView: View {
 
     @ViewBuilder
     private func bottomSplitSection(totalHeight: CGFloat, palette: IDEColorPalette) -> some View {
-        let maxBottomH = max(160, totalHeight * 0.80)
+        let minBottomH: CGFloat = min(120, max(72, totalHeight * 0.25))
+        let maxBottomH = max(minBottomH, min(totalHeight * 0.80, totalHeight - 110))
         let activeBottomH = min(
-            max(customBottomPanelHeight ?? bottomDetent.height(in: totalHeight), 120),
+            max(customBottomPanelHeight ?? bottomDetent.height(in: totalHeight), minBottomH),
             maxBottomH
         )
         resizableSplitBar(
@@ -809,7 +847,6 @@ public struct MainIDEWorkspaceView: View {
                 jumpRequest: jumpRequest,
                 selectRangeRequest: selectRangeRequest,
                 quickActionRequest: quickActionRequest,
-                findTriggerToken: findTriggerToken,
                 toggleCommentToken: toggleCommentToken,
                 onAcceptPrimaryCompletion: {
                     guard preferences.enableCodeCompletion, let top = intelligence.completions.first else {
@@ -842,7 +879,8 @@ public struct MainIDEWorkspaceView: View {
                 },
                 onSelectionChange: { range in
                     workspace.updateSelectionOnly(range)
-                    intelligence.updateActiveBreadcrumb(cursorLocation: range.location, in: activeTab.content)
+                    let liveText = workspace.activeTab?.content ?? activeTab.content
+                    intelligence.updateActiveBreadcrumb(cursorLocation: range.location, in: liveText)
                     if range.length > 0 {
                         intelligence.clearCompletions()
                     } else if let top = intelligence.completions.first,
@@ -1687,6 +1725,7 @@ public struct MainIDEWorkspaceView: View {
                 sshConnected: sshService.isConnected,
                 pcSyncConnected: pcSyncService.isConnected,
                 pcSyncTransportLabel: pcSyncService.transportMode.badgeLabel,
+                githubLogin: githubAuth.activeAccount?.login ?? "",
                 isFullScreenZen: isFullScreenZenMode,
                 foregroundHex: palette.foreground,
                 accentHex: palette.accent,
@@ -1749,6 +1788,10 @@ public struct MainIDEWorkspaceView: View {
                 },
                 onOpenFindBar: { openInlineFindBar() },
                 onOpenPCSync: { showPCSyncSheet = true },
+                onOpenGitHub: {
+                    githubSheetInitialTab = githubAuth.isSignedIn ? 1 : 0
+                    showGitHubSheet = true
+                },
                 onOpenPowerTools: { showPowerToolsSheet = true },
                 onScaffoldStarter: { kind in
                     _ = workspace.scaffoldStarterTemplate(kind: kind)
@@ -2080,186 +2123,210 @@ public struct MainIDEWorkspaceView: View {
 
     @ViewBuilder
     private func emptyEditorPlaceholder(palette: IDEColorPalette) -> some View {
-        VStack(spacing: 16) {
-            IDECodeMarkVector(size: 76)
-                .shadow(color: Color.black.opacity(0.28), radius: 12, x: 0, y: 6)
+        GeometryReader { placeholderGeo in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 16) {
+                    IDECodeMarkVector(size: 76)
+                        .shadow(color: Color.black.opacity(0.28), radius: 12, x: 0, y: 6)
 
-            VStack(spacing: 8) {
-                Brand3012WordmarkView(
-                    height: 28,
-                    inkColor: Color(hex: palette.foreground)
-                )
+                    VStack(spacing: 8) {
+                        Brand3012WordmarkView(
+                            height: 28,
+                            inkColor: Color(hex: palette.foreground)
+                        )
 
-                Text("NATIVE CODE EDITOR & REMOTE WORKSTATION")
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .tracking(1.3)
+                        Text("NATIVE CODE EDITOR & REMOTE WORKSTATION")
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                            .tracking(1.3)
+                            .foregroundColor(Color(hex: palette.gutterForeground))
+                    }
+
+                    Text(preferences.tr(
+                        "Vuốt mép trái: Explorer • Git • SSH SFTP • OpenVSX\nVuốt mép phải: Coding Agent   |   Cmd+P: Command Palette",
+                        "Swipe left edge: Explorer • Git • SSH SFTP • OpenVSX\nSwipe right edge: Coding Agent   |   Cmd+P: Command Palette",
+                        zh: "左边缘右滑：Explorer • Git • SSH SFTP • OpenVSX\n右边缘左滑：Coding Agent   |   Cmd+P：命令面板",
+                        ja: "左端スワイプ：Explorer • Git • SSH SFTP • OpenVSX\n右端スワイプ：Coding Agent   |   Cmd+P：コマンドパレット",
+                        ko: "왼쪽 스와이프: Explorer • Git • SSH SFTP • OpenVSX\n오른쪽 스와이프: Coding Agent   |   Cmd+P: 명령 팔레트",
+                        ru: "Свайп слева: Explorer • Git • SSH SFTP • OpenVSX\nСвайп справа: Coding Agent   |   Cmd+P: Палитра команд",
+                        es: "Deslizar izq.: Explorer • Git • SSH SFTP • OpenVSX\nDeslizar der.: Coding Agent   |   Cmd+P: Paleta de comandos"
+                    ))
+                    .font(.system(size: 12))
                     .foregroundColor(Color(hex: palette.gutterForeground))
-            }
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
 
-            Text(preferences.tr(
-                "Vuốt mép trái: Explorer • Git • SSH SFTP • OpenVSX\nVuốt mép phải: Coding Agent   |   Cmd+P: Command Palette",
-                "Swipe left edge: Explorer • Git • SSH SFTP • OpenVSX\nSwipe right edge: Coding Agent   |   Cmd+P: Command Palette",
-                zh: "左边缘右滑：Explorer • Git • SSH SFTP • OpenVSX\n右边缘左滑：Coding Agent   |   Cmd+P：命令面板",
-                ja: "左端スワイプ：Explorer • Git • SSH SFTP • OpenVSX\n右端スワイプ：Coding Agent   |   Cmd+P：コマンドパレット",
-                ko: "왼쪽 스와이프: Explorer • Git • SSH SFTP • OpenVSX\n오른쪽 스와이프: Coding Agent   |   Cmd+P: 명령 팔레트",
-                ru: "Свайп слева: Explorer • Git • SSH SFTP • OpenVSX\nСвайп справа: Coding Agent   |   Cmd+P: Палитра команд",
-                es: "Deslizar izq.: Explorer • Git • SSH SFTP • OpenVSX\nDeslizar der.: Coding Agent   |   Cmd+P: Paleta de comandos"
-            ))
-            .font(.system(size: 12))
-            .foregroundColor(Color(hex: palette.gutterForeground))
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 24)
+                    HStack(spacing: 12) {
+                        Button {
+                            showLeftExplorer = true
+                        } label: {
+                            Label(preferences.tr("Mở Sidebar", "Open Sidebar", zh: "打开侧边栏", ja: "サイドバー", ko: "사이드바 열기", ru: "Открыть панель", es: "Abrir barra"), systemImage: "sidebar.left")
+                                .font(.system(size: 13, weight: .semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color(hex: palette.currentLineBackground))
+                                .foregroundColor(Color(hex: palette.foreground))
+                                .cornerRadius(8)
+                        }
 
-            HStack(spacing: 12) {
-                Button {
-                    showLeftExplorer = true
-                } label: {
-                    Label(preferences.tr("Mở Sidebar", "Open Sidebar", zh: "打开侧边栏", ja: "サイドバー", ko: "사이드바 열기", ru: "Открыть панель", es: "Abrir barra"), systemImage: "sidebar.left")
-                        .font(.system(size: 13, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color(hex: palette.currentLineBackground))
-                        .foregroundColor(Color(hex: palette.foreground))
-                        .cornerRadius(8)
-                }
+                        Button {
+                            showCommandPalette = true
+                        } label: {
+                            Label("Command Palette", systemImage: "command")
+                                .font(.system(size: 13, weight: .semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color(hex: palette.accent))
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                        }
+                    }
 
-                Button {
-                    showCommandPalette = true
-                } label: {
-                    Label("Command Palette", systemImage: "command")
-                        .font(.system(size: 13, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color(hex: palette.accent))
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                }
-            }
+                    VStack(spacing: 9) {
+                        Button {
+                            presentWorkspaceDocumentPicker(.singleFile)
+                        } label: {
+                            Label(preferences.tr("Mở File lẻ (File)", "Open Standalone File (File)"), systemImage: "arrow.up.doc")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color(hex: palette.accent).opacity(0.18))
+                                .foregroundColor(Color(hex: palette.accent))
+                                .cornerRadius(7)
+                        }
 
-            VStack(spacing: 9) {
-                Button {
-                    presentWorkspaceDocumentPicker(.singleFile)
-                } label: {
-                    Label(preferences.tr("Mở File lẻ (File)", "Open Standalone File (File)"), systemImage: "arrow.up.doc")
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color(hex: palette.accent).opacity(0.18))
-                        .foregroundColor(Color(hex: palette.accent))
-                        .cornerRadius(7)
-                }
+                        HStack(spacing: 10) {
+                            Button {
+                                showOpenFolderHubSheet = true
+                            } label: {
+                                Label(preferences.tr("Mở Thư mục (Folder)", "Open Folder (Folder)"), systemImage: "folder")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(Color(hex: palette.currentLineBackground))
+                                    .foregroundColor(Color(hex: palette.foreground))
+                                    .cornerRadius(7)
+                            }
 
-                HStack(spacing: 10) {
-                    Button {
-                        showOpenFolderHubSheet = true
-                    } label: {
-                        Label(preferences.tr("Mở Thư mục (Folder)", "Open Folder (Folder)"), systemImage: "folder")
+                            Button {
+                                presentWorkspaceDocumentPicker(.zip)
+                            } label: {
+                                Label(preferences.tr("Nhập & Giải nén .zip", "Import & Extract .zip"), systemImage: "doc.zipper")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(Color(hex: palette.currentLineBackground))
+                                    .foregroundColor(Color(hex: palette.foreground))
+                                    .cornerRadius(7)
+                            }
+                        }
+
+                        HStack(spacing: 10) {
+                            Button {
+                                showPCSyncSheet = true
+                            } label: {
+                                Label(preferences.tr("Đồng bộ PC (Wi-Fi / 4G)", "PC Sync (Wi-Fi / 4G)"), systemImage: "desktopcomputer")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(Color.green.opacity(0.16))
+                                    .foregroundColor(.green)
+                                    .cornerRadius(7)
+                            }
+
+                            Button {
+                                showPowerToolsSheet = true
+                            } label: {
+                                Label(preferences.tr("Công cụ Dev", "Dev Tools"), systemImage: "wrench.and.screwdriver")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(Color(hex: palette.currentLineBackground))
+                                    .foregroundColor(Color(hex: palette.accent))
+                                    .cornerRadius(7)
+                            }
+                        }
+
+                        Button {
+                            githubSheetInitialTab = githubAuth.isSignedIn ? 1 : 0
+                            showGitHubSheet = true
+                        } label: {
+                            Label(
+                                githubAuth.activeAccount.map { acc in
+                                    preferences.tr("GitHub: @\(acc.login) (Kho Repo)", "GitHub: @\(acc.login) (Repos)")
+                                } ?? preferences.tr("Kết nối GitHub & Clone Private Repo", "Connect GitHub & Clone Private Repos"),
+                                systemImage: "arrow.triangle.branch"
+                            )
                             .font(.system(size: 12, weight: .semibold))
-                            .padding(.horizontal, 12)
+                            .padding(.horizontal, 14)
                             .padding(.vertical, 7)
+                            .background(Color.purple.opacity(0.18))
+                            .foregroundColor(.purple)
+                            .cornerRadius(7)
+                        }
+                    }
+
+                    if workspace.canReopenClosedTab {
+                        Button {
+                            workspace.reopenLastClosedTab()
+                        } label: {
+                            Label(preferences.tr("Mở lại Tab vừa đóng (Cmd+Shift+T)", "Reopen Last Closed Tab (Cmd+Shift+T)"), systemImage: "arrow.uturn.left.circle")
+                                .font(.system(size: 12, weight: .semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Color(hex: palette.currentLineBackground))
+                                .foregroundColor(Color(hex: palette.foreground))
+                                .cornerRadius(7)
+                        }
+                    }
+
+                    HStack(spacing: 10) {
+                        Menu {
+                            ForEach(AppLanguage.allCases) { lang in
+                                Button {
+                                    preferences.appLanguage = lang
+                                } label: {
+                                    if preferences.appLanguage == lang {
+                                        Label("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))", systemImage: "checkmark")
+                                    } else {
+                                        Text("\(lang.shortBadge) — \(langDisplayName(lang))")
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "globe")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("\(preferences.appLanguage.shortBadge) • \(preferences.appLanguage.displayName(in: preferences.appLanguage))")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
                             .background(Color(hex: palette.currentLineBackground))
                             .foregroundColor(Color(hex: palette.foreground))
                             .cornerRadius(7)
-                    }
+                        }
 
-                    Button {
-                        presentWorkspaceDocumentPicker(.zip)
-                    } label: {
-                        Label(preferences.tr("Nhập & Giải nén .zip", "Import & Extract .zip"), systemImage: "doc.zipper")
-                            .font(.system(size: 12, weight: .semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Color(hex: palette.currentLineBackground))
-                            .foregroundColor(Color(hex: palette.foreground))
-                            .cornerRadius(7)
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        showPCSyncSheet = true
-                    } label: {
-                        Label(preferences.tr("Đồng bộ PC (Wi-Fi / 4G)", "PC Sync (Wi-Fi / 4G)"), systemImage: "desktopcomputer")
-                            .font(.system(size: 12, weight: .semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Color.green.opacity(0.16))
-                            .foregroundColor(.green)
-                            .cornerRadius(7)
-                    }
-
-                    Button {
-                        showPowerToolsSheet = true
-                    } label: {
-                        Label(preferences.tr("Công cụ Dev", "Dev Tools"), systemImage: "wrench.and.screwdriver")
-                            .font(.system(size: 12, weight: .semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
+                        Button {
+                            showSettingsSheet = true
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "slider.horizontal.3")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text(preferences.tr("Cài đặt & Thông tin", "Settings & Info", zh: "设置与信息", ja: "設定と情報", ko: "설정 및 정보", ru: "Настройки", es: "Ajustes"))
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
                             .background(Color(hex: palette.currentLineBackground))
                             .foregroundColor(Color(hex: palette.accent))
                             .cornerRadius(7)
-                    }
-                }
-            }
-
-            if workspace.canReopenClosedTab {
-                Button {
-                    workspace.reopenLastClosedTab()
-                } label: {
-                    Label(preferences.tr("Mở lại Tab vừa đóng (Cmd+Shift+T)", "Reopen Last Closed Tab (Cmd+Shift+T)"), systemImage: "arrow.uturn.left.circle")
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(Color(hex: palette.currentLineBackground))
-                        .foregroundColor(Color(hex: palette.foreground))
-                        .cornerRadius(7)
-                }
-            }
-
-            HStack(spacing: 10) {
-                Menu {
-                    ForEach(AppLanguage.allCases) { lang in
-                        Button {
-                            preferences.appLanguage = lang
-                        } label: {
-                            if preferences.appLanguage == lang {
-                                Label("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))", systemImage: "checkmark")
-                            } else {
-                                Text("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))")
-                            }
                         }
                     }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "globe")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("\(preferences.appLanguage.shortBadge) • \(preferences.appLanguage.displayName(in: preferences.appLanguage))")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color(hex: palette.currentLineBackground))
-                    .foregroundColor(Color(hex: palette.foreground))
-                    .cornerRadius(7)
+                    .padding(.top, 4)
                 }
-
-                Button {
-                    showSettingsSheet = true
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(preferences.tr("Cài đặt & Thông tin", "Settings & Info", zh: "设置与信息", ja: "設定と情報", ko: "설정 및 정보", ru: "Настройки", es: "Ajustes"))
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color(hex: palette.currentLineBackground))
-                    .foregroundColor(Color(hex: palette.accent))
-                    .cornerRadius(7)
-                }
+                .padding(.vertical, 20)
+                .frame(minWidth: placeholderGeo.size.width, minHeight: placeholderGeo.size.height)
             }
-            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -2833,6 +2900,9 @@ public struct MainIDEWorkspaceView: View {
 
     private func insertTextIntoActiveTab(_ snippet: String) {
         guard let active = workspace.activeTab else { return }
+        if active.language == .markdown && markdownMode == .preview {
+            markdownMode = .editor
+        }
         let ns = active.content as NSString
         let loc = min(max(0, active.selectedRangeLocation), ns.length)
         let len = min(max(0, active.selectedRangeLength), ns.length - loc)
@@ -2900,7 +2970,7 @@ public struct MainIDEWorkspaceView: View {
             (preferences.tr("Mở File lẻ trên máy (File)... (Cmd+O)", "Open File on Device (File)... (Cmd+O)"), "arrow.up.doc", {
                 presentWorkspaceDocumentPicker(.singleFile, delay: 0.35)
             }),
-            (preferences.tr("Mở Thư mục trên máy (Folder)...", "Open Folder on Device (Folder)..."), "folder.badge.gearshape", {
+            (preferences.tr("Mở Thư mục trên máy (Folder)...", "Open Folder on Device (Folder)..."), "folder.badge.plus", {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     showOpenFolderHubSheet = true
                 }
@@ -2911,6 +2981,12 @@ public struct MainIDEWorkspaceView: View {
             (preferences.tr("Đồng bộ 2 chiều PC <-> Mobile (Wi-Fi / 4G)", "2-Way PC <-> Mobile Sync (Wi-Fi / 4G)"), "desktopcomputer", {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     showPCSyncSheet = true
+                }
+            }),
+            (preferences.tr("GitHub: Tài khoản, Clone Private Repo & Publish", "GitHub: Account, Clone Private Repo & Publish"), "arrow.triangle.branch", {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    githubSheetInitialTab = githubAuth.isSignedIn ? 1 : 0
+                    showGitHubSheet = true
                 }
             }),
             (preferences.tr("Chia sẻ Link Live Preview (:\(liveServer.port))", "Share Live Preview Link (:\(liveServer.port))"), "dot.radiowaves.left.and.right", {
@@ -2992,6 +3068,7 @@ private struct HeaderToolsMenuView: View, Equatable {
     let sshConnected: Bool
     let pcSyncConnected: Bool
     let pcSyncTransportLabel: String
+    let githubLogin: String
     let isFullScreenZen: Bool
     let foregroundHex: String
     let accentHex: String
@@ -3012,6 +3089,7 @@ private struct HeaderToolsMenuView: View, Equatable {
     let onToggleTerminal: () -> Void
     let onOpenFindBar: () -> Void
     let onOpenPCSync: () -> Void
+    let onOpenGitHub: () -> Void
     let onOpenPowerTools: () -> Void
     let onScaffoldStarter: (ProjectStarterKind) -> Void
     let onOpenDaemonManager: () -> Void
@@ -3040,6 +3118,7 @@ private struct HeaderToolsMenuView: View, Equatable {
         lhs.sshConnected == rhs.sshConnected &&
         lhs.pcSyncConnected == rhs.pcSyncConnected &&
         lhs.pcSyncTransportLabel == rhs.pcSyncTransportLabel &&
+        lhs.githubLogin == rhs.githubLogin &&
         lhs.isFullScreenZen == rhs.isFullScreenZen &&
         lhs.foregroundHex == rhs.foregroundHex &&
         lhs.accentHex == rhs.accentHex
@@ -3137,6 +3216,15 @@ private struct HeaderToolsMenuView: View, Equatable {
                 )
             }
 
+            Button(action: onOpenGitHub) {
+                Label(
+                    githubLogin.isEmpty
+                        ? tr("GitHub: Đăng nhập & Kho Repo (Private/Public)...", "GitHub: Sign In & Repositories...", nil, nil, nil, nil, nil)
+                        : tr("GitHub (@\(githubLogin)) • Kho Repo & PR...", "GitHub (@\(githubLogin)) • Repos & PR...", nil, nil, nil, nil, nil),
+                    systemImage: "arrow.triangle.branch"
+                )
+            }
+
             Button(action: onOpenPowerTools) {
                 Label(tr("Bộ Công Cụ Developer (CP Judge / API / .env / Color)...", "Developer Power Tools (CP Judge / API / .env / Color)...", nil, nil, nil, nil, nil), systemImage: "wrench.and.screwdriver.fill")
             }
@@ -3188,7 +3276,7 @@ private struct HeaderToolsMenuView: View, Equatable {
             }
 
             Button(action: onPickFolder) {
-                Label(tr("Mở Thư mục trên máy (Folder)...", "Open Folder on Device (Folder)...", nil, nil, nil, nil, nil), systemImage: "folder.badge.gearshape")
+                Label(tr("Mở Thư mục trên máy (Folder)...", "Open Folder on Device (Folder)...", nil, nil, nil, nil, nil), systemImage: "folder.badge.plus")
             }
 
             Button(action: onPickZip) {

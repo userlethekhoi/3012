@@ -62,6 +62,7 @@ public final class CodeRunnerService: ObservableObject {
         sshService: SSHWorkspaceService? = nil,
         bypassCache: Bool = false
     ) async {
+        guard !isRunning else { return }
         isRunning = true
         let startTime = Date()
         consoleOutput = "[Run] \(fileName) (\(language.rawValue))...\n"
@@ -263,9 +264,17 @@ public final class CodeRunnerService: ObservableObject {
 
     private func executeJavaScriptOffMainActor(_ script: String) async -> (output: String, failed: Bool) {
         let rawTuple: (String, Bool) = await withCheckedContinuation { continuation in
+            let resumeOnce = RunnerOnceFlag()
             DispatchQueue.global(qos: .userInitiated).async {
                 let res = Self.executeJavaScriptSynchronously(script)
-                continuation.resume(returning: res)
+                if resumeOnce.claim() {
+                    continuation.resume(returning: res)
+                }
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10.0) {
+                if resumeOnce.claim() {
+                    continuation.resume(returning: ("[JavaScript Timeout] Execution exceeded 10s limit.", true))
+                }
             }
         }
         return (rawTuple.0, rawTuple.1)
@@ -547,5 +556,18 @@ public final class CodeRunnerService: ObservableObject {
         default:
             shellHistory.append("Command '\(cmd)' not found in local sandbox. Type 'help' or connect VPS SSH in Phase 3 for full Linux bash.")
         }
+    }
+}
+
+private final class RunnerOnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
     }
 }

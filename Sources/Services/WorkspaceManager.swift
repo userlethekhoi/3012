@@ -664,8 +664,8 @@ public final class WorkspaceManager: ObservableObject {
     }
 
     public func moveTabToFront(_ tabID: URL) {
-        guard let idx = openTabs.firstIndex(where: { $0.id == tabID }) else {
-            activeTabID = tabID
+        let stdID = tabID.standardizedFileURL
+        guard let idx = openTabs.firstIndex(where: { $0.id == stdID || $0.id == tabID }) else {
             return
         }
         let tab = openTabs.remove(at: idx)
@@ -1611,8 +1611,12 @@ public final class WorkspaceManager: ObservableObject {
         let deletedPaths = Set(deletedGhostContents.keys).union(
             baselineSnapshots.keys.filter { diskFiles[$0] == nil }
         )
+        let fm = FileManager.default
         for delRel in deletedPaths where diskFiles[delRel] == nil {
-            updated[delRel] = .deleted
+            let diskExists = fm.fileExists(atPath: rootURL.appendingPathComponent(delRel).path)
+            if !diskExists || deletedGhostContents[delRel] != nil {
+                updated[delRel] = .deleted
+            }
         }
 
         if fileStatuses != updated {
@@ -2071,5 +2075,20 @@ public final class WorkspaceManager: ObservableObject {
         }
         switchWorkspaceFolder(to: target)
         return target
+    }
+
+    public func reloadOpenTabsFromDisk() {
+        let fm = FileManager.default
+        for i in openTabs.indices {
+            let url = openTabs[i].fileURL
+            guard fm.fileExists(atPath: url.path), !openTabs[i].isDirty,
+                  let text = readTextWithEncodingFallback(from: url) else { continue }
+            let clampedLoc = min(openTabs[i].selectedRangeLocation, (text as NSString).length)
+            openTabs[i].content = text
+            openTabs[i].savedContent = text
+            openTabs[i].selectedRangeLocation = clampedLoc
+            openTabs[i].selectedRangeLength = 0
+        }
+        recomputeAllFileStatuses()
     }
 }

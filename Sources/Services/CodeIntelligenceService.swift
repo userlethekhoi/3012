@@ -88,7 +88,7 @@ public struct EditorDiagnostic: Identifiable, Equatable, Sendable {
     public let range: NSRange   // UTF-16 range inside document for Runestone HighlightedRange
 
     public init(line: Int, column: Int = 1, severity: DiagnosticSeverity, message: String, range: NSRange) {
-        self.id = "\(severity.rawValue)-\(line)-\(column)-\(message)"
+        self.id = "\(UUID().uuidString)-\(severity.rawValue)-\(line)-\(column)"
         self.line = max(1, line)
         self.column = max(1, column)
         self.severity = severity
@@ -648,7 +648,8 @@ public final class CodeIntelligenceService: ObservableObject {
             let beforeLen = max(0, cursor - fullMatchRange.length)
             let scanLen = min(beforeLen, 20_000)
             let scanStart = beforeLen - scanLen
-            let scanSlice = nsText.substring(with: NSRange(location: scanStart, length: scanLen))
+            let safeRange = nsText.rangeOfComposedCharacterSequences(for: NSRange(location: scanStart, length: scanLen))
+            let scanSlice = nsText.substring(with: safeRange)
 
             var openStack: [String] = []
             if let tagRx = try? NSRegularExpression(pattern: #"<\s*(/?)\s*([a-zA-Z][a-zA-Z0-9-]*)([^>]*?)(/?)>"#) {

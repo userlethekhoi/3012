@@ -287,16 +287,15 @@ class SyncRelayHub:
     def join(self, client: SyncClient):
         with self.lock:
             peers = self.rooms[client.room]
+            same = [p for p in peers if p.client_id == client.client_id]
+            for old in same:
+                peers.remove(old)
+                self.by_ip[old.ip] = max(0, self.by_ip[old.ip] - 1)
+                if self.by_ip[old.ip] == 0:
+                    del self.by_ip[old.ip]
+                old.closed = True
             if len(peers) >= CFG["max_sync_per_room"]:
-                # Evict oldest idle peer with identical client_id if reconnecting
-                same = [p for p in peers if p.client_id == client.client_id]
-                if same:
-                    for old in same:
-                        peers.remove(old)
-                        self.by_ip[old.ip] = max(0, self.by_ip[old.ip] - 1)
-                        old.closed = True
-                elif len(peers) >= CFG["max_sync_per_room"]:
-                    return None
+                return None
             existing = list(peers)
             peers.append(client)
             self.by_ip[client.ip] += 1
@@ -304,6 +303,7 @@ class SyncRelayHub:
 
     def leave(self, client: SyncClient):
         remaining = []
+        superseded = False
         with self.lock:
             peers = self.rooms.get(client.room)
             if peers and client in peers:
@@ -312,10 +312,13 @@ class SyncRelayHub:
                 if self.by_ip[client.ip] == 0:
                     del self.by_ip[client.ip]
                 remaining = list(peers)
+                superseded = any(p.client_id == client.client_id for p in remaining)
                 if not peers:
                     del self.rooms[client.room]
+            elif peers:
+                superseded = any(p.client_id == client.client_id for p in peers)
             client.closed = True
-        return remaining
+        return [] if superseded else remaining
 
     def peers_for(self, client: SyncClient):
         with self.lock:
@@ -992,7 +995,7 @@ lanServer.on("upgrade", (req, socket) => {
 });
 
 // Outbound Relay Connector (Zero-Knowledge AES-256-GCM via build.kaydus.xyz)
-function connectRelayRoom(secret) {
+function connectRelayRoom(secret, isPinRoom = false) {
   if (LAN_ONLY || !RELAY_URL) return null;
   const u = new URL(RELAY_URL);
   const isTLS = u.protocol === "wss:" || u.protocol === "https:";
@@ -1000,7 +1003,7 @@ function connectRelayRoom(secret) {
   const pathWithQuery = (u.pathname || "/v1/sync") + (u.search || "");
   const room = deriveRoomID(secret);
   const aesKey = deriveAESKey(secret);
-  const rc = { socket: null, ready: false, closed: false, sendApp: () => {} };
+  const rc = { socket: null, ready: false, closed: false, sendApp: () => {}, close: () => { rc.closed = true; rc.ready = false; try { rc.socket && rc.socket.destroy(); } catch {} } };
 
   function connectOnce() {
     if (rc.closed) return;
@@ -1075,6 +1078,7 @@ function connectRelayRoom(secret) {
               issuedPermanentKey: issuedKeyOnPair ? PERMANENT_KEY : undefined
             });
             console.log("[3012 Relay] Dien thoai da ghep noi E2EE thanh cong!");
+            if (isPinRoom) setTimeout(() => rc.close(), 1500);
             return;
           }
           handleProtocolMessage(msg, rc.sendApp, (o) => broadcastEverywhere(o));
@@ -1139,11 +1143,14 @@ lanServer.listen(PORT, "0.0.0.0", () => {
   console.log("Khoa Vinh Vien:", PERMANENT_KEY);
   console.log("====================================================\n");
 
-  const r1 = connectRelayRoom(PERMANENT_KEY);
+  const r1 = connectRelayRoom(PERMANENT_KEY, false);
   if (r1) relayConns.push(r1);
   if (QUICK_PIN && QUICK_PIN !== PERMANENT_KEY) {
-    const rPin = connectRelayRoom(QUICK_PIN);
-    if (rPin) relayConns.push(rPin);
+    const rPin = connectRelayRoom(QUICK_PIN, true);
+    if (rPin) {
+      relayConns.push(rPin);
+      setTimeout(() => rPin.close(), 180000);
+    }
   }
 });
 """
@@ -1213,7 +1220,7 @@ class Handler(BaseHTTPRequestHandler):
             "exitCode": job.exit_code,
             "error": job.error,
             "files": job.files,
-            "elapsed": round((job.finished or time.time()) - (job.started or time.time()), 1),
+            "elapsed": 0.0 if not job.started else round(max(0.0, (job.finished or time.time()) - job.started), 1),
         }
 
     def handle_sync_websocket(self) -> None:
@@ -1260,7 +1267,7 @@ class Handler(BaseHTTPRequestHandler):
             room = str(hello.get("room", "")).strip().lower()
             if not ROOM_RE.match(room):
                 raw_key = str(hello.get("key", "")).strip()
-                if raw_key:
+                if len(raw_key) >= 4:
                     room = hashlib.sha256(("3012-room-v1:" + raw_key).encode("utf-8")).hexdigest()
                 else:
                     _ws_send_json(tmp_client, {"type": "relay_error", "message": "Invalid room hash"})

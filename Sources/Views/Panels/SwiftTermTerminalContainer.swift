@@ -103,6 +103,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         private var lastWasCR: Bool = false
         private var pendingCommands: [String] = []
         private var isDrainingCommands: Bool = false
+        private var activeCommandTask: Task<Void, Never>? = nil
         private var sessionEnv: [String: String] = [
             "OS": "iOS_NonJB_Sandbox",
             "SHELL": "3012-Workstation-Shell",
@@ -230,28 +231,26 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             ]
 
             for item in keys {
-                let btn = UIButton(type: .system)
-                btn.tintColor = .white
-                if let sf = item.sfSymbol {
-                    btn.setImage(
-                        UIImage(
-                            systemName: sf,
-                            withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
-                        ),
-                        for: .normal
-                    )
-                } else if let label = item.label {
-                    btn.setTitle(label, for: .normal)
-                    btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-                    let isCLI = (label == "claude" || label == "opencode")
-                    btn.setTitleColor(isCLI ? UIColor.systemPurple : .white, for: .normal)
-                }
                 let isCLI = (item.label == "claude" || item.label == "opencode")
-                btn.backgroundColor = isCLI
+                var config = UIButton.Configuration.filled()
+                config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
+                config.cornerStyle = .fixed
+                config.background.cornerRadius = 5
+                config.baseBackgroundColor = isCLI
                     ? UIColor.systemPurple.withAlphaComponent(0.25)
                     : UIColor.white.withAlphaComponent(0.14)
-                btn.layer.cornerRadius = 5
-                btn.contentEdgeInsets = UIEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
+                config.baseForegroundColor = isCLI ? UIColor.systemPurple : .white
+                if let sf = item.sfSymbol {
+                    config.image = UIImage(
+                        systemName: sf,
+                        withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+                    )
+                } else if let label = item.label {
+                    var titleAttr = AttributedString(label)
+                    titleAttr.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+                    config.attributedTitle = titleAttr
+                }
+                let btn = UIButton(configuration: config)
                 let seq = item.seq
                 btn.addAction(UIAction { [weak self] _ in
                     guard let self, let tv = self.terminalView else { return }
@@ -369,13 +368,20 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     utf8Accumulator.removeAll()
                     localLineBuffer = ""
                     pendingCommands.removeAll()
+                    activeCommandTask?.cancel()
+                    activeCommandTask = nil
+                    let wasExecuting = isExecutingAsyncCommand
+                    isExecutingAsyncCommand = false
+                    isDrainingCommands = false
                     if let repl = activeREPL {
                         activeREPL = nil
                         tv.feed(text: "^C\r\nLeft \(repl) interactive CLI.\r\n")
                     } else {
                         tv.feed(text: "^C\r\n")
                     }
-                    printLocalPrompt()
+                    if !wasExecuting {
+                        printLocalPrompt()
+                    }
                     continue
                 }
                 if b == 0x04 { // Ctrl+D
@@ -454,17 +460,18 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             isDrainingCommands = true
             isExecutingAsyncCommand = true
 
-            Task { @MainActor [weak self, weak tv] () -> Void in
+            activeCommandTask = Task { @MainActor [weak self, weak tv] () -> Void in
                 guard let self, let tv else { return }
                 defer {
                     self.isDrainingCommands = false
                     self.isExecutingAsyncCommand = false
+                    self.activeCommandTask = nil
+                    self.printLocalPrompt()
                 }
-                while !self.pendingCommands.isEmpty {
+                while !Task.isCancelled && !self.pendingCommands.isEmpty {
                     let nextCmd = self.pendingCommands.removeFirst()
                     await self.dispatchEnteredLine(nextCmd, in: tv)
                 }
-                self.printLocalPrompt()
             }
         }
 
@@ -482,7 +489,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
 
             var candidates: [String] = []
             if parts.count <= 1 {
-                let cmds = ["claude", "opencode", "xtool", "code", "open", "dir", "ls", "cd", "cls", "clear", "pwd", "tree", "type", "cat", "copy", "cp", "move", "mv", "del", "rm", "mkdir", "rmdir", "touch", "findstr", "grep", "git", "gcc", "g++", "python", "node", "swift", "run", "npm", "zip", "unzip", "wget", "curl", "ping", "ipconfig", "systeminfo", "tasklist", "taskkill", "ps", "kill", "bot", "keepalive", "files", "set", "help"]
+                let cmds = ["claude", "opencode", "xtool", "code", "open", "dir", "ls", "cd", "cls", "clear", "pwd", "tree", "type", "cat", "copy", "cp", "move", "mv", "del", "rm", "mkdir", "rmdir", "touch", "findstr", "grep", "git", "gh", "gcc", "g++", "python", "node", "swift", "run", "npm", "zip", "unzip", "wget", "curl", "ping", "ipconfig", "systeminfo", "tasklist", "taskkill", "ps", "kill", "bot", "keepalive", "files", "set", "help"]
                 candidates.append(contentsOf: cmds.filter { token.isEmpty || $0.lowercased().hasPrefix(token.lowercased()) })
             }
 
@@ -544,6 +551,10 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 if let targetName = redirTarget {
                     let activeCWD = localCWD ?? parent.workspace.rootURL
                     let destURL = resolvePath(targetName, cwd: activeCWD)
+                    guard isWithinWorkspace(destURL, allowRoot: false) else {
+                        tv.feed(text: "\u{001B}[31mredirect: refusing to write outside Workspace '\(targetName)'\u{001B}[0m\r\n")
+                        continue
+                    }
                     let plainText = stripANSIEscapes(captured).replacingOccurrences(of: "\r\n", with: "\n")
                     try? FileManager.default.createDirectory(at: destURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                     if appendMode, let existing = try? String(contentsOf: destURL, encoding: .utf8) {
@@ -803,7 +814,12 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             case "mkdir", "md":
                 guard !args.isEmpty else { emit("usage: \(cmd) <dir>\n"); return }
                 for d in args where !d.hasPrefix("-") {
-                    try? fm.createDirectory(at: resolvePath(d, cwd: cwd), withIntermediateDirectories: true)
+                    let target = resolvePath(d, cwd: cwd)
+                    guard isWithinWorkspace(target, allowRoot: false) else {
+                        emit("\u{001B}[31m\(cmd): refusing path outside Workspace '\(d)'\u{001B}[0m\n")
+                        continue
+                    }
+                    try? fm.createDirectory(at: target, withIntermediateDirectories: true)
                 }
                 parent.workspace.reloadTree()
 
@@ -811,6 +827,10 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 guard !args.isEmpty else { emit("usage: \(cmd) <file>\n"); return }
                 for f in args where !f.hasPrefix("-") {
                     let target = resolvePath(f, cwd: cwd)
+                    guard isWithinWorkspace(target, allowRoot: false) else {
+                        emit("\u{001B}[31m\(cmd): refusing path outside Workspace '\(f)'\u{001B}[0m\n")
+                        continue
+                    }
                     try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                     if !fm.fileExists(atPath: target.path) {
                         try? "".write(to: target, atomically: true, encoding: .utf8)
@@ -850,8 +870,21 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 if fm.fileExists(atPath: dst.path, isDirectory: &isDstDir), isDstDir.boolValue {
                     dst = dst.appendingPathComponent(src.lastPathComponent)
                 }
+                guard isWithinWorkspace(src, allowRoot: false), isWithinWorkspace(dst, allowRoot: false) else {
+                    emit("\u{001B}[31m\(cmd): refusing operation outside Workspace\u{001B}[0m\n")
+                    return
+                }
+                guard fm.fileExists(atPath: src.path) else {
+                    emit("\u{001B}[31m\(cmd): cannot stat '\(paths[0])': No such file or directory\u{001B}[0m\n")
+                    return
+                }
+                guard WorkspaceManager.canonicalPath(src) != WorkspaceManager.canonicalPath(dst) else {
+                    emit("\u{001B}[31m\(cmd): source and destination are identical\u{001B}[0m\n")
+                    return
+                }
                 do {
-                    if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
+                    try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
                     if cmd == "cp" || cmd == "copy" || cmd == "xcopy" {
                         try fm.copyItem(at: src, to: dst)
                     } else {
@@ -881,7 +914,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
 
             case "find", "where", "which":
                 guard let q = args.last(where: { !$0.hasPrefix("-") }) else { emit("usage: \(cmd) <name>\n"); return }
-                let builtins = ["claude", "opencode", "code", "open", "dir", "ls", "cd", "cls", "clear", "git", "gcc", "g++", "clang", "python", "node", "swift", "npm", "zip", "unzip", "wget", "curl", "ping"]
+                let builtins = ["claude", "opencode", "code", "open", "dir", "ls", "cd", "cls", "clear", "git", "gh", "gcc", "g++", "clang", "python", "node", "swift", "npm", "zip", "unzip", "wget", "curl", "ping"]
                 if (cmd == "which" || cmd == "where") && builtins.contains(q.lowercased()) {
                     emit("/usr/local/bin/\(q.lowercased()) (3012 Workstation Built-in)\n")
                 } else {
@@ -1016,6 +1049,10 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             case "git":
                 await handleGitCommand(args: args, cwd: cwd, emit: emit)
 
+            // MARK: GitHub CLI (gh)
+            case "gh":
+                await handleGitHubCLICommand(args: args, cwd: cwd, emit: emit)
+
             // MARK: Zip & Unzip
             case "zip":
                 guard args.count >= 2 else { emit("usage: zip <archive.zip> <file_or_folder>\n"); return }
@@ -1035,6 +1072,10 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 guard let zipArg = args.first else { emit("usage: unzip <archive.zip> [dest_folder]\n"); return }
                 let zipURL = resolvePath(zipArg, cwd: cwd)
                 let destURL = args.count >= 2 ? resolvePath(args[1], cwd: cwd) : cwd
+                guard isWithinWorkspace(zipURL, allowRoot: false), isWithinWorkspace(destURL, allowRoot: true) else {
+                    emit("\u{001B}[31munzip: refusing path outside Workspace\u{001B}[0m\n")
+                    return
+                }
                 do {
                     try fm.createDirectory(at: destURL, withIntermediateDirectories: true)
                     try fm.unzipItem(at: zipURL, to: destURL)
@@ -1309,13 +1350,35 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             cwd: URL,
             emit: @escaping @MainActor (String) -> Void
         ) async {
+            if parent.sshService.isConnected {
+                let gitArgs = args.isEmpty ? ["status"] : args
+                let res = await parent.sshService.executeGitCommandOnVPS(
+                    gitArgs,
+                    in: parent.sshService.currentRemoteDirectory,
+                    githubToken: GitHubAccountService.shared.activeToken
+                )
+                let out = res.output.trimmingCharacters(in: .newlines)
+                emit(out.isEmpty ? "(exit \(res.exitCode))\n" : out + "\n")
+                return
+            }
+
             let sub = args.first?.lowercased() ?? "status"
             let root = parent.workspace.rootURL
 
             switch sub {
             case "status":
                 await parent.gitService.refreshStatus(workspaceRoot: root, sshService: nil)
-                emit("On branch \(parent.gitService.currentBranch)\n")
+                if !parent.gitService.remoteOriginURL.isEmpty {
+                    await parent.gitService.refreshRemoteDivergence(workspaceRoot: root)
+                }
+                emit("On branch \(parent.gitService.currentBranch)")
+                if parent.gitService.aheadCount > 0 || parent.gitService.behindCount > 0 {
+                    emit(" [ahead \(parent.gitService.aheadCount), behind \(parent.gitService.behindCount)]")
+                }
+                emit("\n")
+                if !parent.gitService.remoteOriginURL.isEmpty {
+                    emit("Remote: \(parent.gitService.remoteOriginURL)\n")
+                }
                 if parent.gitService.changedFiles.isEmpty {
                     emit("nothing to commit, working tree clean\n")
                 } else {
@@ -1335,6 +1398,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     message = args[mIdx + 1]
                 }
                 await parent.gitService.commitAll(message: message, workspaceRoot: root, sshService: nil)
+                parent.workspace.resetDiffBaselineToCurrentDisk(with: parent.gitService.commits.first?.snapshotFiles)
                 emit(parent.gitService.statusBanner + "\n")
             case "log":
                 await parent.gitService.refreshStatus(workspaceRoot: root, sshService: nil)
@@ -1358,23 +1422,313 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     }
                 }
             case "branch":
-                emit("* \(parent.gitService.currentBranch)\n")
-            case "clone":
-                guard args.count >= 2 else { emit("usage: git clone <owner/repo | https://github.com/owner/repo>\n"); return }
-                let repoInput = args[1]
-                emit("Cloning \(repoInput) into Workspace...\n")
-                if let dest = await parent.gitService.cloneGitHubRepository(repoInput: repoInput, into: parent.workspace.rootURL) {
+                let rest = Array(args.dropFirst())
+                if rest.contains("-a") || rest.contains("-r") || rest.contains("--all") {
+                    emit("* \(parent.gitService.currentBranch)\n")
+                    let remotes = await parent.gitService.fetchRemoteBranches()
+                    for b in remotes {
+                        emit("  remotes/origin/\(b)\n")
+                    }
+                } else if let newBranch = rest.first(where: { !$0.hasPrefix("-") }) {
+                    let ok = await parent.gitService.createAndCheckoutBranch(name: newBranch, workspaceRoot: root)
+                    emit(ok ? "\u{001B}[32m\(parent.gitService.statusBanner)\u{001B}[0m\n" : "\u{001B}[31m\(parent.gitService.statusBanner)\u{001B}[0m\n")
+                } else {
+                    emit("* \(parent.gitService.currentBranch)\n")
+                }
+            case "checkout", "switch":
+                let rest = Array(args.dropFirst())
+                if let idx = rest.firstIndex(where: { $0 == "-b" || $0 == "-c" }), idx + 1 < rest.count {
+                    let newBranch = rest[idx + 1]
+                    let ok = await parent.gitService.createAndCheckoutBranch(name: newBranch, workspaceRoot: root)
+                    emit(ok ? "\u{001B}[32m\(parent.gitService.statusBanner)\u{001B}[0m\n" : "\u{001B}[31m\(parent.gitService.statusBanner)\u{001B}[0m\n")
+                } else if let targetBranch = rest.first(where: { !$0.hasPrefix("-") }) {
+                    parent.gitService.selectBranch(targetBranch, workspaceRoot: root)
+                    emit("Switched to branch '\(targetBranch)'\n")
+                } else {
+                    emit("usage: git \(sub) [-b|-c] <branch>\n")
+                }
+            case "remote":
+                let rest = Array(args.dropFirst())
+                if rest.isEmpty || rest == ["-v"] {
+                    if parent.gitService.remoteOriginURL.isEmpty {
+                        emit("(no remote 'origin' configured)\n")
+                    } else {
+                        emit("origin\t\(parent.gitService.remoteOriginURL) (fetch)\n")
+                        emit("origin\t\(parent.gitService.remoteOriginURL) (push)\n")
+                    }
+                } else if (rest.first == "add" || rest.first == "set-url") && rest.count >= 3 {
+                    let remoteURL = rest[2]
+                    parent.gitService.setRemoteOriginURL(remoteURL, workspaceRoot: root)
+                    emit("Remote '\(rest[1])' set to \(remoteURL)\n")
+                } else {
+                    emit("usage: git remote [-v | add origin <url> | set-url origin <url>]\n")
+                }
+            case "pull":
+                let rest = Array(args.dropFirst())
+                let branchArg = rest.last(where: { !$0.hasPrefix("-") && $0 != "origin" })
+                let ok = await parent.gitService.pullFromGitHub(into: root, branchOverride: branchArg)
+                if ok {
                     parent.workspace.reloadTree()
-                    emit("\u{001B}[32m[CLONED]\u{001B}[0m \(repoInput) -> \(dest.lastPathComponent)/\n")
+                    parent.workspace.reloadOpenTabsFromDisk()
+                    parent.workspace.resetDiffBaselineToCurrentDisk(with: parent.gitService.commits.first?.snapshotFiles)
+                    emit("\u{001B}[32m\(parent.gitService.statusBanner)\u{001B}[0m\n")
+                } else {
+                    emit("\u{001B}[31m\(parent.gitService.statusBanner)\u{001B}[0m\n")
+                }
+            case "push":
+                let rest = Array(args.dropFirst())
+                let force = rest.contains("-f") || rest.contains("--force")
+                let ok = await parent.gitService.pushToGitHubREST(
+                    workspaceRoot: root,
+                    commitMessage: "",
+                    force: force,
+                    pushAllWorkspaceFiles: false
+                )
+                if ok {
+                    parent.workspace.resetDiffBaselineToCurrentDisk(with: parent.gitService.commits.first?.snapshotFiles)
+                    emit("\u{001B}[32m\(parent.gitService.statusBanner)\u{001B}[0m\n")
+                } else {
+                    emit("\u{001B}[31m\(parent.gitService.statusBanner)\u{001B}[0m\n")
+                }
+            case "clone":
+                let rest = Array(args.dropFirst())
+                var branchArg: String? = nil
+                if let bIdx = rest.firstIndex(where: { $0 == "-b" || $0 == "--branch" }), bIdx + 1 < rest.count {
+                    branchArg = rest[bIdx + 1]
+                }
+                var skipNext = false
+                var repoInput: String? = nil
+                for token in rest {
+                    if skipNext {
+                        skipNext = false
+                        continue
+                    }
+                    if token == "-b" || token == "--branch" {
+                        skipNext = true
+                        continue
+                    }
+                    if !token.hasPrefix("-") {
+                        repoInput = token
+                        break
+                    }
+                }
+                guard let repo = repoInput else {
+                    emit("usage: git clone [-b <branch>] <owner/repo | https://github.com/owner/repo>\n")
+                    return
+                }
+                emit("Cloning \(repo) into Workspace...\n")
+                if let dest = await parent.gitService.cloneGitHubRepository(
+                    repoInput: repo,
+                    into: parent.workspace.rootURL,
+                    branchOverride: branchArg
+                ) {
+                    parent.workspace.reloadTree()
+                    emit("\u{001B}[32m[CLONED]\u{001B}[0m \(repo) -> \(dest.lastPathComponent)/\n")
                 } else {
                     emit("\u{001B}[31m\(parent.gitService.statusBanner)\u{001B}[0m\n")
                 }
             default:
-                emit("3012 Git CLI: supports status, init, add, commit -m \"...\", log, diff [file], branch, clone <repo>\n")
+                emit("3012 Git CLI: status, init, add, commit -m \"...\", log, diff [file], branch [-a|<name>], checkout [-b] <branch>, switch, remote [-v|add origin|set-url origin], pull, push [-f], clone [-b <branch>] <repo>\n")
+            }
+        }
+
+        private func handleGitHubCLICommand(
+            args: [String],
+            cwd: URL,
+            emit: @escaping @MainActor (String) -> Void
+        ) async {
+            let auth = GitHubAccountService.shared
+            let group = args.first?.lowercased() ?? ""
+            let sub = args.dropFirst().first?.lowercased() ?? ""
+            let rest = Array(args.dropFirst(2))
+
+            switch group {
+            case "auth":
+                switch sub {
+                case "status":
+                    if let acc = auth.activeAccount {
+                        let privLabel = acc.hasPrivateRepoAccess ? "Private+Public" : "Public only"
+                        emit("\u{001B}[32m✓ Logged in to github.com as @\(acc.login)\u{001B}[0m [\(acc.authKind) • \(privLabel)]\n")
+                        emit("  Scopes: \(acc.scopesSummary)\n")
+                        emit("  Saved accounts: \(auth.accounts.count)\n")
+                    } else {
+                        emit("Not logged in to GitHub. Run: gh auth login <token>\n")
+                    }
+                case "login":
+                    let tokenArg = rest.first(where: { !$0.hasPrefix("-") })
+                    if let tok = tokenArg, !tok.isEmpty {
+                        let ok = await auth.signInWithToken(tok, authKind: "pat")
+                        if ok, let acc = auth.activeAccount {
+                            emit("\u{001B}[32m✓ Authenticated as @\(acc.login)\u{001B}[0m\n")
+                        } else {
+                            emit("\u{001B}[31m\(auth.errorMessage ?? "GitHub login failed.")\u{001B}[0m\n")
+                        }
+                    } else {
+                        auth.startDeviceFlow()
+                        emit("Starting GitHub 1-Tap Device Flow...\n")
+                        for _ in 0..<12 {
+                            if case .requestingCode = auth.deviceFlowState {
+                                try? await Task.sleep(nanoseconds: 250_000_000)
+                            } else {
+                                break
+                            }
+                        }
+                        switch auth.deviceFlowState {
+                        case .awaitingUser(let code, let uri, _):
+                            emit("One-time code: \u{001B}[1;33m\(code)\u{001B}[0m\nOpen: \(uri)\nWaiting for authorization...\n")
+                        case .failed(let err):
+                            emit("\u{001B}[31m\(err)\u{001B}[0m\n")
+                        default:
+                            emit("Open the GitHub panel in 3012 to finish Device Flow sign-in, or run: gh auth login <pat_token>\n")
+                        }
+                    }
+                case "switch":
+                    guard let target = rest.first(where: { !$0.hasPrefix("-") }) else {
+                        emit("usage: gh auth switch <username>\n")
+                        return
+                    }
+                    let clean = target.hasPrefix("@") ? String(target.dropFirst()) : target
+                    if let acc = auth.accounts.first(where: { $0.login.caseInsensitiveCompare(clean) == .orderedSame }) {
+                        auth.switchActiveAccount(to: acc.id)
+                        emit("\u{001B}[32m✓ Switched GitHub account to @\(acc.login)\u{001B}[0m\n")
+                    } else {
+                        emit("\u{001B}[31mAccount '\(clean)' not found in saved Keychain accounts.\u{001B}[0m\n")
+                    }
+                case "logout":
+                    if let acc = auth.activeAccount {
+                        let login = acc.login
+                        auth.signOutAccount(id: acc.id)
+                        emit("Signed out @\(login)\n")
+                    } else {
+                        emit("No active GitHub account.\n")
+                    }
+                default:
+                    emit("usage: gh auth <status | login [token] | switch <user> | logout>\n")
+                }
+
+            case "repo":
+                switch sub {
+                case "list":
+                    guard auth.isSignedIn else {
+                        emit("Not logged in. Run: gh auth login <token>\n")
+                        return
+                    }
+                    if auth.repositories.isEmpty || rest.contains("--refresh") {
+                        await auth.refreshRepositories(reset: true)
+                    }
+                    if auth.repositories.isEmpty {
+                        emit("No repositories found for @\(auth.activeAccount?.login ?? "").\n")
+                    } else {
+                        for repo in auth.repositories.prefix(30) {
+                            let badge = repo.isPrivate ? "\u{001B}[33mPRIVATE\u{001B}[0m" : "\u{001B}[32mPUBLIC \u{001B}[0m"
+                            emit("  \(badge)  \(repo.fullName)  [\(repo.defaultBranch)]\n")
+                        }
+                    }
+                case "clone":
+                    var branchArg: String? = nil
+                    if let bIdx = rest.firstIndex(where: { $0 == "-b" || $0 == "--branch" }), bIdx + 1 < rest.count {
+                        branchArg = rest[bIdx + 1]
+                    }
+                    var skipNext = false
+                    var repoInput: String? = nil
+                    for token in rest {
+                        if skipNext {
+                            skipNext = false
+                            continue
+                        }
+                        if token == "-b" || token == "--branch" {
+                            skipNext = true
+                            continue
+                        }
+                        if !token.hasPrefix("-") {
+                            repoInput = token
+                            break
+                        }
+                    }
+                    guard let repo = repoInput else {
+                        emit("usage: gh repo clone <owner/repo> [-b <branch>]\n")
+                        return
+                    }
+                    emit("Cloning \(repo) into Workspace...\n")
+                    if let dest = await parent.gitService.cloneGitHubRepository(
+                        repoInput: repo,
+                        into: parent.workspace.rootURL,
+                        branchOverride: branchArg
+                    ) {
+                        parent.workspace.reloadTree()
+                        emit("\u{001B}[32m[CLONED]\u{001B}[0m \(repo) -> \(dest.lastPathComponent)/\n")
+                    } else {
+                        emit("\u{001B}[31m\(parent.gitService.statusBanner)\u{001B}[0m\n")
+                    }
+                case "create":
+                    guard let name = rest.first(where: { !$0.hasPrefix("-") }) else {
+                        emit("usage: gh repo create <name> [--private|--public] [-d <description>] [--push]\n")
+                        return
+                    }
+                    let isPrivate = !rest.contains("--public")
+                    var desc = ""
+                    if let dIdx = rest.firstIndex(where: { $0 == "-d" || $0 == "--description" }), dIdx + 1 < rest.count {
+                        desc = rest[dIdx + 1]
+                    }
+                    if rest.contains("--push") {
+                        let ok = await parent.gitService.publishWorkspaceToNewRepo(
+                            name: name,
+                            description: desc,
+                            isPrivate: isPrivate,
+                            workspaceRoot: parent.workspace.rootURL
+                        )
+                        emit((ok ? "\u{001B}[32m" : "\u{001B}[31m") + parent.gitService.statusBanner + "\u{001B}[0m\n")
+                    } else {
+                        do {
+                            let created = try await auth.createRepository(name: name, description: desc, isPrivate: isPrivate)
+                            emit("\u{001B}[32m[CREATED]\u{001B}[0m \(created.htmlURL)\n")
+                        } catch {
+                            emit("\u{001B}[31m\(error.localizedDescription)\u{001B}[0m\n")
+                        }
+                    }
+                default:
+                    emit("usage: gh repo <list | clone <owner/repo> [-b <branch>] | create <name> [--private|--public] [--push]>\n")
+                }
+
+            case "pr":
+                if sub == "create" {
+                    var title = "Update from 3012 IDE"
+                    var body = ""
+                    var base = "main"
+                    if let tIdx = rest.firstIndex(where: { $0 == "-t" || $0 == "--title" }), tIdx + 1 < rest.count {
+                        title = rest[tIdx + 1]
+                    }
+                    if let bIdx = rest.firstIndex(where: { $0 == "-b" || $0 == "--body" }), bIdx + 1 < rest.count {
+                        body = rest[bIdx + 1]
+                    }
+                    if let baseIdx = rest.firstIndex(where: { $0 == "-B" || $0 == "--base" }), baseIdx + 1 < rest.count {
+                        base = rest[baseIdx + 1]
+                    }
+                    if let prURL = await parent.gitService.createPullRequest(title: title, body: body, head: nil, base: base) {
+                        emit("\u{001B}[32m[PR CREATED]\u{001B}[0m \(prURL)\n")
+                    } else {
+                        emit("\u{001B}[31m\(parent.gitService.statusBanner)\u{001B}[0m\n")
+                    }
+                } else {
+                    emit("usage: gh pr create [-t <title>] [-b <body>] [-B <base_branch>]\n")
+                }
+
+            default:
+                emit("3012 GitHub CLI (gh): gh auth <status|login|switch|logout> | gh repo <list|clone|create> | gh pr create\n")
             }
         }
 
         // MARK: - Helpers
+        @MainActor
+        private func isWithinWorkspace(_ url: URL, allowRoot: Bool) -> Bool {
+            let canonRoot = WorkspaceManager.canonicalPath(parent.workspace.rootURL)
+            let canonTarget = WorkspaceManager.canonicalPath(url)
+            if canonTarget == canonRoot {
+                return allowRoot
+            }
+            return canonTarget.hasPrefix(canonRoot + "/")
+        }
+
         @MainActor
         private func resolvePath(_ raw: String, cwd: URL) -> URL {
             let clean = stripQuotes(raw).replacingOccurrences(of: "\\", with: "/")

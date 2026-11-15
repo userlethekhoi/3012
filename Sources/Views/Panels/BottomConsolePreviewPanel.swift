@@ -156,6 +156,7 @@ public struct BottomConsolePreviewPanel: View {
                                 .foregroundColor(selectedTab == tab ? Color(hex: palette.accent) : Color(hex: palette.gutterForeground))
                                 .cornerRadius(6)
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -184,6 +185,7 @@ public struct BottomConsolePreviewPanel: View {
                         .foregroundColor(showWebConsoleDrawer ? .white : Color(hex: palette.foreground))
                         .cornerRadius(6)
                     }
+                    .buttonStyle(.plain)
 
                     if !sshService.activeTunnels.isEmpty {
                         Menu {
@@ -226,6 +228,7 @@ public struct BottomConsolePreviewPanel: View {
                         .foregroundColor(liveServer.isShareLinkEnabled ? .black : Color(hex: palette.foreground))
                         .cornerRadius(6)
                     }
+                    .buttonStyle(.plain)
 
                     Button {
                         openCurrentPreviewInSafari()
@@ -238,6 +241,7 @@ public struct BottomConsolePreviewPanel: View {
                             .foregroundColor(.white)
                             .cornerRadius(6)
                     }
+                    .buttonStyle(.plain)
                 } else if selectedTab == .terminal {
                     Button {
                         daemonService.keepTerminalAliveInBackground.toggle()

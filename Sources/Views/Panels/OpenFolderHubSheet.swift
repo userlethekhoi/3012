@@ -3,15 +3,22 @@ import SwiftUI
 public struct OpenFolderHubSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var workspace: WorkspaceManager
+    @ObservedObject private var githubAuth = GitHubAccountService.shared
     public var onRequestReopenHub: (() -> Void)?
+    public var onOpenGitHubRepos: (() -> Void)?
 
     @State private var importFolderName: String = ""
     @State private var showCreateFolderAlert = false
     @State private var newFolderNameInput = ""
 
-    public init(workspace: WorkspaceManager, onRequestReopenHub: (() -> Void)? = nil) {
+    public init(
+        workspace: WorkspaceManager,
+        onRequestReopenHub: (() -> Void)? = nil,
+        onOpenGitHubRepos: (() -> Void)? = nil
+    ) {
         self.workspace = workspace
         self.onRequestReopenHub = onRequestReopenHub
+        self.onOpenGitHubRepos = onOpenGitHubRepos
     }
 
     public var body: some View {
@@ -94,6 +101,44 @@ public struct OpenFolderHubSheet: View {
                         "Mọi thư mục đặt trong Files -> On My iPhone -> 3012 đều mở 1 chạm không bị giới hạn chứng chỉ .p12.",
                         "Folders inside Files -> On My iPhone -> 3012 open with full read/write access under any certificate."
                     ))
+                }
+
+                if onOpenGitHubRepos != nil {
+                    Section {
+                        Button {
+                            dismiss()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                                onOpenGitHubRepos?()
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.triangle.branch")
+                                    .font(.system(size: 17))
+                                    .foregroundColor(.purple)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(L10n.tr("Clone từ Tài khoản GitHub (Private & Public)", "Clone from GitHub Account (Private & Public)"))
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.primary)
+                                    if let acc = githubAuth.activeAccount {
+                                        Text("@\(acc.login) — \(L10n.tr("Mở danh sách repo của bạn", "Browse your connected repositories"))")
+                                            .font(.system(size: 11.5))
+                                            .foregroundColor(.green)
+                                    } else {
+                                        Text(L10n.tr("Đăng nhập 1-chạm để kéo Private/Public Repo vào máy", "1-tap sign in to clone private & public repos"))
+                                            .font(.system(size: 11.5))
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    } header: {
+                        Text(L10n.tr("GitHub (Private & Public Repo)", "GitHub (Private & Public Repos)"))
+                    }
                 }
 
                 Section {

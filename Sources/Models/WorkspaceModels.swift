@@ -827,8 +827,9 @@ public struct OpenTab: Identifiable, Equatable {
     }
 
     public init(fileURL: URL, content: String, languageOverride: CodeLanguage? = nil, isPinned: Bool = false) {
-        self.id = fileURL
-        self.fileURL = fileURL
+        let stdURL = fileURL.standardizedFileURL
+        self.id = stdURL
+        self.fileURL = stdURL
         self.content = content
         self.savedContent = content
         self.languageOverride = languageOverride

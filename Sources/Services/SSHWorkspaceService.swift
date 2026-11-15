@@ -76,7 +76,9 @@ private final class TunnelInboundBridgeHandler: ChannelInboundHandler, @unchecke
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        nwConnection.cancel()
+        nwConnection.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { [nwConnection] _ in
+            nwConnection.cancel()
+        })
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
@@ -247,7 +249,7 @@ public final class SSHWorkspaceService: ObservableObject {
             for packet in namePackets {
                 for comp in packet.components {
                     let fname = comp.filename
-                    guard fname != "." && fname != ".." else { continue }
+                    guard fname != "." && fname != ".." && !fname.contains("/") && !fname.contains("\\") else { continue }
                     let isDir: Bool
                     if let perms = comp.attributes.permissions {
                         isDir = (perms & 0o170000) == 0o040000
@@ -296,7 +298,15 @@ public final class SSHWorkspaceService: ObservableObject {
                 .appendingPathComponent(profile.id.uuidString, isDirectory: true)
 
             let cleanRel = remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !cleanRel.contains("..") else {
+                throw NSError(domain: "SSHWorkspaceService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Invalid SFTP path"])
+            }
             let localMirrorURL = cacheRoot.appendingPathComponent(cleanRel)
+            let canonRoot = WorkspaceManager.canonicalPath(cacheRoot)
+            let canonMirror = WorkspaceManager.canonicalPath(localMirrorURL)
+            guard canonMirror.hasPrefix(canonRoot.hasSuffix("/") ? canonRoot : canonRoot + "/") else {
+                throw NSError(domain: "SSHWorkspaceService", code: 403, userInfo: [NSLocalizedDescriptionKey: "SFTP path outside cache root"])
+            }
             try FileManager.default.createDirectory(at: localMirrorURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: localMirrorURL, options: .atomic)
             remoteFileBindings[localMirrorURL.standardizedFileURL] = remotePath
@@ -434,6 +444,68 @@ public final class SSHWorkspaceService: ObservableObject {
             return "[Process exited with code \(failed.exitCode)]"
         } catch {
             return "[SSH Error] \(error.localizedDescription)"
+        }
+    }
+
+    public func executeCommandStdoutOnZeroExit(_ command: String) async -> String? {
+        guard let client = sshClient else { return nil }
+        do {
+            let buffer = try await client.executeCommand(command, maxResponseSize: 4 * 1024 * 1024, mergeStreams: false, inShell: true)
+            return String(buffer: buffer)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Runs `git` on the connected SSH VPS with an ephemeral 0700 `GIT_ASKPASS` script deleted cleanly on shell exit.
+    public func executeGitCommandOnVPS(_ gitArgs: [String], in remoteDir: String, githubToken: String? = nil) async -> (exitCode: Int, output: String) {
+        guard let client = sshClient else {
+            return (1, "Chưa kết nối SSH tới VPS.")
+        }
+        let dirEsc = shellSingleQuote(remoteDir)
+        let argsJoined = gitArgs.map { shellSingleQuote($0) }.joined(separator: " ")
+        let cleanToken = (githubToken ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let script: String
+        if !cleanToken.isEmpty {
+            let tokenEsc = shellSingleQuote(cleanToken)
+            script = """
+            ASKPASS=$(mktemp /tmp/.3012_askpass_XXXXXX) && chmod 700 "$ASKPASS" && cat << 'EOF_3012_ASKPASS' > "$ASKPASS"
+            #!/bin/sh
+            case "$1" in
+            *Username*|*username*) printf '%s\\n' "x-access-token" ;;
+            *) printf '%s\\n' "$_3012_GH_TOK" ;;
+            esac
+            EOF_3012_ASKPASS
+            rc=$?
+            if [ "$rc" -eq 0 ]; then
+                (cd \(dirEsc) && _3012_GH_TOK=\(tokenEsc) GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 git -c credential.helper= \(argsJoined))
+                rc=$?
+            fi
+            rm -f "$ASKPASS"
+            (exit "$rc")
+            """
+        } else {
+            script = "cd \(dirEsc) && GIT_TERMINAL_PROMPT=0 git \(argsJoined)"
+        }
+
+        let marker = "__3012_EXIT:"
+        let wrapped = "(\n\(script)\n); printf '\\n\(marker)%d__' $?"
+        do {
+            let buffer = try await client.executeCommand(wrapped, maxResponseSize: 4 * 1024 * 1024, mergeStreams: true, inShell: true)
+            let raw = String(buffer: buffer)
+            guard let markerRange = raw.range(of: marker, options: .backwards) else {
+                return (0, raw)
+            }
+            let body = String(raw[..<markerRange.lowerBound]).trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
+            let afterMarker = raw[markerRange.upperBound...]
+            let codeStr = afterMarker.prefix { $0.isNumber || $0 == "-" }
+            let exitCode = Int(codeStr) ?? 0
+            return (exitCode, body)
+        } catch let failed as SSHClient.CommandFailed {
+            return (Int(failed.exitCode), "[Process exited with code \(failed.exitCode)]")
+        } catch {
+            return (1, "[SSH Error] \(error.localizedDescription)")
         }
     }
 
@@ -612,12 +684,11 @@ public final class SSHWorkspaceService: ObservableObject {
 
             listener.newConnectionHandler = { nwConn in
                 connStore.add(nwConn, forPort: localPort)
-                var didStart = false
+                let startOnce = PortForwardOnceFlag()
                 nwConn.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
-                        guard !didStart else { return }
-                        didStart = true
+                        guard startOnce.claim() else { return }
                         Task {
                             do {
                                 let originator = try SocketAddress(ipAddress: "127.0.0.1", port: Int(localPort))
@@ -715,5 +786,18 @@ public final class SSHWorkspaceService: ObservableObject {
            let decoded = try? JSONDecoder().decode([VPSHostProfile].self, from: data) {
             self.savedProfiles = decoded
         }
+    }
+}
+
+private final class PortForwardOnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
     }
 }

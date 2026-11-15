@@ -49,9 +49,12 @@ public struct LeftExplorerDrawer: View {
     var onOpenPCSyncSheet: () -> Void = {}
     var onOpenLiveShareSheet: () -> Void = {}
     var onOpenPowerToolsSheet: () -> Void = {}
+    var onOpenGitHubSheet: (Int) -> Void = { _ in }
     var onJumpToSearchHit: ((URL, Int) -> Void)? = nil
     var onOpenSettings: () -> Void
     var onCloseDrawer: () -> Void
+
+    @ObservedObject private var githubAuth = GitHubAccountService.shared
 
     @State private var activeActivity: SidebarActivityTab = .explorer
     @State private var showNewFileAlert: Bool = false
@@ -73,10 +76,11 @@ public struct LeftExplorerDrawer: View {
     // Git UI state
     @State private var commitMessageInput: String = ""
     @State private var cloneRepoInput: String = ""
-    @State private var githubTokenInput: String = ""
     @State private var selectedGitDiffText: String? = nil
     @State private var remoteBranches: [String] = []
     @State private var isLoadingBranches: Bool = false
+    @State private var showCreateBranchAlert: Bool = false
+    @State private var newBranchNameInput: String = ""
 
     // SSH UI state
     @State private var showAddVPSSheet: Bool = false
@@ -111,6 +115,7 @@ public struct LeftExplorerDrawer: View {
         onOpenPCSyncSheet: @escaping () -> Void = {},
         onOpenLiveShareSheet: @escaping () -> Void = {},
         onOpenPowerToolsSheet: @escaping () -> Void = {},
+        onOpenGitHubSheet: @escaping (Int) -> Void = { _ in },
         onJumpToSearchHit: ((URL, Int) -> Void)? = nil,
         onOpenSettings: @escaping () -> Void,
         onCloseDrawer: @escaping () -> Void
@@ -132,6 +137,7 @@ public struct LeftExplorerDrawer: View {
         self.onOpenPCSyncSheet = onOpenPCSyncSheet
         self.onOpenLiveShareSheet = onOpenLiveShareSheet
         self.onOpenPowerToolsSheet = onOpenPowerToolsSheet
+        self.onOpenGitHubSheet = onOpenGitHubSheet
         self.onJumpToSearchHit = onJumpToSearchHit
         self.onOpenSettings = onOpenSettings
         self.onCloseDrawer = onCloseDrawer
@@ -248,8 +254,12 @@ public struct LeftExplorerDrawer: View {
                     Button {
                         activeActivity = tab
                         if tab == .git {
-                            githubTokenInput = gitService.githubToken
-                            Task { await gitService.refreshStatus(workspaceRoot: workspace.rootURL, sshService: sshService) }
+                            Task {
+                                await gitService.refreshStatus(workspaceRoot: workspace.rootURL, sshService: sshService)
+                                if !sshService.isConnected && !gitService.remoteOriginURL.isEmpty {
+                                    await gitService.refreshRemoteDivergence(workspaceRoot: workspace.rootURL)
+                                }
+                            }
                         } else if tab == .extensions && extStore.searchResults.isEmpty {
                             Task { await extStore.searchOpenVSX(query: openVSXQuery) }
                         }
@@ -369,7 +379,7 @@ public struct LeftExplorerDrawer: View {
                             Label(preferences.tr("xtool Studio (.ipa / Dylib Injector)", "xtool Studio (.ipa / Dylib Injector)"), systemImage: "cube.transparent.fill")
                         }
                     } label: {
-                        Label(preferences.tr("Dự án / .zip", "Project / .zip"), systemImage: "folder.badge.gearshape")
+                        Label(preferences.tr("Dự án / .zip", "Project / .zip"), systemImage: "folder.badge.plus")
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundColor(Color(hex: palette.foreground))
                     }
@@ -504,6 +514,20 @@ public struct LeftExplorerDrawer: View {
             liveServer.updateRootDirectory(workspace.rootURL)
             newProjectName = ""
         }
+        .compatibleTextInputAlert(
+            preferences.tr("Tạo Nhánh Mới (Git Branch)", "Create New Git Branch"),
+            isPresented: $showCreateBranchAlert,
+            text: $newBranchNameInput,
+            placeholder: "feature/my-feature",
+            confirmTitle: preferences.tr("Tạo & Chuyển", "Create & Switch"),
+            cancelTitle: preferences.tr("Hủy", "Cancel")
+        ) {
+            let branch = newBranchNameInput
+            newBranchNameInput = ""
+            Task {
+                _ = await gitService.createAndCheckoutBranch(name: branch, workspaceRoot: workspace.rootURL)
+            }
+        }
         .sheet(isPresented: $showAddVPSSheet) {
             vpsEditorSheet()
                 .onAppear {
@@ -544,7 +568,7 @@ public struct LeftExplorerDrawer: View {
                     Button {
                         triggerOpenFolder()
                     } label: {
-                        Label(preferences.tr("Mở Thư mục trên máy (Folder)...", "Open Folder on Device (Folder)..."), systemImage: "folder.badge.gearshape")
+                        Label(preferences.tr("Mở Thư mục trên máy (Folder)...", "Open Folder on Device (Folder)..."), systemImage: "folder.badge.plus")
                     }
                     Button {
                         triggerImportZip()
@@ -942,6 +966,98 @@ public struct LeftExplorerDrawer: View {
     private func gitSourceControlSection(palette: IDEColorPalette) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
+                // GitHub Account Status & Quick Hub
+                VStack(alignment: .leading, spacing: 6) {
+                    if let acc = githubAuth.activeAccount {
+                        HStack(spacing: 8) {
+                            Image(systemName: acc.hasPrivateRepoAccess ? "checkmark.shield.fill" : "person.crop.circle.badge.checkmark")
+                                .font(.system(size: 15))
+                                .foregroundColor(.green)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("@\(acc.login)")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(Color(hex: palette.foreground))
+                                Text(acc.hasPrivateRepoAccess
+                                     ? preferences.tr("Private & Public Repo • \(acc.scopesSummary)", "Private & Public Repos • \(acc.scopesSummary)")
+                                     : preferences.tr("Public Repo only (\(acc.scopesSummary))", "Public Repos only (\(acc.scopesSummary))"))
+                                    .font(.system(size: 9.5))
+                                    .foregroundColor(.green)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Button {
+                                onOpenGitHubSheet(0)
+                            } label: {
+                                Text(preferences.tr("Đổi", "Switch"))
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 4)
+                                    .background(Color(hex: palette.editorBackground))
+                                    .foregroundColor(Color(hex: palette.foreground))
+                                    .cornerRadius(5)
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        HStack(spacing: 6) {
+                            Button {
+                                onOpenGitHubSheet(1)
+                            } label: {
+                                Label(preferences.tr("Kho Repo", "Repos"), systemImage: "folder.badge.person.crop")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 5)
+                                    .background(Color.purple.opacity(0.22))
+                                    .foregroundColor(.purple)
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                onOpenGitHubSheet(2)
+                            } label: {
+                                Label(preferences.tr("Publish / PR", "Publish / PR"), systemImage: "arrow.up.forward.app")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 5)
+                                    .background(Color(hex: palette.editorBackground))
+                                    .foregroundColor(Color(hex: palette.accent))
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } else {
+                        Button {
+                            onOpenGitHubSheet(0)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "key.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.purple)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(preferences.tr("Kết nối Tài khoản GitHub", "Connect GitHub Account"))
+                                        .font(.system(size: 11.5, weight: .bold))
+                                        .foregroundColor(Color(hex: palette.foreground))
+                                    Text(preferences.tr("1-chạm để đọc Private Repo, Pull & Push", "1-tap for Private Repos, Pull & Push"))
+                                        .font(.system(size: 9.5))
+                                        .foregroundColor(Color(hex: palette.gutterForeground))
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Color(hex: palette.gutterForeground))
+                            }
+                            .padding(8)
+                            .background(Color.purple.opacity(0.14))
+                            .cornerRadius(7)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(7)
+                .background(Color(hex: palette.currentLineBackground))
+                .cornerRadius(7)
+
                 if !gitService.statusBanner.isEmpty {
                     Text(gitService.statusBanner)
                         .font(.system(size: 11))
@@ -960,7 +1076,7 @@ public struct LeftExplorerDrawer: View {
                                 Section(preferences.tr("Nhánh GitHub Remote", "GitHub Remote Branches")) {
                                     ForEach(remoteBranches, id: \.self) { branch in
                                         Button {
-                                            gitService.currentBranch = branch
+                                            gitService.selectBranch(branch, workspaceRoot: workspace.rootURL)
                                         } label: {
                                             if branch == gitService.currentBranch {
                                                 Label(branch, systemImage: "checkmark")
@@ -981,6 +1097,12 @@ public struct LeftExplorerDrawer: View {
                             } label: {
                                 Label(preferences.tr("Tải danh sách Branch từ GitHub", "Fetch Branches from GitHub"), systemImage: "arrow.clockwise")
                             }
+                            Button {
+                                newBranchNameInput = ""
+                                showCreateBranchAlert = true
+                            } label: {
+                                Label(preferences.tr("Tạo Branch mới...", "Create New Branch..."), systemImage: "plus.circle")
+                            }
                         } label: {
                             HStack(spacing: 4) {
                                 Label("Branch: \(gitService.currentBranch)", systemImage: "arrow.triangle.branch")
@@ -998,11 +1120,39 @@ public struct LeftExplorerDrawer: View {
 
                         Spacer()
 
+                        if gitService.aheadCount > 0 || gitService.behindCount > 0 {
+                            HStack(spacing: 4) {
+                                if gitService.aheadCount > 0 {
+                                    Text("↑\(gitService.aheadCount)")
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.green)
+                                }
+                                if gitService.behindCount > 0 {
+                                    Text("↓\(gitService.behindCount)")
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.orange)
+                                }
+                            }
+                        }
+
                         Button {
-                            Task { await gitService.refreshStatus(workspaceRoot: workspace.rootURL, sshService: sshService) }
+                            Task {
+                                await gitService.refreshStatus(workspaceRoot: workspace.rootURL, sshService: sshService)
+                                if !sshService.isConnected && !gitService.remoteOriginURL.isEmpty {
+                                    await gitService.refreshRemoteDivergence(workspaceRoot: workspace.rootURL)
+                                }
+                            }
                         } label: {
                             Image(systemName: "arrow.clockwise").font(.system(size: 11))
                         }
+                    }
+
+                    if !gitService.remoteOriginURL.isEmpty {
+                        Text(gitService.remoteOriginURL)
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundColor(Color(hex: palette.gutterForeground))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
 
                     TextField("Commit message...", text: $commitMessageInput)
@@ -1029,18 +1179,22 @@ public struct LeftExplorerDrawer: View {
                                 .foregroundColor(.white)
                                 .cornerRadius(6)
                         }
+                        .buttonStyle(.plain)
 
                         Button {
-                            gitService.githubToken = githubTokenInput
                             Task {
                                 if sshService.isConnected {
-                                    let escapedDir = sshService.currentRemoteDirectory.replacingOccurrences(of: "'", with: "'\"'\"'")
-                                    let res = await sshService.executeCommandOnVPS("cd '\(escapedDir)' && git pull --rebase 2>&1")
-                                    gitService.statusBanner = res
+                                    let res = await sshService.executeGitCommandOnVPS(
+                                        ["pull", "--rebase"],
+                                        in: sshService.currentRemoteDirectory,
+                                        githubToken: githubAuth.activeToken
+                                    )
+                                    gitService.statusBanner = res.output
                                 } else {
                                     let ok = await gitService.pullFromGitHub(into: workspace.rootURL)
                                     if ok {
                                         workspace.reloadTree()
+                                        workspace.reloadOpenTabsFromDisk()
                                         workspace.resetDiffBaselineToCurrentDisk(with: gitService.commits.first?.snapshotFiles)
                                     }
                                 }
@@ -1054,29 +1208,33 @@ public struct LeftExplorerDrawer: View {
                                 .foregroundColor(Color(hex: palette.foreground))
                                 .cornerRadius(6)
                         }
+                        .buttonStyle(.plain)
 
                         Button {
-                            gitService.githubToken = githubTokenInput
                             let msg = commitMessageInput
                             Task {
                                 if sshService.isConnected {
                                     let escapedDir = sshService.currentRemoteDirectory.replacingOccurrences(of: "'", with: "'\"'\"'")
                                     let trimmedMsg = msg.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    let cmd: String
-                                    if trimmedMsg.isEmpty {
-                                        cmd = "cd '\(escapedDir)' && git push 2>&1"
-                                    } else {
-                                        let escapedMsg = trimmedMsg.replacingOccurrences(of: "'", with: "'\"'\"'")
-                                        cmd = "cd '\(escapedDir)' && git add -A && (git commit -m '\(escapedMsg)' || true) && git push 2>&1"
-                                    }
-                                    let res = await sshService.executeCommandOnVPS(cmd)
-                                    gitService.statusBanner = res
                                     if !trimmedMsg.isEmpty {
+                                        let escapedMsg = trimmedMsg.replacingOccurrences(of: "'", with: "'\"'\"'")
+                                        _ = await sshService.executeCommandOnVPS("cd '\(escapedDir)' && git add -A && (git commit -m '\(escapedMsg)' || true) 2>&1")
                                         commitMessageInput = ""
                                     }
+                                    let res = await sshService.executeGitCommandOnVPS(
+                                        ["push"],
+                                        in: sshService.currentRemoteDirectory,
+                                        githubToken: githubAuth.activeToken
+                                    )
+                                    gitService.statusBanner = res.output
                                 } else {
-                                    await gitService.pushToGitHubREST(workspaceRoot: workspace.rootURL, commitMessage: msg)
-                                    workspace.resetDiffBaselineToCurrentDisk(with: gitService.commits.first?.snapshotFiles)
+                                    let ok = await gitService.pushToGitHubREST(workspaceRoot: workspace.rootURL, commitMessage: msg)
+                                    if ok {
+                                        if !msg.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                            commitMessageInput = ""
+                                        }
+                                        workspace.resetDiffBaselineToCurrentDisk(with: gitService.commits.first?.snapshotFiles)
+                                    }
                                 }
                             }
                         } label: {
@@ -1087,6 +1245,51 @@ public struct LeftExplorerDrawer: View {
                                 .background(Color.green.opacity(0.85))
                                 .foregroundColor(.black)
                                 .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if gitService.lastPushRejectedNonFastForward && !sshService.isConnected {
+                        HStack(spacing: 6) {
+                            Button {
+                                Task {
+                                    let ok = await gitService.pullFromGitHub(into: workspace.rootURL)
+                                    if ok {
+                                        workspace.reloadTree()
+                                        workspace.reloadOpenTabsFromDisk()
+                                        workspace.resetDiffBaselineToCurrentDisk(with: gitService.commits.first?.snapshotFiles)
+                                    }
+                                }
+                            } label: {
+                                Label(preferences.tr("Pull Trước", "Pull First"), systemImage: "icloud.and.arrow.down")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 5)
+                                    .background(Color.orange.opacity(0.22))
+                                    .foregroundColor(.orange)
+                                    .cornerRadius(5)
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                let msg = commitMessageInput
+                                Task {
+                                    let ok = await gitService.pushToGitHubREST(workspaceRoot: workspace.rootURL, commitMessage: msg, force: true)
+                                    if ok {
+                                        commitMessageInput = ""
+                                        workspace.resetDiffBaselineToCurrentDisk(with: gitService.commits.first?.snapshotFiles)
+                                    }
+                                }
+                            } label: {
+                                Label("Force Push", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 5)
+                                    .background(Color.red.opacity(0.22))
+                                    .foregroundColor(.red)
+                                    .cornerRadius(5)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -1181,11 +1384,22 @@ public struct LeftExplorerDrawer: View {
 
                 Divider().overlay(Color.white.opacity(0.08))
 
-                // Clone GitHub Repo + PAT Setup
+                // Clone GitHub Repo (Auth handled automatically via GitHubAccountService)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("CLONE TỪ GITHUB")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Color(hex: palette.gutterForeground))
+                    HStack {
+                        Text("CLONE TỪ GITHUB")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Color(hex: palette.gutterForeground))
+                        Spacer()
+                        Button {
+                            onOpenGitHubSheet(1)
+                        } label: {
+                            Text(preferences.tr("Chọn từ Kho Repo ↗", "Browse Repos ↗"))
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.purple)
+                        }
+                        .buttonStyle(.plain)
+                    }
 
                     TextField("owner/repo hoặc link GitHub...", text: $cloneRepoInput)
                         .font(.system(size: 11.5))
@@ -1195,18 +1409,6 @@ public struct LeftExplorerDrawer: View {
                         .background(Color(hex: palette.editorBackground))
                         .foregroundColor(Color(hex: palette.foreground))
                         .cornerRadius(6)
-
-                    SecureField("GitHub Token (cho Private Repo / Push)", text: $githubTokenInput)
-                        .font(.system(size: 11.5))
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .padding(6)
-                        .background(Color(hex: palette.editorBackground))
-                        .foregroundColor(Color(hex: palette.foreground))
-                        .cornerRadius(6)
-                        .onChange(of: githubTokenInput) { val in
-                            gitService.githubToken = val
-                        }
 
                     Button {
                         let repoStr = cloneRepoInput
@@ -1227,6 +1429,7 @@ public struct LeftExplorerDrawer: View {
                             .foregroundColor(Color(hex: palette.foreground))
                             .cornerRadius(6)
                     }
+                    .buttonStyle(.plain)
                     .disabled(gitService.isBusy || cloneRepoInput.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }

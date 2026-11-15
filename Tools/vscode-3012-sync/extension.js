@@ -377,8 +377,10 @@ class SyncController {
       );
       edit.replace(uri, fullRange, content);
       await vscode.workspace.applyEdit(edit);
+      this.suppressEcho(rel);
       if (this.autoSaveIncoming()) {
         await openDoc.save();
+        this.suppressEcho(rel);
       }
     }
     this.output.appendLine(`[<- Mobile] ${rel}`);
@@ -520,7 +522,13 @@ class SyncController {
       });
     });
 
+    let retriedEphemeral = false;
     server.on("error", (err) => {
+      if (retriedEphemeral) {
+        this.output.appendLine(`[LAN] Không thể mở LAN server: ${err.message}`);
+        return;
+      }
+      retriedEphemeral = true;
       this.output.appendLine(`[LAN] Port ${desiredPort} bận (${err.message}), thử cổng tự động...`);
       try {
         server.listen(0, "0.0.0.0", () => {
@@ -646,6 +654,11 @@ class SyncController {
             await this.handleProtocolMessage(msg, worker.sendApp, null, isPinRoom);
             if (isPinRoom && msg.type === "hello") {
               this.output.appendLine("[3012 Sync] Đã trao Khóa Vĩnh Viễn cho iPhone qua mã PIN.");
+              setTimeout(() => {
+                worker.closed = true;
+                worker.ready = false;
+                try { worker.sock && worker.sock.destroy(); } catch {}
+              }, 1500);
             }
           } else if (env.type === "relay_joined") {
             if (Array.isArray(env.peers) && env.peers.length > 0) {
@@ -772,13 +785,25 @@ class SyncController {
     }
     this.quickPin = options.withPin ? randomPin6() : "";
     this.active = true;
+    if (this.pinExpiryTimer) {
+      clearTimeout(this.pinExpiryTimer);
+      this.pinExpiryTimer = null;
+    }
     this.stopRelayWorkers();
     this.startLanServer();
     const wPerm = this.spawnRelayWorker(this.permanentKey, false);
     if (wPerm) this.relayWorkers.push(wPerm);
     if (this.quickPin) {
       const wPin = this.spawnRelayWorker(this.quickPin, true);
-      if (wPin) this.relayWorkers.push(wPin);
+      if (wPin) {
+        this.relayWorkers.push(wPin);
+        this.pinExpiryTimer = setTimeout(() => {
+          wPin.closed = true;
+          wPin.ready = false;
+          try { wPin.sock && wPin.sock.destroy(); } catch {}
+          this.quickPin = "";
+        }, 180000);
+      }
     }
     this.installWatchers();
     this.updateStatusBar();
@@ -787,6 +812,10 @@ class SyncController {
   stop() {
     this.active = false;
     this.quickPin = "";
+    if (this.pinExpiryTimer) {
+      clearTimeout(this.pinExpiryTimer);
+      this.pinExpiryTimer = null;
+    }
     this.stopRelayWorkers();
     this.stopLanServer();
     this.disposeWatchers();
@@ -897,7 +926,8 @@ async function activate(context) {
 
   const savedKey = await context.secrets.get(SECRET_STORAGE_KEY);
   const autoConnect = vscode.workspace.getConfiguration("3012sync").get("autoConnectOnStartup", true);
-  if (autoConnect && savedKey) {
+  const hasOpenWorkspace = Array.isArray(vscode.workspace.workspaceFolders) && vscode.workspace.workspaceFolders.length > 0;
+  if (autoConnect && savedKey && hasOpenWorkspace) {
     controller.permanentKey = savedKey;
     await controller.start({ withPin: false });
   } else {

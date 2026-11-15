@@ -494,6 +494,21 @@ public final class LiveServerService: ObservableObject {
                 }
             }
 
+            if directoryToList == nil {
+                resolvedURL = resolvedURL.resolvingSymlinksInPath().standardizedFileURL
+                let canonicalAllowed = (resolvedURL.path == rootPath)
+                    || resolvedURL.path.hasPrefix(rootPath.hasSuffix("/") ? rootPath : rootPath + "/")
+                guard canonicalAllowed else {
+                    let forbidden = Data("403 Forbidden".utf8)
+                    let resp = Self.buildHTTPResponse(status: "403 Forbidden", contentType: "text/plain", body: forbidden, allowCORS: isLocalOwner)
+                    connection.send(content: resp, completion: .contentProcessed { _ in
+                        self.shareBox.unregister(connection)
+                        connection.cancel()
+                    })
+                    return
+                }
+            }
+
             if let listDir = directoryToList {
                 let listingHTML = Self.buildDirectoryListingHTML(for: listDir, relativePath: relative)
                 let resp = Self.buildHTTPResponse(status: "200 OK", contentType: "text/html; charset=utf-8", body: Data(listingHTML.utf8), allowCORS: isLocalOwner)
