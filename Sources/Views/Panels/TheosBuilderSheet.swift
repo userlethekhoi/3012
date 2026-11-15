@@ -15,6 +15,7 @@ public struct TheosBuilderSheet: View {
     @State private var bundleFilterInput: String = "com.apple.springboard"
     @State private var showTemplateCreator: Bool = false
     @State private var showPrivacyAlert: Bool = false
+    @State private var showSSHQuickSheet: Bool = false
     @State private var templateCreatedNotice: String? = nil
     @State private var makefileSyncNotice: String? = nil
 
@@ -78,8 +79,13 @@ public struct TheosBuilderSheet: View {
                         Button {
                             triggerBuildWithConsentCheck()
                         } label: {
-                            Label(preferences.tr("Build .deb / .dylib Ngay", "Build .deb / .dylib Now"), systemImage: "play.fill")
-                                .font(.body.weight(.bold))
+                            Label(
+                                theosService.buildMode == .directVPSTerminal
+                                    ? preferences.tr("Mở Terminal VPS & Chạy make Ngay", "Open VPS Terminal & Run make")
+                                    : preferences.tr("Build .deb / .dylib Ngay", "Build .deb / .dylib Now"),
+                                systemImage: theosService.buildMode == .directVPSTerminal ? "terminal" : "play.fill"
+                            )
+                            .font(.body.weight(.bold))
                         }
                         .disabled(!hasTheosProject && theosService.buildMode != .offlineExport)
                     }
@@ -184,16 +190,7 @@ public struct TheosBuilderSheet: View {
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                                 .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-                                .buttonStyle(.borderless)
-
-                                Button("kaydus.xyz") {
-                                    theosService.serverURL = TheosBuildService.alternateServerURL
-                                }
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.plain)
 
                                 Spacer()
 
@@ -205,7 +202,7 @@ public struct TheosBuilderSheet: View {
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
                                 .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8))
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.plain)
                             }
                         }
 
@@ -217,14 +214,26 @@ public struct TheosBuilderSheet: View {
 
                         Toggle(preferences.tr("Tôi đồng ý gửi tạm mã nguồn tới sandbox để biên dịch", "I consent to send temporary source code to sandbox for compilation"), isOn: $theosService.hasAcceptedPrivacyConsent)
                             .font(.system(size: 12.5))
-                    } else if theosService.buildMode == .privateSSHVPS {
-                        HStack {
-                            Image(systemName: sshService.isConnected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                .foregroundColor(sshService.isConnected ? .green : .orange)
-                            Text(sshService.isConnected
-                                 ? preferences.tr("Đã nối SSH: \(sshService.connectedProfile?.host ?? "VPS")", "SSH Connected: \(sshService.connectedProfile?.host ?? "VPS")")
-                                 : preferences.tr("Chưa kết nối SSH — mở tab Remote SSH bên trái để đăng nhập VPS", "SSH Disconnected — open Remote SSH tab on the left to sign in"))
-                                .font(.system(size: 12))
+                    } else if theosService.buildMode == .directVPSTerminal || theosService.buildMode == .privateSSHVPS {
+                        let mountedPath = sshService.remoteDirectoryBound(to: projectRoot)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: sshService.isConnected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                    .foregroundColor(sshService.isConnected ? .green : .orange)
+                                Text(sshService.isConnected
+                                     ? (mountedPath != nil
+                                        ? preferences.tr("Đang mở trực tiếp từ VPS: \(mountedPath ?? "") (0 KB upload)", "Mounted live on VPS: \(mountedPath ?? "") (0 KB upload)")
+                                        : preferences.tr("Đã nối SSH: \(sshService.connectedProfile?.host ?? "VPS") (Đồng bộ delta & cache .theos)", "SSH Connected: \(sshService.connectedProfile?.host ?? "VPS") (Delta sync + .theos cache)"))
+                                     : preferences.tr("Chưa kết nối SSH tới Linux VPS", "Linux VPS SSH Not Connected"))
+                                    .font(.system(size: 12))
+                            }
+
+                            IDEActionButton(prominence: .secondary, tint: .accentColor, compact: true) {
+                                showSSHQuickSheet = true
+                            } label: {
+                                Image(systemName: "server.rack")
+                                Text(preferences.tr("Gắn / Chọn VPS Linux & Mở Dự Án Từ VPS", "Attach Linux VPS & Mount VPS Folder"))
+                            }
                         }
                     }
                 }
@@ -285,6 +294,23 @@ public struct TheosBuilderSheet: View {
 
                 // MARK: - 4. Compiled Artifacts (.deb / .dylib)
                 Section(preferences.tr("Sản Phẩm Đã Biên Dịch (packages/)", "Compiled Artifacts (packages/)")) {
+                    if sshService.isConnected {
+                        IDEActionButton(prominence: .secondary, tint: .blue, compact: true) {
+                            Task {
+                                await theosService.pullCompiledArtifactsFromVPS(
+                                    localWorkspaceRoot: projectRoot,
+                                    sshService: sshService,
+                                    runner: runner
+                                ) {
+                                    workspace.reloadTree()
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "arrow.down.circle.fill")
+                            Text(preferences.tr("Lấy .deb / .dylib Từ VPS Về packages/", "Pull .deb / .dylib From VPS to packages/"))
+                        }
+                    }
+
                     if theosService.downloadedArtifacts.isEmpty {
                         Text(preferences.tr("Chưa có file .deb hoặc .dylib nào trong thư mục packages/.", "No .deb or .dylib artifacts in packages/ yet."))
                             .font(.footnote)
@@ -339,6 +365,18 @@ public struct TheosBuilderSheet: View {
             .onAppear {
                 theosService.refreshLocalPackages(in: effectiveProjectRoot)
             }
+            .sheet(isPresented: $showSSHQuickSheet) {
+                SSHQuickTerminalSheet(
+                    sshService: sshService,
+                    workspace: workspace,
+                    theosService: theosService,
+                    runner: runner,
+                    preferences: preferences
+                ) {
+                    dismiss()
+                    theosService.onOpenTerminalForLiveMake?()
+                }
+            }
             .alert(preferences.tr("Quyền Riêng Tư Khi Build Từ Xa", "Remote Build Privacy Notice"), isPresented: $showPrivacyAlert) {
                 Button(preferences.tr("Đồng ý & Build", "Agree & Build")) {
                     theosService.hasAcceptedPrivacyConsent = true
@@ -357,6 +395,10 @@ public struct TheosBuilderSheet: View {
     }
 
     private func triggerBuildWithConsentCheck() {
+        if (theosService.buildMode == .directVPSTerminal || theosService.buildMode == .privateSSHVPS) && !sshService.isConnected {
+            showSSHQuickSheet = true
+            return
+        }
         if theosService.buildMode == .communityServer && !theosService.hasAcceptedPrivacyConsent {
             showPrivacyAlert = true
         } else {
@@ -366,13 +408,18 @@ public struct TheosBuilderSheet: View {
 
     private func executeBuild() {
         workspace.saveAllTabs()
+        let shouldDismissToTerminal = (theosService.buildMode == .directVPSTerminal && sshService.isConnected)
         theosService.startBuild(
             workspaceRoot: effectiveProjectRoot,
             sshService: sshService,
             runner: runner,
+            workspace: workspace,
             onWorkspaceChanged: { [weak workspace] in
                 workspace?.reloadTree()
             }
         )
+        if shouldDismissToTerminal {
+            dismiss()
+        }
     }
 }

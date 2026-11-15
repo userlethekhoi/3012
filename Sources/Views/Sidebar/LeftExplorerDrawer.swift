@@ -1611,6 +1611,23 @@ public struct LeftExplorerDrawer: View {
 
                     Divider().overlay(Color.white.opacity(0.08))
 
+                    IDEActionButton(prominence: .secondary, tint: .green, compact: true) {
+                        Task {
+                            if await sshService.mountRemoteProjectDirectory(
+                                remotePath: sshService.currentRemoteDirectory,
+                                into: workspace
+                            ) != nil {
+                                onCloseDrawer()
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "folder.fill")
+                        Text(sshService.isMountingRemoteProject
+                             ? preferences.tr("Đang gắn dự án từ VPS...", "Mounting VPS project...")
+                             : preferences.tr("Mở Thư Mục VPS Này Làm Dự Án (0 Upload)", "Open This VPS Folder as Project (0 Upload)"))
+                    }
+                    .disabled(sshService.isMountingRemoteProject)
+
                     // Live SFTP File Browser
                     HStack {
                         Button {

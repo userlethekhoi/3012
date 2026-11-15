@@ -83,6 +83,7 @@ public struct MainIDEWorkspaceView: View {
     @State private var showThemeStudioDirect: Bool = false
     @State private var showTheosBuilderSheet: Bool = false
     @State private var showXtoolBuilderSheet: Bool = false
+    @State private var showSSHQuickSheet: Bool = false
     @State private var showDaemonManagerSheet: Bool = false
     @State private var showPCSyncSheet: Bool = false
     @State private var showLiveShareSheet: Bool = false
@@ -344,8 +345,23 @@ public struct MainIDEWorkspaceView: View {
                 scheduleDebouncedSaveSideEffects(fileURL: fileURL, content: updatedText)
             }
             pcSyncService.attachWorkspace(workspace)
-            workspace.onWorkspaceMutation = { [weak pcSyncService] event in
+            theosService.onOpenTerminalForLiveMake = {
+                bottomTab = .terminal
+                withAnimation { showBottomPanel = true }
+            }
+            theosService.onBeforeRemoteMake = {
+                flushPendingSaveSideEffects()
+            }
+            sshService.refreshActiveMountedStatus(for: workspace.rootURL)
+            workspace.onWorkspaceMutation = { [weak pcSyncService, weak sshService, weak workspace] event in
                 pcSyncService?.handleWorkspaceMutation(event)
+                if case .upsertFile(let rel, let content) = event,
+                   let root = workspace?.rootURL {
+                    sshService?.syncSavedLocalMirrorIfNeeded(
+                        localURL: root.appendingPathComponent(rel),
+                        content: content
+                    )
+                }
             }
             pcSyncService.autoConnectIfConfigured()
             Task { @MainActor () -> Void in
@@ -377,6 +393,7 @@ public struct MainIDEWorkspaceView: View {
         .onChange(of: workspace.rootURL) { newRoot in
             liveServer.updateRootDirectory(newRoot)
             pcSyncService.handleWorkspaceRootChanged(to: newRoot)
+            sshService.refreshActiveMountedStatus(for: newRoot)
             Task { @MainActor () -> Void in
                 await gitService.refreshStatus(workspaceRoot: newRoot, sshService: sshService)
             }
@@ -585,6 +602,18 @@ public struct MainIDEWorkspaceView: View {
                 liveServer.updateRootDirectory(workspace.rootURL)
             }
         }
+        .sheet(isPresented: $showSSHQuickSheet) {
+            SSHQuickTerminalSheet(
+                sshService: sshService,
+                workspace: workspace,
+                theosService: theosService,
+                runner: runner,
+                preferences: preferences
+            ) {
+                bottomTab = .terminal
+                withAnimation { showBottomPanel = true }
+            }
+        }
         .compatibleTextInputAlert(
             preferences.tr("Tạo File Mới", "New File"),
             isPresented: $showQuickNewFileAlert,
@@ -733,6 +762,7 @@ public struct MainIDEWorkspaceView: View {
             aiService: aiService,
             gitService: gitService,
             xtoolService: xtoolService,
+            theosService: theosService,
             onJumpToLine: { line in
                 triggerJumpToLine(line)
             },
@@ -747,6 +777,9 @@ public struct MainIDEWorkspaceView: View {
             },
             onFixRawErrorWithAgent: { rawError in
                 fixRawErrorWithAgent(rawError)
+            },
+            onOpenSSHQuickSheet: {
+                showSSHQuickSheet = true
             },
             onClose: {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -2804,6 +2837,10 @@ public struct MainIDEWorkspaceView: View {
         guard let active = workspace.activeTab else { return }
 
         if isTheosBuildContext(activeTab: active) {
+            if (theosService.buildMode == .directVPSTerminal || theosService.buildMode == .privateSSHVPS) && !sshService.isConnected {
+                showSSHQuickSheet = true
+                return
+            }
             if theosService.buildMode == .communityServer && !theosService.hasAcceptedPrivacyConsent {
                 showTheosBuilderSheet = true
                 return
@@ -2813,12 +2850,13 @@ public struct MainIDEWorkspaceView: View {
                 workspaceRoot: workspace.rootURL
             ) ?? workspace.rootURL
             workspace.saveAllTabs()
-            bottomTab = .output
+            bottomTab = (theosService.buildMode == .directVPSTerminal) ? .terminal : .output
             withAnimation { showBottomPanel = true }
             theosService.startBuild(
                 workspaceRoot: targetTheosRoot,
                 sshService: sshService,
                 runner: runner,
+                workspace: workspace,
                 onWorkspaceChanged: { [weak workspace] in
                     workspace?.reloadTree()
                 }
@@ -3030,6 +3068,9 @@ public struct MainIDEWorkspaceView: View {
             (preferences.tr("Đóng/mở Xterm / SSH PTY Terminal (Cmd+J)", "Toggle Xterm / SSH PTY Terminal (Cmd+J)"), "terminal", {
                 bottomTab = .terminal
                 withAnimation { showBottomPanel.toggle() }
+            }),
+            (preferences.tr("Gắn Terminal Linux VPS & Mở Dự Án SSH (0 Upload)", "Attach Linux VPS Terminal & Mount SSH Project"), "server.rack", {
+                showSSHQuickSheet = true
             }),
             (preferences.tr("Đóng/mở Coding Agent Panel (Cmd+I)", "Toggle Coding Agent Panel (Cmd+I)"), "cpu", {
                 withAnimation { showRightAIPanel.toggle() }

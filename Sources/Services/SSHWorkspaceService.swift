@@ -139,20 +139,30 @@ public final class SSHWorkspaceService: ObservableObject {
     @Published public var currentRemoteDirectory: String = "/"
     @Published public private(set) var remoteEntries: [SFTPRemoteItem] = []
     @Published public private(set) var activeTunnels: [ActivePortTunnel] = []
+    @Published public private(set) var activeMountedRemoteProjectPath: String? = nil
+    @Published public private(set) var isMountingRemoteProject: Bool = false
+    @Published public private(set) var isProvisioningTheos: Bool = false
+    @Published public private(set) var isPTYReady: Bool = false
 
     // Interactive PTY Bridge callbacks for SwiftTerm
     public var onPTYOutput: (([UInt8]) -> Void)?
+    public var onPTYMakeCompleted: ((Int) -> Void)?
+    public private(set) var ptyScrollbackBuffer: [UInt8] = []
 
     private var sshClient: SSHClient?
     private var sftpClient: SFTPClient?
     private var ptyTask: Task<Void, Never>?
     private var ptyStdinWriter: TTYStdinWriter?
+    private var pendingPTYCommands: [String] = []
+    private var ptyRecentTail: String = ""
     private var tunnelListeners: [UInt16: NWListener] = [:]
     private let tunnelConnectionStore = TunnelConnectionStore()
     private let tunnelQueue = DispatchQueue(label: "com.dev.app3012.sshtunnel", qos: .userInitiated)
 
-    // Mapping from local cached file URL -> remote SFTP path so Editor tabs sync automatically on Save!
+    // Mapping from local cached/mounted paths -> remote SFTP path so Editor tabs sync automatically on Save!
     private var remoteFileBindings: [URL: String] = [:]
+    private var directoryBindings: [RemoteDirectoryBindingRecord] = []
+    private var verifiedRemoteDirs: Set<String> = []
     private var connectGeneration: UInt64 = 0
     private var pendingSFTPMirrorWrites: [URL: (remotePath: String, content: String)] = [:]
     private var activeSFTPMirrorWriteURLs: Set<URL> = []
@@ -163,6 +173,7 @@ public final class SSHWorkspaceService: ObservableObject {
 
     public init() {
         loadProfiles()
+        loadDirectoryBindings()
     }
 
     // MARK: - Connection Lifecycle
@@ -236,6 +247,10 @@ public final class SSHWorkspaceService: ObservableObject {
         ptyTask?.cancel()
         ptyTask = nil
         ptyStdinWriter = nil
+        isPTYReady = false
+        pendingPTYCommands.removeAll()
+        ptyRecentTail = ""
+        ptyScrollbackBuffer.removeAll()
 
         for (_, listener) in tunnelListeners {
             listener.cancel()
@@ -244,8 +259,12 @@ public final class SSHWorkspaceService: ObservableObject {
         tunnelConnectionStore.cancelAll()
         activeTunnels.removeAll()
         remoteFileBindings.removeAll()
+        verifiedRemoteDirs.removeAll()
         pendingSFTPMirrorWrites.removeAll()
         activeSFTPMirrorWriteURLs.removeAll()
+        activeMountedRemoteProjectPath = nil
+        isMountingRemoteProject = false
+        isProvisioningTheos = false
 
         if let sftp = sftpClient {
             try? await sftp.close()
@@ -342,13 +361,64 @@ public final class SSHWorkspaceService: ObservableObject {
         }
     }
 
+    public func remoteDirectoryBound(to workspaceRoot: URL?) -> String? {
+        guard let workspaceRoot, let activeID = connectedProfile?.id else { return nil }
+        let canon = Self.normalizedCanonDir(WorkspaceManager.canonicalPath(workspaceRoot))
+        return directoryBindings
+            .filter {
+                $0.profileID == activeID &&
+                (canon == $0.localCanonicalPath || canon.hasPrefix($0.localCanonicalPath + "/"))
+            }
+            .sorted { $0.localCanonicalPath.count > $1.localCanonicalPath.count }
+            .first?
+            .remotePath
+    }
+
+    public func refreshActiveMountedStatus(for workspaceRoot: URL?) {
+        activeMountedRemoteProjectPath = remoteDirectoryBound(to: workspaceRoot)
+    }
+
     public func remotePathBound(to localURL: URL) -> String? {
-        remoteFileBindings[localURL.standardizedFileURL]
+        let stdURL = localURL.standardizedFileURL
+        if let direct = remoteFileBindings[stdURL] {
+            return direct
+        }
+        guard let activeID = connectedProfile?.id else { return nil }
+        let canon = Self.normalizedCanonDir(WorkspaceManager.canonicalPath(stdURL))
+        guard let match = directoryBindings
+            .filter({
+                $0.profileID == activeID &&
+                (canon == $0.localCanonicalPath || canon.hasPrefix($0.localCanonicalPath + "/"))
+            })
+            .sorted(by: { $0.localCanonicalPath.count > $1.localCanonicalPath.count })
+            .first else {
+            return nil
+        }
+        if canon == match.localCanonicalPath {
+            return match.remotePath
+        }
+        let rel = String(canon.dropFirst(match.localCanonicalPath.count))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !rel.isEmpty else { return match.remotePath }
+        return match.remotePath == "/" ? "/\(rel)" : "\(match.remotePath)/\(rel)"
+    }
+
+    public func ensureRemoteDirectoryExists(_ remoteDirPath: String) async throws {
+        guard let sftp = sftpClient else { return }
+        let clean = Self.normalizedCanonDir(remoteDirPath)
+        guard !clean.isEmpty, clean != "/" else { return }
+        var partial = ""
+        for comp in clean.split(separator: "/") {
+            partial += "/\(comp)"
+            if verifiedRemoteDirs.contains(partial) { continue }
+            try? await sftp.createDirectory(atPath: partial)
+            verifiedRemoteDirs.insert(partial)
+        }
     }
 
     public func syncSavedLocalMirrorIfNeeded(localURL: URL, content: String) {
         let stdURL = localURL.standardizedFileURL
-        guard let remotePath = remoteFileBindings[stdURL],
+        guard let remotePath = remotePathBound(to: stdURL),
               sftpClient != nil else { return }
         pendingSFTPMirrorWrites[stdURL] = (remotePath: remotePath, content: content)
         guard !activeSFTPMirrorWriteURLs.contains(stdURL) else { return }
@@ -365,6 +435,10 @@ public final class SSHWorkspaceService: ObservableObject {
                   let next = self.pendingSFTPMirrorWrites.removeValue(forKey: stdURL),
                   let sftp = self.sftpClient {
                 do {
+                    let parentDir = (next.remotePath as NSString).deletingLastPathComponent
+                    if !parentDir.isEmpty && parentDir != "/" && !self.verifiedRemoteDirs.contains(parentDir) {
+                        try? await self.ensureRemoteDirectoryExists(parentDir)
+                    }
                     var buf = ByteBufferAllocator().buffer(capacity: next.content.utf8.count)
                     buf.writeString(next.content)
                     let finalBuf = buf
@@ -377,6 +451,154 @@ public final class SSHWorkspaceService: ObservableObject {
                 }
             }
         }
+    }
+
+    public func flushPendingSFTPWrites(extraDirtyFiles: [(URL, String)] = []) async {
+        for (fileURL, content) in extraDirtyFiles {
+            syncSavedLocalMirrorIfNeeded(localURL: fileURL, content: content)
+        }
+        let gen = connectGeneration
+        for _ in 0..<250 {
+            if connectGeneration != gen { break }
+            if pendingSFTPMirrorWrites.isEmpty && activeSFTPMirrorWriteURLs.isEmpty { break }
+            try? await Task.sleep(nanoseconds: 40_000_000)
+        }
+    }
+
+    public func mountRemoteProjectDirectory(remotePath: String, into workspace: WorkspaceManager) async -> URL? {
+        guard let sftp = sftpClient, let profile = connectedProfile else {
+            statusMessage = "Chưa kết nối SSH/SFTP tới VPS."
+            return nil
+        }
+        isMountingRemoteProject = true
+        defer { isMountingRemoteProject = false }
+
+        let rawTarget = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveTarget = rawTarget.isEmpty ? currentRemoteDirectory : rawTarget
+        let expandedTarget: String
+        if effectiveTarget == "~" || effectiveTarget.hasPrefix("~/") {
+            let homeOut = await executeCommandOnVPS("printf '%s' \"$HOME\"").trimmingCharacters(in: .whitespacesAndNewlines)
+            if effectiveTarget == "~" {
+                expandedTarget = homeOut.isEmpty ? currentRemoteDirectory : homeOut
+            } else {
+                let suffix = String(effectiveTarget.dropFirst(2))
+                expandedTarget = (homeOut.isEmpty ? currentRemoteDirectory : homeOut) + "/" + suffix
+            }
+        } else {
+            expandedTarget = effectiveTarget
+        }
+
+        let resolved = (try? await sftp.getRealPath(atPath: expandedTarget)) ?? expandedTarget
+        let canonicalRemote = Self.normalizedCanonDir(resolved)
+
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let profileSlug = Self.sanitizeSlug("\(profile.username)-\(profile.host)-\(profile.port)")
+        let remoteFolderName = canonicalRemote == "/" ? "root" : (canonicalRemote as NSString).lastPathComponent
+        let safeFolder = Self.sanitizeSlug(remoteFolderName)
+        let localMountRoot = docs
+            .appendingPathComponent("_RemoteVPS", isDirectory: true)
+            .appendingPathComponent(profileSlug, isDirectory: true)
+            .appendingPathComponent(safeFolder, isDirectory: true)
+
+        let fm = FileManager.default
+        let mountPrefix = WorkspaceManager.canonicalPath(localMountRoot) + "/"
+        for key in Array(remoteFileBindings.keys) {
+            if WorkspaceManager.canonicalPath(key).hasPrefix(mountPrefix) {
+                remoteFileBindings.removeValue(forKey: key)
+            }
+        }
+        try? fm.removeItem(at: localMountRoot)
+        do {
+            try fm.createDirectory(at: localMountRoot, withIntermediateDirectories: true)
+        } catch {
+            statusMessage = "Không tạo được thư mục gắn VPS: \(error.localizedDescription)"
+            return nil
+        }
+
+        let skippedDirs: Set<String> = [
+            ".theos", ".git", "node_modules", ".build", "build", "DerivedData",
+            "Packages", "packages", "obj", ".cache", "__pycache__", "venv", ".venv", "dist", "target"
+        ]
+        let skippedExts: Set<String> = [
+            "o", "dylib", "deb", "ipa", "a", "so", "tbd", "bdic", "zip",
+            "tar", "gz", "xz", "png", "jpg", "jpeg", "gif", "webp", "pdf",
+            "sqlite", "db", "bin", "exe", "pyc", "class", "jar"
+        ]
+        let maxFiles = 450
+        let maxDepth = 7
+        let maxBytesPerFile: UInt64 = 768 * 1024
+
+        var downloadedCount = 0
+        var queue: [(remoteDir: String, localDir: URL, depth: Int)] = [(canonicalRemote, localMountRoot, 0)]
+        var qIndex = 0
+
+        while qIndex < queue.count && downloadedCount < maxFiles {
+            let item = queue[qIndex]
+            qIndex += 1
+            guard let packets = try? await sftp.listDirectory(atPath: item.remoteDir) else { continue }
+
+            for packet in packets {
+                for comp in packet.components {
+                    let fname = comp.filename
+                    guard fname != "." && fname != ".." && !fname.contains("/") && !fname.contains("\\") else { continue }
+
+                    let perms = comp.attributes.permissions
+                    let isSymlink = perms.map { ($0 & 0o170000) == 0o120000 } ?? comp.longname.hasPrefix("l")
+                    if isSymlink { continue }
+                    let isDir = perms.map { ($0 & 0o170000) == 0o040000 } ?? comp.longname.hasPrefix("d")
+
+                    let childRemote = item.remoteDir == "/" ? "/\(fname)" : "\(item.remoteDir)/\(fname)"
+                    let childLocal = item.localDir.appendingPathComponent(fname, isDirectory: isDir)
+
+                    if isDir {
+                        guard !skippedDirs.contains(fname), item.depth < maxDepth else { continue }
+                        try? fm.createDirectory(at: childLocal, withIntermediateDirectories: true)
+                        queue.append((childRemote, childLocal, item.depth + 1))
+                    } else {
+                        guard downloadedCount < maxFiles else { break }
+                        let ext = (fname as NSString).pathExtension.lowercased()
+                        guard !skippedExts.contains(ext) else { continue }
+                        if let fileSize = comp.attributes.size, fileSize > maxBytesPerFile { continue }
+
+                        let fileBuf = try? await sftp.withFile(filePath: childRemote, flags: .read) { file in
+                            try await file.readAll()
+                        }
+                        if let buffer = fileBuf {
+                            let data = Data(buffer.readableBytesView)
+                            guard UInt64(data.count) <= maxBytesPerFile else { continue }
+                            if data.prefix(2048).contains(0) { continue }
+                            do {
+                                try fm.createDirectory(at: childLocal.deletingLastPathComponent(), withIntermediateDirectories: true)
+                                try data.write(to: childLocal, options: .atomic)
+                                remoteFileBindings[childLocal.standardizedFileURL] = childRemote
+                                downloadedCount += 1
+                            } catch {
+                                continue
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let localCanon = Self.normalizedCanonDir(WorkspaceManager.canonicalPath(localMountRoot))
+        directoryBindings.removeAll { $0.localCanonicalPath == localCanon }
+        directoryBindings.append(RemoteDirectoryBindingRecord(
+            localCanonicalPath: localCanon,
+            remotePath: canonicalRemote,
+            profileID: profile.id
+        ))
+        persistDirectoryBindings()
+
+        currentRemoteDirectory = canonicalRemote
+        await refreshRemoteDirectory(at: canonicalRemote)
+        workspace.switchWorkspaceFolder(to: localMountRoot)
+        refreshActiveMountedStatus(for: localMountRoot)
+        if ptyStdinWriter != nil {
+            sendPTYCommand("cd \(Self.shellQuote(canonicalRemote))")
+        }
+        statusMessage = "Đã mở dự án VPS: \(canonicalRemote) (\(downloadedCount) file nguồn, 0 upload khi make)"
+        return localMountRoot
     }
 
     public func createRemoteFile(named name: String) async -> URL? {
@@ -497,8 +719,27 @@ public final class SSHWorkspaceService: ObservableObject {
         }
     }
 
-    private func shellSingleQuote(_ raw: String) -> String {
+    public nonisolated static func shellQuote(_ raw: String) -> String {
         "'" + raw.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private nonisolated static func sanitizeSlug(_ raw: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let cleaned = raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : Character("-") }
+        let collapsed = String(cleaned).trimmingCharacters(in: CharacterSet(charactersIn: "-."))
+        return collapsed.isEmpty ? "project" : String(collapsed.prefix(48))
+    }
+
+    private nonisolated static func normalizedCanonDir(_ raw: String) -> String {
+        var s = raw
+        while s.count > 1 && s.hasSuffix("/") {
+            s.removeLast()
+        }
+        return s
+    }
+
+    private func shellSingleQuote(_ raw: String) -> String {
+        Self.shellQuote(raw)
     }
 
     /// Runs `git` on the connected SSH VPS with an ephemeral 0700 `GIT_ASKPASS` script deleted cleanly on shell exit.
@@ -652,10 +893,71 @@ public final class SSHWorkspaceService: ObservableObject {
         return await executeCommandOnVPS(script)
     }
 
+    public func provisionTheosOnVPS() async -> String {
+        guard sshClient != nil else { return "Chưa kết nối SSH tới VPS." }
+        isProvisioningTheos = true
+        defer { isProvisioningTheos = false }
+
+        let script = """
+        set -e
+        if [ -z "$THEOS" ]; then
+          for _p in "$HOME/theos" "/opt/theos" "/var/theos" "/usr/local/theos"; do
+            if [ -d "$_p/makefiles" ]; then export THEOS="$_p"; break; fi
+          done
+        fi
+        if [ -z "$THEOS" ]; then export THEOS="$HOME/theos"; fi
+        echo "[3012] THEOS target: $THEOS"
+
+        if command -v apt-get >/dev/null 2>&1; then
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then SUDO="sudo -n"; fi
+          DEBIAN_FRONTEND=noninteractive $SUDO apt-get update -qq || true
+          DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq git curl make clang ldid fakeroot dpkg xz-utils perl unzip zip || true
+        elif command -v apk >/dev/null 2>&1; then
+          apk add --no-cache git curl make clang ldid fakeroot dpkg xz perl unzip zip || true
+        fi
+
+        if [ ! -d "$THEOS/makefiles" ]; then
+          echo "[3012] Dang tai Theos ve $THEOS..."
+          git clone --recursive --depth=1 https://github.com/theos/theos.git "$THEOS"
+        fi
+
+        mkdir -p "$THEOS/sdks"
+        if ! ls -d "$THEOS/sdks/"*.sdk >/dev/null 2>&1; then
+          echo "[3012] Dang tai iOS SDK vao $THEOS/sdks..."
+          rm -rf /tmp/_3012_theos_sdks
+          if git clone --depth=1 https://github.com/theos/sdks.git /tmp/_3012_theos_sdks; then
+            find /tmp/_3012_theos_sdks -maxdepth 2 -name "*.sdk.tar.xz" -exec tar -xJf {} -C "$THEOS/sdks" \\; 2>/dev/null || true
+            find /tmp/_3012_theos_sdks -maxdepth 2 -type d -name "*.sdk" -exec cp -r {} "$THEOS/sdks/" \\; 2>/dev/null || true
+            rm -rf /tmp/_3012_theos_sdks
+          fi
+        fi
+
+        for prof in "$HOME/.bashrc" "$HOME/.profile"; do
+          touch "$prof" 2>/dev/null || true
+          if ! grep -q "export THEOS=" "$prof" 2>/dev/null; then
+            printf '\\nexport THEOS="%s"\\n' "$THEOS" >> "$prof"
+          fi
+        done
+
+        echo "[OK] THEOS=$THEOS"
+        ls -d "$THEOS/sdks/"*.sdk 2>/dev/null | head -n 6 || echo "[!] Chua tim thay .sdk trong $THEOS/sdks"
+        command -v make clang ldid dpkg || true
+        """
+        let output = await executeCommandOnVPS(script)
+        statusMessage = output.contains("[OK] THEOS=") ? "Đã cài xong Theos + iOS SDK trên VPS" : "Kiểm tra nhật ký cài Theos trên VPS"
+        return output
+    }
+
     // MARK: - Interactive SSH PTY for SwiftTerm
     public func startInteractivePTYShell(cols: Int = 80, rows: Int = 24) {
         guard let client = sshClient else { return }
         ptyTask?.cancel()
+        ptyStdinWriter = nil
+        isPTYReady = false
+        ptyRecentTail = ""
+        let gen = connectGeneration
+
         ptyTask = Task { [weak self] in
             let ptyReq = SSHChannelRequestEvent.PseudoTerminalRequest(
                 wantReply: true,
@@ -669,25 +971,79 @@ public final class SSHWorkspaceService: ObservableObject {
             do {
                 try await client.withPTY(ptyReq) { inbound, outbound in
                     await MainActor.run {
-                        self?.ptyStdinWriter = outbound
+                        guard let self, self.connectGeneration == gen else { return }
+                        self.ptyStdinWriter = outbound
+                        self.isPTYReady = true
+                        let queued = self.pendingPTYCommands
+                        self.pendingPTYCommands.removeAll()
+                        for cmd in queued {
+                            self.sendPTYCommand(cmd)
+                        }
                     }
                     for try await chunk in inbound {
                         switch chunk {
                         case .stdout(let buf), .stderr(let buf):
                             let bytes = Array(buf.readableBytesView)
                             await MainActor.run {
-                                self?.onPTYOutput?(bytes)
+                                guard let self, self.connectGeneration == gen else { return }
+                                self.ptyScrollbackBuffer.append(contentsOf: bytes)
+                                if self.ptyScrollbackBuffer.count > 65_536 {
+                                    self.ptyScrollbackBuffer.removeFirst(self.ptyScrollbackBuffer.count - 65_536)
+                                }
+                                self.onPTYOutput?(bytes)
+
+                                let textChunk = String(decoding: bytes, as: UTF8.self)
+                                self.ptyRecentTail.append(textChunk)
+                                if self.ptyRecentTail.count > 256 {
+                                    self.ptyRecentTail = String(self.ptyRecentTail.suffix(256))
+                                }
+                                if let code = self.extractMakeExitMarker(from: self.ptyRecentTail) {
+                                    self.ptyRecentTail = ""
+                                    self.onPTYMakeCompleted?(code)
+                                }
                             }
                         }
                     }
                 }
             } catch {
                 await MainActor.run {
+                    guard let self, self.connectGeneration == gen else { return }
+                    self.ptyStdinWriter = nil
+                    self.isPTYReady = false
                     let notice = Array("\r\n[SSH PTY disconnected: \(error.localizedDescription)]\r\n".utf8)
-                    self?.onPTYOutput?(notice)
+                    self.ptyScrollbackBuffer.append(contentsOf: notice)
+                    if self.ptyScrollbackBuffer.count > 65_536 {
+                        self.ptyScrollbackBuffer.removeFirst(self.ptyScrollbackBuffer.count - 65_536)
+                    }
+                    self.onPTYOutput?(notice)
                 }
             }
         }
+    }
+
+    private func extractMakeExitMarker(from tail: String) -> Int? {
+        let prefix = "[3012-MAKE-EXIT:"
+        guard let start = tail.range(of: prefix, options: .backwards) else { return nil }
+        let after = tail[start.upperBound...]
+        guard let endBracket = after.firstIndex(of: "]") else { return nil }
+        let codeSlice = after[..<endBracket]
+        guard !codeSlice.isEmpty, codeSlice.allSatisfy({ $0 >= "0" && $0 <= "9" }) else { return nil }
+        return Int(codeSlice)
+    }
+
+    public func sendPTYCommand(_ command: String) {
+        let trimmed = command.trimmingCharacters(in: .newlines)
+        guard !trimmed.isEmpty else { return }
+        if ptyStdinWriter == nil {
+            if pendingPTYCommands.count < 8 {
+                pendingPTYCommands.append(trimmed)
+            }
+            if ptyTask == nil, sshClient != nil {
+                startInteractivePTYShell()
+            }
+            return
+        }
+        sendPTYInput(Array((trimmed + "\n").utf8))
     }
 
     public func sendPTYInput(_ bytes: [UInt8]) {
@@ -831,6 +1187,25 @@ public final class SSHWorkspaceService: ObservableObject {
             self.savedProfiles = decoded
         }
     }
+
+    private func persistDirectoryBindings() {
+        if let data = try? JSONEncoder().encode(directoryBindings) {
+            UserDefaults.standard.set(data, forKey: "3012.vpsDirectoryBindings")
+        }
+    }
+
+    private func loadDirectoryBindings() {
+        if let data = UserDefaults.standard.data(forKey: "3012.vpsDirectoryBindings"),
+           let decoded = try? JSONDecoder().decode([RemoteDirectoryBindingRecord].self, from: data) {
+            self.directoryBindings = decoded
+        }
+    }
+}
+
+private struct RemoteDirectoryBindingRecord: Codable {
+    let localCanonicalPath: String
+    let remotePath: String
+    let profileID: UUID
 }
 
 private final class PortForwardOnceFlag: @unchecked Sendable {

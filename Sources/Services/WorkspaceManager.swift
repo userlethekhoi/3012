@@ -142,7 +142,7 @@ public final class WorkspaceManager: ObservableObject {
         var folders: [URL] = []
         for url in items {
             let name = url.lastPathComponent
-            if name == "_ExternalFolders" || name == "Inbox" { continue }
+            if name == "_ExternalFolders" || name == "Inbox" || name == "_RemoteVPS" { continue }
             let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
             if isDir {
                 folders.append(url)
@@ -161,7 +161,7 @@ public final class WorkspaceManager: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: "\\", with: "-")
-        let forbidden: Set<String> = ["", ".", "..", "_ExternalFolders", "Inbox"]
+        let forbidden: Set<String> = ["", ".", "..", "_ExternalFolders", "Inbox", "_RemoteVPS"]
         let folderName = forbidden.contains(clean) ? "Project_\(Int(Date().timeIntervalSince1970) % 10000)" : clean
         let target = documentsDirectory.appendingPathComponent(folderName, isDirectory: true)
         try? FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)

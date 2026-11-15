@@ -12,6 +12,8 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
     @ObservedObject var aiService: AIAgentService
     @ObservedObject var gitService: GitService
     var xtoolService: XtoolBuildService? = nil
+    var theosService: TheosBuildService? = nil
+    var onOpenSSHQuickSheet: (() -> Void)? = nil
 
     public init(
         sshService: SSHWorkspaceService,
@@ -21,7 +23,9 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         preferences: EditorPreferences,
         aiService: AIAgentService,
         gitService: GitService,
-        xtoolService: XtoolBuildService? = nil
+        xtoolService: XtoolBuildService? = nil,
+        theosService: TheosBuildService? = nil,
+        onOpenSSHQuickSheet: (() -> Void)? = nil
     ) {
         self.sshService = sshService
         self.runner = runner
@@ -31,6 +35,8 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         self.aiService = aiService
         self.gitService = gitService
         self.xtoolService = xtoolService
+        self.theosService = theosService
+        self.onOpenSSHQuickSheet = onOpenSSHQuickSheet
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -132,6 +138,9 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
 
             if parent.sshService.isConnected {
                 feedWelcomeBanner(remote: true)
+                if !parent.sshService.ptyScrollbackBuffer.isEmpty {
+                    terminalView?.feed(byteArray: parent.sshService.ptyScrollbackBuffer[...])
+                }
             } else {
                 feedWelcomeBanner(remote: false)
                 printLocalPrompt()
@@ -223,6 +232,8 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 ("/", nil, Array("/".utf8)),
                 (">", nil, Array(">".utf8)),
                 ("&&", nil, Array(" && ".utf8)),
+                ("make", nil, Array("make\r".utf8)),
+                ("make pkg", nil, Array("make -j2 package FINALPACKAGE=1\r".utf8)),
                 ("claude", nil, Array("claude ".utf8)),
                 ("opencode", nil, Array("opencode ".utf8)),
                 ("xtool", nil, Array("xtool ".utf8)),
@@ -232,14 +243,15 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
 
             for item in keys {
                 let isCLI = (item.label == "claude" || item.label == "opencode")
+                let isMake = (item.label == "make" || item.label == "make pkg")
                 var config = UIButton.Configuration.filled()
                 config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
                 config.cornerStyle = .fixed
                 config.background.cornerRadius = 5
-                config.baseBackgroundColor = isCLI
-                    ? UIColor.systemPurple.withAlphaComponent(0.25)
-                    : UIColor.white.withAlphaComponent(0.14)
-                config.baseForegroundColor = isCLI ? UIColor.systemPurple : .white
+                config.baseBackgroundColor = isMake
+                    ? UIColor.systemGreen.withAlphaComponent(0.24)
+                    : (isCLI ? UIColor.systemPurple.withAlphaComponent(0.25) : UIColor.white.withAlphaComponent(0.14))
+                config.baseForegroundColor = isMake ? UIColor.systemGreen : (isCLI ? UIColor.systemPurple : .white)
                 if let sf = item.sfSymbol {
                     config.image = UIImage(
                         systemName: sf,
@@ -1245,6 +1257,31 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     let key = rawArgString.trimmingCharacters(in: .whitespaces)
                     emit("\(key)=\(sessionEnv[key] ?? "")\n")
                 }
+
+            case "ssh":
+                let sub = args.first?.lowercased() ?? ""
+                if sub == "disconnect" || sub == "off" {
+                    await parent.sshService.disconnect()
+                    emit("\u{001B}[33m[SSH] Disconnected.\u{001B}[0m\n")
+                } else if !sub.isEmpty,
+                          let matched = parent.sshService.savedProfiles.first(where: {
+                              $0.host.caseInsensitiveCompare(args[0]) == .orderedSame
+                              || $0.label.caseInsensitiveCompare(args[0]) == .orderedSame
+                              || "\($0.username)@\($0.host)".caseInsensitiveCompare(args[0]) == .orderedSame
+                          }) {
+                    emit("\u{001B}[36m[SSH]\u{001B}[0m Connecting to \(matched.username)@\(matched.host):\(matched.port)...\n")
+                    await parent.sshService.connect(to: matched)
+                    parent.sshService.refreshActiveMountedStatus(for: parent.workspace.rootURL)
+                } else {
+                    emit("\u{001B}[36m[SSH]\u{001B}[0m Usage: ssh <host_or_label> | ssh disconnect\n")
+                    emit("Opening Linux VPS SSH connector...\n")
+                    parent.onOpenSSHQuickSheet?()
+                }
+
+            case "make":
+                emit("\u{001B}[33m[make]\u{001B}[0m Local iOS sandbox shell does not run Linux make directly.\n")
+                emit("Attach a Linux VPS via SSH to run `make` directly on your server without re-uploading zips.\n")
+                parent.onOpenSSHQuickSheet?()
 
             case "xtool":
                 await handleXtoolCommand(args: args, cwd: cwd, emit: emit)

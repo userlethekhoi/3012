@@ -1,8 +1,10 @@
 import Foundation
 import SwiftUI
+import CryptoKit
 import ZIPFoundation
 
 public enum TheosBuildMode: String, CaseIterable, Identifiable, Codable {
+    case directVPSTerminal = "directVPSTerminal"
     case communityServer = "communityServer"
     case privateSSHVPS = "privateSSHVPS"
     case offlineExport = "offlineExport"
@@ -11,16 +13,18 @@ public enum TheosBuildMode: String, CaseIterable, Identifiable, Codable {
 
     public var title: String {
         switch self {
+        case .directVPSTerminal: return L10n.tr("Terminal Linux VPS Trực Tiếp (Không Gửi Lại Zip)", "Direct Linux VPS Terminal (Live Make / Zero Zip)")
         case .communityServer: return L10n.tr("Máy chủ Cộng đồng (Không cần JB / VPS)", "Community Build Server (No JB / VPS Needed)")
-        case .privateSSHVPS: return L10n.tr("VPS SSH Cá nhân (Qua kết nối SSH)", "Private SSH VPS (Via SSH Connection)")
+        case .privateSSHVPS: return L10n.tr("VPS SSH Nền (Đồng Bộ Delta & Kéo .deb)", "Private SSH VPS (Delta Sync & Auto Pull)")
         case .offlineExport: return L10n.tr("Ngoại tuyến (.zip + GitHub Actions)", "Offline Export (.zip + GitHub Actions)")
         }
     }
 
     public var subtitle: String {
         switch self {
+        case .directVPSTerminal: return L10n.tr("Chạy make trực tiếp trong Terminal SSH VPS; giữ cache .theos hoặc sửa trực tiếp file trên VPS", "Runs make directly in live VPS SSH Terminal; keeps .theos cache or edits remote files live")
         case .communityServer: return L10n.tr("Biên dịch cách ly trong container Docker (--network none, không lưu code)", "Isolated Docker sandbox (--network none, ephemeral RAM build)")
-        case .privateSSHVPS: return L10n.tr("Chạy make package trực tiếp trên VPS Linux riêng qua SSH", "Runs make package directly on your private Linux VPS via SSH")
+        case .privateSSHVPS: return L10n.tr("Chỉ tải file thay đổi qua SSH (SHA-256), giữ cache .theos và tự tải .deb về máy", "Uploads only changed files over SSH, keeps .theos cache and fetches .deb/.dylib")
         case .offlineExport: return L10n.tr("Tạo sẵn GitHub Actions workflow & đóng gói .zip sạch để tự build", "Generates GitHub Actions workflow & clean .zip archive")
         }
     }
@@ -130,7 +134,6 @@ private struct TheosHealthResponse: Decodable {
 @MainActor
 public final class TheosBuildService: ObservableObject {
     public static let defaultServerURL = "https://build.kaydus.xyz"
-    public static let alternateServerURL = "https://kaydus.xyz"
 
     @Published public var buildMode: TheosBuildMode {
         didSet { UserDefaults.standard.set(buildMode.rawValue, forKey: "3012.theos.buildMode") }
@@ -150,6 +153,10 @@ public final class TheosBuildService: ObservableObject {
     @Published public var buildLog: String = ""
     @Published public private(set) var downloadedArtifacts: [TheosArtifactItem] = []
     @Published public private(set) var serverHealthSummary: String? = nil
+    @Published public private(set) var lastRemoteBuildDir: String? = nil
+
+    public var onOpenTerminalForLiveMake: (() -> Void)?
+    public var onBeforeRemoteMake: (() -> Void)?
 
     private var activeTask: Task<Void, Never>?
     private var buildGeneration: Int = 0
@@ -174,7 +181,12 @@ public final class TheosBuildService: ObservableObject {
         }
 
         let storedURL = UserDefaults.standard.string(forKey: "3012.theos.serverURL")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.serverURL = storedURL.isEmpty ? Self.defaultServerURL : storedURL
+        if storedURL.isEmpty || Self.isMisconfiguredRootHost(storedURL) {
+            self.serverURL = Self.defaultServerURL
+            UserDefaults.standard.set(Self.defaultServerURL, forKey: "3012.theos.serverURL")
+        } else {
+            self.serverURL = storedURL
+        }
         self.hasAcceptedPrivacyConsent = UserDefaults.standard.bool(forKey: "3012.theos.privacyConsent")
 
         if let existingID = KeychainVault.loadString(forKey: "theos.device.id"),
@@ -650,6 +662,7 @@ public final class TheosBuildService: ObservableObject {
         workspaceRoot: URL,
         sshService: SSHWorkspaceService,
         runner: CodeRunnerService,
+        workspace: WorkspaceManager? = nil,
         onWorkspaceChanged: @escaping () -> Void
     ) {
         guard !isBuilding else { return }
@@ -660,7 +673,7 @@ public final class TheosBuildService: ObservableObject {
         isBuilding = true
         activeBuildBaseURL = nil
         buildLog = "[3012 Theos] Chuẩn bị đóng gói dự án từ \(workspaceRoot.lastPathComponent)...\n"
-        buildStatusText = "Đang đóng gói mã nguồn..."
+        buildStatusText = "Đang chuẩn bị biên dịch..."
         runner.consoleOutput = buildLog
 
         activeTask = Task { [weak self] () -> Void in
@@ -676,6 +689,14 @@ public final class TheosBuildService: ObservableObject {
             }
 
             switch self.buildMode {
+            case .directVPSTerminal:
+                await self.buildViaDirectVPSTerminal(
+                    workspaceRoot: workspaceRoot,
+                    sshService: sshService,
+                    runner: runner,
+                    workspace: workspace,
+                    onWorkspaceChanged: onWorkspaceChanged
+                )
             case .communityServer:
                 await self.buildViaCommunityServer(
                     workspaceRoot: workspaceRoot,
@@ -687,6 +708,7 @@ public final class TheosBuildService: ObservableObject {
                     workspaceRoot: workspaceRoot,
                     sshService: sshService,
                     runner: runner,
+                    workspace: workspace,
                     onWorkspaceChanged: onWorkspaceChanged
                 )
             case .offlineExport:
@@ -779,8 +801,8 @@ public final class TheosBuildService: ObservableObject {
                     "X-Package-Scheme": packageScheme.rawValue
                 ],
                 body: zipData,
-                requestTimeout: 90,
-                resourceTimeout: 120,
+                requestTimeout: 150,
+                resourceTimeout: 240,
                 maxAttempts: 4,
                 onRetry: { [weak self] attempt, nextHost in
                     self?.appendLog("[3012] Kết nối gián đoạn khi tải lên, đang tự thử lại (lần \(attempt + 1)/4 -> \(nextHost))...\n", runner: runner)
@@ -901,11 +923,16 @@ public final class TheosBuildService: ObservableObject {
                         requestTimeout: 75,
                         resourceTimeout: 120,
                         maxAttempts: 4,
+                        expectJSON: false,
                         onRetry: { [weak self] attempt, _ in
                             self?.buildStatusText = "Đang thử tải lại \(f.name) (\(attempt + 1)/4)..."
                         }
                     )
                     if dlResult.response.statusCode == 200 {
+                        if Self.looksLikeUnexpectedHTML(data: dlResult.data, response: dlResult.response) {
+                            appendLog("\n[3012] Máy chủ trả về trang HTML thay vì file \(f.name).\n", runner: runner)
+                            continue
+                        }
                         let safeName = (f.name as NSString).lastPathComponent
                         guard !safeName.isEmpty, safeName != ".", safeName != ".." else { continue }
                         let outURL = packagesDir.appendingPathComponent(safeName)
@@ -936,88 +963,278 @@ public final class TheosBuildService: ObservableObject {
         }
     }
 
-    // MARK: - Mode 2: Private SSH VPS Build
+    // MARK: - Mode 2A: Direct Linux VPS Terminal (Live Make / Zero Re-Zip)
+    private func buildViaDirectVPSTerminal(
+        workspaceRoot: URL,
+        sshService: SSHWorkspaceService,
+        runner: CodeRunnerService,
+        workspace: WorkspaceManager?,
+        onWorkspaceChanged: @escaping () -> Void
+    ) async {
+        guard sshService.isConnected else {
+            appendLog("[3012] Chưa kết nối SSH VPS. Hãy bấm 'Gắn VPS SSH' để đăng nhập VPS Linux.\n", runner: runner)
+            buildStatusText = "Chưa kết nối SSH VPS"
+            return
+        }
+        guard isTheosWorkspace(workspaceRoot) else {
+            appendLog("[3012] Chưa tìm thấy Makefile / control trong dự án hiện tại.\n", runner: runner)
+            buildStatusText = "Thiếu Makefile Theos"
+            return
+        }
+
+        guard let prepared = await prepareRemoteProjectOnVPS(
+            workspaceRoot: workspaceRoot,
+            sshService: sshService,
+            runner: runner,
+            workspace: workspace
+        ) else {
+            return
+        }
+
+        let remoteDir = prepared.remoteDir
+        lastRemoteBuildDir = remoteDir
+
+        let capturedRoot = workspaceRoot
+        let capturedRemoteDir = remoteDir
+        sshService.onPTYMakeCompleted = { [weak self, weak sshService] exitCode in
+            guard let self, let sshService else { return }
+            Task { @MainActor in
+                if exitCode == 0 {
+                    await self.pullCompiledArtifactsFromVPS(
+                        remoteProjectDir: capturedRemoteDir,
+                        localWorkspaceRoot: capturedRoot,
+                        sshService: sshService,
+                        runner: runner,
+                        onWorkspaceChanged: onWorkspaceChanged
+                    )
+                } else {
+                    self.buildStatusText = "make trên VPS báo lỗi (exit \(exitCode))"
+                    self.appendLog("\n[3012] make trên Terminal VPS thoát với mã lỗi \(exitCode).\n", runner: runner)
+                }
+            }
+        }
+
+        onOpenTerminalForLiveMake?()
+
+        let schemeEnv = packageScheme == .rootful ? "" : " THEOS_PACKAGE_SCHEME=\(packageScheme.rawValue)"
+        let quotedDir = SSHWorkspaceService.shellQuote(remoteDir)
+        let cmd = "cd \(quotedDir) && ( [ -n \"$THEOS\" ] || for _t in \"$HOME/theos\" /opt/theos /var/theos /usr/local/theos; do [ -d \"$_t/makefiles\" ] && export THEOS=\"$_t\" && break; done ) && ( [ -f Makefile ] || { _mf=$(find . -maxdepth 4 -type f -name Makefile ! -path './.theos/*' | head -n 1); [ -n \"$_mf\" ] && cd \"$(dirname \"$_mf\")\"; } ) && make -j2 package FINALPACKAGE=1\(schemeEnv); __rc=$?; printf '\\n[3012-MAKE-EXIT:%d]\\n' $__rc"
+
+        appendLog("[3012] Đã mở Terminal VPS và chạy make trực tiếp tại \(remoteDir)\n", runner: runner)
+        buildStatusText = "Đang chạy make trực tiếp trên Terminal VPS..."
+        sshService.sendPTYCommand(cmd)
+    }
+
+    // MARK: - Mode 2B: Private SSH VPS Build (Incremental Delta Sync + Persistent Workspace)
     private func buildViaPrivateSSHVPS(
         workspaceRoot: URL,
         sshService: SSHWorkspaceService,
         runner: CodeRunnerService,
+        workspace: WorkspaceManager?,
         onWorkspaceChanged: @escaping () -> Void
     ) async {
         guard sshService.isConnected else {
-            appendLog("[3012] Chưa kết nối SSH VPS. Hãy mở tab Remote SSH bên trái để đăng nhập VPS trước.\n", runner: runner)
+            appendLog("[3012] Chưa kết nối SSH VPS. Hãy mở tab Remote SSH bên trái hoặc bấm 'Gắn VPS SSH' để đăng nhập VPS trước.\n", runner: runner)
             buildStatusText = "Chưa kết nối SSH VPS"
             return
         }
-        guard let zipData = await Task.detached(priority: .userInitiated, operation: { () -> Data? in
-            Self.createCleanTheosZipData(workspaceRoot: workspaceRoot)
-        }).value else {
-            appendLog("[3012] Không thể nén dự án Theos.\n", runner: runner)
-            buildStatusText = "Lỗi nén .zip"
+        guard isTheosWorkspace(workspaceRoot) else {
+            appendLog("[3012] Chưa tìm thấy Makefile / control trong dự án hiện tại.\n", runner: runner)
+            buildStatusText = "Thiếu Makefile Theos"
             return
         }
 
-        let remoteDir = "/tmp/3012_theos_\(String(UUID().uuidString.prefix(8)))"
+        guard let prepared = await prepareRemoteProjectOnVPS(
+            workspaceRoot: workspaceRoot,
+            sshService: sshService,
+            runner: runner,
+            workspace: workspace
+        ) else {
+            return
+        }
+
+        let remoteDir = prepared.remoteDir
+        lastRemoteBuildDir = remoteDir
         let schemeArg = packageScheme == .rootful ? "" : "THEOS_PACKAGE_SCHEME=\(packageScheme.rawValue)"
+        let quotedDir = SSHWorkspaceService.shellQuote(remoteDir)
 
-        buildStatusText = "Đang tải mã nguồn qua SFTP lên VPS..."
-        appendLog("[3012] Đang tải dự án qua SFTP & biên dịch trên VPS (\(sshService.connectedProfile?.host ?? "VPS"))...\n", runner: runner)
-
-        let prepOut = await sshService.executeCommandOnVPS("rm -rf '\(remoteDir)' && mkdir -p '\(remoteDir)/src'")
-        if prepOut.contains("[Process exited with code") || prepOut.hasPrefix("[SSH Error]") {
-            appendLog(prepOut + "\n", runner: runner)
-            buildStatusText = "Không tạo được thư mục tạm trên VPS"
-            return
-        }
-
-        do {
-            try await sshService.uploadDataViaSFTP(data: zipData, remotePath: "\(remoteDir)/proj.zip")
-        } catch {
-            _ = await sshService.executeCommandOnVPS("rm -rf '\(remoteDir)'")
-            appendLog("[3012] Lỗi upload SFTP: \(error.localizedDescription)\n", runner: runner)
-            buildStatusText = "Lỗi upload SFTP"
-            return
-        }
-
-        buildStatusText = "Đang biên dịch Theos trên VPS..."
+        buildStatusText = "Đang biên dịch Theos trên VPS (giữ cache .theos)..."
         let buildScript = """
-        cd '\(remoteDir)' && \
-        unzip -qq -o proj.zip -d src && \
-        PROJ_MF=$(find src -maxdepth 4 -type f -name Makefile | head -n 1) && \
-        [ -n "$PROJ_MF" ] && PROJ=$(dirname "$PROJ_MF") && \
-        cd "$PROJ" && \
+        if [ -z "$THEOS" ]; then
+          for _t in "$HOME/theos" "/opt/theos" "/var/theos" "/usr/local/theos"; do
+            [ -d "$_t/makefiles" ] && export THEOS="$_t" && break
+          done
+        fi
+        cd \(quotedDir) && \
+        if [ ! -f Makefile ]; then _mf=$(find . -maxdepth 4 -type f -name Makefile ! -path './.theos/*' | head -n 1); [ -n "$_mf" ] && cd "$(dirname "$_mf")"; fi && \
         make -j2 package FINALPACKAGE=1 \(schemeArg) 2>&1
         """
         let vpsOutput = await sshService.executeCommandOnVPS(buildScript)
         appendLog(vpsOutput + "\n", runner: runner)
 
+        await pullCompiledArtifactsFromVPS(
+            remoteProjectDir: remoteDir,
+            localWorkspaceRoot: workspaceRoot,
+            sshService: sshService,
+            runner: runner,
+            onWorkspaceChanged: onWorkspaceChanged
+        )
+    }
+
+    private func prepareRemoteProjectOnVPS(
+        workspaceRoot: URL,
+        sshService: SSHWorkspaceService,
+        runner: CodeRunnerService,
+        workspace: WorkspaceManager?
+    ) async -> (remoteDir: String, mountedLive: Bool)? {
+        let dirtyBeforeSave: [(URL, String)] = workspace?.openTabs
+            .filter(\.isDirty)
+            .map { ($0.fileURL, $0.content) } ?? []
+        workspace?.saveAllTabs()
+        onBeforeRemoteMake?()
+
+        if let mountedRemote = sshService.remoteDirectoryBound(to: workspaceRoot) {
+            buildStatusText = "Đang đồng bộ SFTP tab vừa lưu..."
+            await sshService.flushPendingSFTPWrites(extraDirtyFiles: dirtyBeforeSave)
+            lastRemoteBuildDir = mountedRemote
+            appendLog("[3012] Dự án đang mở trực tiếp từ VPS (\(mountedRemote)) — không cần gửi file zip.\n", runner: runner)
+            return (mountedRemote, true)
+        }
+
+        buildStatusText = "Đang kiểm tra file thay đổi (SHA-256 delta)..."
+        let slug = Self.sanitizeRemoteSlug(workspaceRoot.lastPathComponent)
+        let homeOut = await sshService.executeCommandOnVPS("printf '%s' \"$HOME\"").trimmingCharacters(in: .whitespacesAndNewlines)
+        let homeBase = (homeOut.isEmpty || homeOut.contains("[SSH Error]") || !homeOut.hasPrefix("/")) ? "/tmp" : homeOut
+        let remoteProjDir = "\(homeBase)/3012-Workspaces/\(slug)"
+        let quotedProjDir = SSHWorkspaceService.shellQuote(remoteProjDir)
+
+        let mkdirOut = await sshService.executeCommandOnVPS("mkdir -p \(quotedProjDir)")
+        if mkdirOut.contains("[Process exited with code") || mkdirOut.hasPrefix("[SSH Error]") {
+            appendLog(mkdirOut + "\n", runner: runner)
+            buildStatusText = "Không tạo được workspace trên VPS"
+            return nil
+        }
+
+        let localFiles = await Task.detached(priority: .userInitiated) {
+            Self.collectCleanLocalFiles(in: workspaceRoot)
+        }.value
+
+        let hashCmd = "cd \(quotedProjDir) && find . -type f ! -path './.theos/*' ! -path './packages/*' ! -path './.git/*' -exec sha256sum {} + 2>/dev/null || true"
+        let hashOut = await sshService.executeCommandOnVPS(hashCmd)
+        var remoteHashes: [String: String] = [:]
+        for line in hashOut.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.count > 66 else { continue }
+            let hex = String(trimmed.prefix(64)).lowercased()
+            guard hex.allSatisfy({ ($0 >= "0" && $0 <= "9") || ($0 >= "a" && $0 <= "f") }) else { continue }
+            var pathPart = String(trimmed.dropFirst(64)).trimmingCharacters(in: .whitespaces)
+            if pathPart.hasPrefix("*") { pathPart.removeFirst() }
+            if pathPart.hasPrefix("./") { pathPart.removeFirst(2) }
+            guard !pathPart.isEmpty else { continue }
+            remoteHashes[pathPart] = hex
+        }
+
+        let changedFiles = localFiles.filter { remoteHashes[$0.relPath] != $0.sha256Hex }
+        let localRelSet = Set(localFiles.map(\.relPath))
+        let staleRemoteFiles = Set(remoteHashes.keys).subtracting(localRelSet).sorted()
+
+        if !staleRemoteFiles.isEmpty {
+            var idx = 0
+            while idx < staleRemoteFiles.count {
+                let slice = staleRemoteFiles[idx..<min(idx + 40, staleRemoteFiles.count)]
+                let joinedArgs = slice.map { SSHWorkspaceService.shellQuote("./\($0)") }.joined(separator: " ")
+                _ = await sshService.executeCommandOnVPS("cd \(quotedProjDir) && rm -f \(joinedArgs)")
+                idx += 40
+            }
+        }
+
+        if changedFiles.isEmpty {
+            appendLog("[3012] 0 file thay đổi (delta sync 0 KB) — giữ nguyên cache tại \(remoteProjDir)\n", runner: runner)
+        } else {
+            let neededDirs = Array(Set(changedFiles.compactMap { file -> String? in
+                let parent = (file.relPath as NSString).deletingLastPathComponent
+                return (parent.isEmpty || parent == ".") ? nil : "./\(parent)"
+            })).sorted()
+
+            if !neededDirs.isEmpty {
+                var dIdx = 0
+                while dIdx < neededDirs.count {
+                    let slice = neededDirs[dIdx..<min(dIdx + 40, neededDirs.count)]
+                    let joinedDirs = slice.map { SSHWorkspaceService.shellQuote($0) }.joined(separator: " ")
+                    _ = await sshService.executeCommandOnVPS("cd \(quotedProjDir) && mkdir -p \(joinedDirs)")
+                    dIdx += 40
+                }
+            }
+
+            let totalBytes = changedFiles.reduce(0) { $0 + $1.data.count }
+            let kb = max(1, totalBytes / 1024)
+            appendLog("[3012] Đồng bộ delta \(changedFiles.count)/\(localFiles.count) file thay đổi (\(kb) KB) -> \(remoteProjDir)...\n", runner: runner)
+            buildStatusText = "Đang đồng bộ \(changedFiles.count) file thay đổi..."
+
+            for file in changedFiles {
+                do {
+                    try await sshService.uploadDataViaSFTP(data: file.data, remotePath: "\(remoteProjDir)/\(file.relPath)")
+                } catch {
+                    appendLog("[3012] Lỗi upload SFTP (\(file.relPath)): \(error.localizedDescription)\n", runner: runner)
+                    buildStatusText = "Lỗi đồng bộ SFTP"
+                    return nil
+                }
+            }
+        }
+
+        lastRemoteBuildDir = remoteProjDir
+        return (remoteProjDir, false)
+    }
+
+    public func pullCompiledArtifactsFromVPS(
+        remoteProjectDir: String? = nil,
+        localWorkspaceRoot: URL,
+        sshService: SSHWorkspaceService,
+        runner: CodeRunnerService,
+        onWorkspaceChanged: @escaping () -> Void
+    ) async {
+        guard sshService.isConnected else {
+            buildStatusText = "Chưa kết nối SSH VPS"
+            return
+        }
+        guard let searchDir = remoteProjectDir ?? lastRemoteBuildDir ?? sshService.remoteDirectoryBound(to: localWorkspaceRoot),
+              !searchDir.isEmpty else {
+            appendLog("[3012] Chưa xác định thư mục build trên VPS. Hãy chạy make trước hoặc gắn thư mục VPS.\n", runner: runner)
+            buildStatusText = "Chưa có thư mục build trên VPS"
+            return
+        }
+
+        let quotedDir = SSHWorkspaceService.shellQuote(searchDir)
         let listOut = await sshService.executeCommandOnVPS(
-            "find '\(remoteDir)/src' -type f \\( -name '*.deb' -o -name '*.dylib' \\) ! -path '*/.theos/obj/arm64*' ! -path '*/.theos/obj/armv7*' -print"
+            "find \(quotedDir) -type f \\( -name '*.deb' -o -name '*.dylib' \\) ! -path '*/.theos/obj/*' -print 2>/dev/null"
         )
         let remoteArtifacts = listOut
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.hasPrefix(remoteDir) && ($0.hasSuffix(".deb") || $0.hasSuffix(".dylib")) }
+            .filter { !$0.isEmpty && ($0.hasSuffix(".deb") || $0.hasSuffix(".dylib")) }
 
-        if remoteArtifacts.isEmpty {
-            _ = await sshService.executeCommandOnVPS("rm -rf '\(remoteDir)'")
-            buildStatusText = "Build SSH thất bại hoặc chưa có Theos trên VPS"
+        guard !remoteArtifacts.isEmpty else {
+            buildStatusText = "Chưa thấy .deb/.dylib trong \(searchDir)"
+            appendLog("[3012] Không tìm thấy file .deb/.dylib trong \(searchDir) (hãy kiểm tra lại output của make).\n", runner: runner)
             return
         }
 
-        let packagesDir = workspaceRoot.appendingPathComponent("packages", isDirectory: true)
+        let packagesDir = localWorkspaceRoot.appendingPathComponent("packages", isDirectory: true)
         try? FileManager.default.createDirectory(at: packagesDir, withIntermediateDirectories: true)
+
         var fetched: [String] = []
         for path in remoteArtifacts {
             let fileName = (path as NSString).lastPathComponent
+            guard !fileName.isEmpty, fileName != ".", fileName != ".." else { continue }
             if let decoded = try? await sshService.downloadDataViaSFTP(remotePath: path) {
                 try? decoded.write(to: packagesDir.appendingPathComponent(fileName), options: .atomic)
                 fetched.append(fileName)
             }
         }
-        _ = await sshService.executeCommandOnVPS("rm -rf '\(remoteDir)'")
 
+        refreshLocalPackages(in: localWorkspaceRoot)
         if fetched.isEmpty {
-            buildStatusText = "Không tải được file kết quả từ VPS"
+            buildStatusText = "Không tải được .deb/.dylib từ VPS"
         } else {
             let summary = fetched.joined(separator: ", ")
             appendLog("[3012] Đã tải từ VPS về packages/: \(summary)\n", runner: runner)
@@ -1237,6 +1454,26 @@ public final class TheosBuildService: ObservableObject {
     }
 
     // MARK: - Resilient Networking Helpers
+    nonisolated private static func isMisconfiguredRootHost(_ rawURL: String) -> Bool {
+        var candidate = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else { return false }
+        if !candidate.contains("://") {
+            candidate = "https://" + candidate
+        }
+        return URL(string: candidate)?.host?.lowercased() == "kaydus.xyz"
+    }
+
+    nonisolated private static func looksLikeUnexpectedHTML(data: Data, response: HTTPURLResponse) -> Bool {
+        if let contentType = response.value(forHTTPHeaderField: "Content-Type")?.lowercased(),
+           contentType.contains("text/html") || contentType.contains("application/xhtml") {
+            return true
+        }
+        let head = String(decoding: data.prefix(256), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return head.hasPrefix("<!doctype html") || head.hasPrefix("<html")
+    }
+
     nonisolated private static func makeEphemeralTheosSession(
         requestTimeout: TimeInterval,
         resourceTimeout: TimeInterval
@@ -1248,7 +1485,7 @@ public final class TheosBuildService: ObservableObject {
         cfg.httpMaximumConnectionsPerHost = 2
         cfg.timeoutIntervalForRequest = requestTimeout
         cfg.timeoutIntervalForResource = resourceTimeout
-        let appVer = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "5.3.2"
+        let appVer = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "5.4.0"
         cfg.httpAdditionalHeaders = [
             "User-Agent": "3012/\(appVer) (iOS)",
             "Accept": "application/json, application/octet-stream;q=0.9, */*;q=0.8"
@@ -1282,12 +1519,8 @@ public final class TheosBuildService: ObservableObject {
     }
 
     private func candidateBaseURLs(for primary: URL) -> [URL] {
-        let host = primary.host?.lowercased() ?? ""
-        if host == "build.kaydus.xyz", let alt = URL(string: Self.alternateServerURL) {
-            return [primary, alt]
-        }
-        if host == "kaydus.xyz", let alt = URL(string: Self.defaultServerURL) {
-            return [primary, alt]
+        if primary.host?.lowercased() == "kaydus.xyz", let def = URL(string: Self.defaultServerURL) {
+            return [def]
         }
         return [primary]
     }
@@ -1302,6 +1535,7 @@ public final class TheosBuildService: ObservableObject {
         requestTimeout: TimeInterval,
         resourceTimeout: TimeInterval,
         maxAttempts: Int,
+        expectJSON: Bool = true,
         onRetry: ((Int, String) -> Void)? = nil
     ) async throws -> (data: Data, response: HTTPURLResponse, usedBaseURL: URL) {
         let candidates = candidateBaseURLs(for: primaryBaseURL)
@@ -1335,14 +1569,22 @@ public final class TheosBuildService: ObservableObject {
             req.httpMethod = method
             req.timeoutInterval = requestTimeout
             req.assumesHTTP3Capable = false
+            req.setValue("close", forHTTPHeaderField: "Connection")
             for (k, v) in headers {
                 req.setValue(v, forHTTPHeaderField: k)
             }
-            if attempt > 1 {
-                req.setValue("close", forHTTPHeaderField: "Connection")
-            }
+
+            var tempUploadURL: URL?
             if let body {
-                req.httpBody = body
+                let tmpURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("3012_up_\(UUID().uuidString).bin")
+                try body.write(to: tmpURL, options: .atomic)
+                tempUploadURL = tmpURL
+            }
+            defer {
+                if let tempUploadURL {
+                    try? FileManager.default.removeItem(at: tempUploadURL)
+                }
             }
 
             let session = Self.makeEphemeralTheosSession(
@@ -1352,9 +1594,29 @@ public final class TheosBuildService: ObservableObject {
             defer { session.finishTasksAndInvalidate() }
 
             do {
-                let (data, resp) = try await session.data(for: req)
+                let (data, resp): (Data, URLResponse)
+                if let tempUploadURL {
+                    (data, resp) = try await session.upload(for: req, fromFile: tempUploadURL)
+                } else {
+                    (data, resp) = try await session.data(for: req)
+                }
                 guard let http = resp as? HTTPURLResponse else {
                     throw URLError(.badServerResponse)
+                }
+                if expectJSON && Self.looksLikeUnexpectedHTML(data: data, response: http) {
+                    let htmlErr = NSError(
+                        domain: "TheosBuildService",
+                        code: 502,
+                        userInfo: [NSLocalizedDescriptionKey: "Máy chủ trả về HTML thay vì JSON API (hãy dùng https://build.kaydus.xyz)."]
+                    )
+                    lastError = htmlErr
+                    if attempt < totalAttempts {
+                        let nextBase = candidates[attempt % candidates.count]
+                        onRetry?(attempt, nextBase.host ?? nextBase.absoluteString)
+                        try? await Task.sleep(nanoseconds: UInt64(attempt) * 650_000_000)
+                        continue
+                    }
+                    throw htmlErr
                 }
                 if Self.isTransientGatewayStatus(http.statusCode) && attempt < totalAttempts {
                     let nextBase = candidates[attempt % candidates.count]
@@ -1391,12 +1653,82 @@ public final class TheosBuildService: ObservableObject {
 
     private func normalizedBaseURL() -> URL? {
         var raw = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if raw.isEmpty { raw = Self.defaultServerURL }
+        if raw.isEmpty || Self.isMisconfiguredRootHost(raw) {
+            raw = Self.defaultServerURL
+        }
         if !raw.hasPrefix("http://") && !raw.hasPrefix("https://") {
             raw = "https://" + raw
         }
         while raw.hasSuffix("/") { raw.removeLast() }
         return URL(string: raw)
+    }
+
+    private struct LocalDeltaFile: Sendable {
+        let relPath: String
+        let sha256Hex: String
+        let data: Data
+    }
+
+    nonisolated private static func sanitizeRemoteSlug(_ raw: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let cleaned = raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : Character("-") }
+        let collapsed = String(cleaned).trimmingCharacters(in: CharacterSet(charactersIn: "-."))
+        return collapsed.isEmpty ? "project" : String(collapsed.prefix(48))
+    }
+
+    nonisolated private static func collectCleanLocalFiles(in workspaceRoot: URL) -> [LocalDeltaFile] {
+        let fm = FileManager.default
+        let excludedDirs: Set<String> = [
+            ".git", ".theos", "packages", ".build", "build",
+            "node_modules", "__MACOSX", ".swiftpm", "DerivedData", "__pycache__"
+        ]
+        let excludedDirSuffixes = [".dsym", ".xcarchive"]
+        let excludedFileExts: Set<String> = ["ipa", "tipa", "deb", "dmg", "iso"]
+        let canonicalRoot = WorkspaceManager.canonicalPath(workspaceRoot)
+        let rootPrefix = canonicalRoot == "/" ? "/" : canonicalRoot + "/"
+
+        var results: [LocalDeltaFile] = []
+        guard let enumerator = fm.enumerator(
+            at: workspaceRoot,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: []
+        ) else {
+            return results
+        }
+
+        for case let url as URL in enumerator {
+            let name = url.lastPathComponent
+            let lowerName = name.lowercased()
+            if excludedDirs.contains(name)
+                || excludedDirSuffixes.contains(where: { lowerName.hasSuffix($0) })
+                || name.hasPrefix(".3012")
+                || name == ".DS_Store" {
+                enumerator.skipDescendants()
+                continue
+            }
+            let rv = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            let isDir = rv?.isDirectory ?? false
+            if rv?.isSymbolicLink == true {
+                if isDir { enumerator.skipDescendants() }
+                continue
+            }
+            if isDir { continue }
+
+            let ext = url.pathExtension.lowercased()
+            if excludedFileExts.contains(ext) || lowerName.hasSuffix("-theos.zip") {
+                continue
+            }
+
+            let canonicalItem = WorkspaceManager.canonicalPath(url)
+            guard canonicalItem.hasPrefix(rootPrefix) else { continue }
+            let rel = String(canonicalItem.dropFirst(rootPrefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !rel.isEmpty, !rel.contains("..") else { continue }
+            guard let data = try? Data(contentsOf: url) else { continue }
+            let digest = SHA256.hash(data: data)
+            let hex = digest.map { String(format: "%02x", $0) }.joined()
+            results.append(LocalDeltaFile(relPath: rel, sha256Hex: hex, data: data))
+        }
+        return results
     }
 
     nonisolated private static func createCleanTheosZipData(workspaceRoot: URL) -> Data? {

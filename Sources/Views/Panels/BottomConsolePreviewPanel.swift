@@ -71,11 +71,13 @@ public struct BottomConsolePreviewPanel: View {
     @ObservedObject var aiService: AIAgentService
     @ObservedObject var gitService: GitService
     var xtoolService: XtoolBuildService? = nil
+    var theosService: TheosBuildService? = nil
     var onJumpToLine: (Int) -> Void
     var onFixDiagnosticWithAgent: (EditorDiagnostic) -> Void
     var onOpenDaemonManager: () -> Void
     var onOpenShareSheet: () -> Void = {}
     var onFixRawErrorWithAgent: (String) -> Void = { _ in }
+    var onOpenSSHQuickSheet: () -> Void = {}
     var onClose: () -> Void
 
     @State private var selectedPreviewPort: UInt16? = nil
@@ -98,11 +100,13 @@ public struct BottomConsolePreviewPanel: View {
         aiService: AIAgentService,
         gitService: GitService,
         xtoolService: XtoolBuildService? = nil,
+        theosService: TheosBuildService? = nil,
         onJumpToLine: @escaping (Int) -> Void,
         onFixDiagnosticWithAgent: @escaping (EditorDiagnostic) -> Void,
         onOpenDaemonManager: @escaping () -> Void = {},
         onOpenShareSheet: @escaping () -> Void = {},
         onFixRawErrorWithAgent: @escaping (String) -> Void = { _ in },
+        onOpenSSHQuickSheet: @escaping () -> Void = {},
         onClose: @escaping () -> Void
     ) {
         self._selectedTab = selectedTab
@@ -117,11 +121,13 @@ public struct BottomConsolePreviewPanel: View {
         self.aiService = aiService
         self.gitService = gitService
         self.xtoolService = xtoolService
+        self.theosService = theosService
         self.onJumpToLine = onJumpToLine
         self.onFixDiagnosticWithAgent = onFixDiagnosticWithAgent
         self.onOpenDaemonManager = onOpenDaemonManager
         self.onOpenShareSheet = onOpenShareSheet
         self.onFixRawErrorWithAgent = onFixRawErrorWithAgent
+        self.onOpenSSHQuickSheet = onOpenSSHQuickSheet
         self.onClose = onClose
     }
 
@@ -244,6 +250,90 @@ public struct BottomConsolePreviewPanel: View {
                     .buttonStyle(.plain)
                 } else if selectedTab == .terminal {
                     Button {
+                        onOpenSSHQuickSheet()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(sshService.isConnected ? Color.green : Color.orange)
+                                .frame(width: 6, height: 6)
+                            Text(sshService.isConnected
+                                 ? "VPS: \(sshService.connectedProfile?.host ?? "SSH")"
+                                 : preferences.tr("Gắn VPS SSH", "Attach VPS SSH"))
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(sshService.isConnected ? Color.green.opacity(0.18) : Color.orange.opacity(0.16))
+                        .foregroundColor(sshService.isConnected ? .green : .orange)
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+
+                    if sshService.isConnected {
+                        Menu {
+                            Button {
+                                if let theos = theosService,
+                                   theos.isTheosWorkspace(theos.resolveTheosProjectRoot(activeFileURL: workspace.activeTab?.fileURL, workspaceRoot: workspace.rootURL) ?? workspace.rootURL) {
+                                    theos.buildMode = .directVPSTerminal
+                                    let root = theos.resolveTheosProjectRoot(activeFileURL: workspace.activeTab?.fileURL, workspaceRoot: workspace.rootURL) ?? workspace.rootURL
+                                    theos.startBuild(workspaceRoot: root, sshService: sshService, runner: runner, workspace: workspace) {
+                                        workspace.reloadTree()
+                                    }
+                                } else {
+                                    let dir = sshService.remoteDirectoryBound(to: workspace.rootURL) ?? sshService.currentRemoteDirectory
+                                    let cmd = "cd \(SSHWorkspaceService.shellQuote(dir)) && ( [ -n \"$THEOS\" ] || for _t in \"$HOME/theos\" /opt/theos /var/theos /usr/local/theos; do [ -d \"$_t/makefiles\" ] && export THEOS=\"$_t\" && break; done ) && make -j2 package FINALPACKAGE=1"
+                                    sshService.sendPTYCommand(cmd)
+                                }
+                            } label: {
+                                Label(preferences.tr("Chạy make package (Rootless)", "Run make package (Rootless)"), systemImage: "hammer.fill")
+                            }
+
+                            Button {
+                                sshService.sendPTYCommand("make -j2")
+                            } label: {
+                                Label(preferences.tr("Chạy make tại thư mục hiện tại", "Run make in current directory"), systemImage: "play.fill")
+                            }
+
+                            Button {
+                                sshService.sendPTYCommand("make clean")
+                            } label: {
+                                Label(preferences.tr("Dọn cache (make clean)", "Clean build (make clean)"), systemImage: "trash")
+                            }
+
+                            if let theos = theosService {
+                                Divider()
+                                Button {
+                                    let root = theos.resolveTheosProjectRoot(activeFileURL: workspace.activeTab?.fileURL, workspaceRoot: workspace.rootURL) ?? workspace.rootURL
+                                    Task {
+                                        await theos.pullCompiledArtifactsFromVPS(
+                                            localWorkspaceRoot: root,
+                                            sshService: sshService,
+                                            runner: runner
+                                        ) {
+                                            workspace.reloadTree()
+                                        }
+                                    }
+                                } label: {
+                                    Label(preferences.tr("Lấy .deb / .dylib từ VPS về máy", "Pull .deb / .dylib from VPS"), systemImage: "arrow.down.circle.fill")
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "hammer.fill")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("make")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(Color.green.opacity(0.16))
+                            .foregroundColor(.green)
+                            .cornerRadius(6)
+                        }
+                    }
+
+                    Button {
                         daemonService.keepTerminalAliveInBackground.toggle()
                     } label: {
                         HStack(spacing: 4) {
@@ -261,6 +351,7 @@ public struct BottomConsolePreviewPanel: View {
                         .foregroundColor(daemonService.isKeepAliveActive ? .green : Color(hex: palette.gutterForeground))
                         .cornerRadius(6)
                     }
+                    .buttonStyle(.plain)
 
                     Button {
                         onOpenDaemonManager()
@@ -277,6 +368,7 @@ public struct BottomConsolePreviewPanel: View {
                         .foregroundColor(Color(hex: palette.accent))
                         .cornerRadius(6)
                     }
+                    .buttonStyle(.plain)
                 } else if selectedTab == .output {
                     Button {
                         runner.consoleOutput = ""
@@ -323,7 +415,9 @@ public struct BottomConsolePreviewPanel: View {
                         preferences: preferences,
                         aiService: aiService,
                         gitService: gitService,
-                        xtoolService: xtoolService
+                        xtoolService: xtoolService,
+                        theosService: theosService,
+                        onOpenSSHQuickSheet: onOpenSSHQuickSheet
                     )
                 case .problems:
                     problemsListView(palette: palette)
