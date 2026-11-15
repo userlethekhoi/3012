@@ -72,7 +72,7 @@ public struct SyncOutboxItem: Codable, Identifiable, Equatable {
 
 @MainActor
 public final class PCSyncService: NSObject, ObservableObject {
-    public static let defaultRelayBaseURL = "https://build.kaydus.xyz"
+    nonisolated public static let defaultRelayBaseURL = "https://build.kaydus.xyz"
 
     @Published public var relayServerURL: String {
         didSet { UserDefaults.standard.set(relayServerURL, forKey: "3012.pcsync.relay") }
@@ -259,7 +259,7 @@ public final class PCSyncService: NSObject, ObservableObject {
                         await self.connectAuto()
                     } else if !wasWiFi && hasWiFi && self.transportMode == .internet4G && !self.lanWebSocketURL.isEmpty {
                         self.appendLog("SYS", "Đã vào lại Wi-Fi -> thử chuyển nhanh sang LAN...")
-                        await self.probeAndUpgradeToLAN(
+                        self.probeAndUpgradeToLAN(
                             lanURL: self.lanWebSocketURL,
                             token: self.effectiveAuthToken(),
                             currentGen: self.connectionGeneration
@@ -983,7 +983,8 @@ public final class PCSyncService: NSObject, ObservableObject {
             }
 
         case "rename":
-            if let oldPath = obj["oldPath"] as? String, let newPath = obj["newPath"] as? String {
+            if let oldPath = obj["oldPath"] as? String,
+               let newPath = (obj["path"] as? String) ?? (obj["newPath"] as? String) {
                 workspaceManager?.applyRemoteRename(oldRelativePath: oldPath, newRelativePath: newPath)
                 appendLog("IN", "PC đổi tên: \(oldPath) -> \(newPath)")
             }

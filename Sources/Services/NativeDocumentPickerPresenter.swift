@@ -202,13 +202,14 @@ public final class NativeDocumentPickerPresenter: NSObject, UIDocumentPickerDele
         activePickIsCopy = true
         activePresentedController = picker
 
-        let launch: () -> Void = { [weak self] () -> Void in
-            self?.presentWhenReady(picker)
-        }
         if initialDelay > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + initialDelay, execute: launch)
+            let delayNs = UInt64(initialDelay * 1_000_000_000)
+            Task { @MainActor [weak self] () -> Void in
+                try? await Task.sleep(nanoseconds: delayNs)
+                self?.presentWhenReady(picker)
+            }
         } else {
-            launch()
+            presentWhenReady(picker)
         }
     }
 
@@ -264,13 +265,14 @@ public final class NativeDocumentPickerPresenter: NSObject, UIDocumentPickerDele
         picker.presentationController?.delegate = self
         activePresentedController = picker
 
-        let launch: () -> Void = { [weak self] () -> Void in
-            self?.presentWhenReady(picker)
-        }
         if initialDelay > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + initialDelay, execute: launch)
+            let delayNs = UInt64(initialDelay * 1_000_000_000)
+            Task { @MainActor [weak self] () -> Void in
+                try? await Task.sleep(nanoseconds: delayNs)
+                self?.presentWhenReady(picker)
+            }
         } else {
-            launch()
+            presentWhenReady(picker)
         }
     }
 

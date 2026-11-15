@@ -816,9 +816,9 @@ public final class XtoolBuildService: ObservableObject {
             buildStatusText = "Chưa kết nối SSH VPS"
             return
         }
-        guard let zipData = await Task.detached(priority: .userInitiated) { () -> Data? in
+        guard let zipData = await Task.detached(priority: .userInitiated, operation: { () -> Data? in
             Self.createCleanXtoolZipData(workspaceRoot: workspaceRoot)
-        }.value else {
+        }).value else {
             appendLog("[3012 xtool] Không thể nén dự án xtool.\n", runner: runner)
             buildStatusText = "Lỗi nén .zip"
             return
@@ -910,9 +910,9 @@ public final class XtoolBuildService: ObservableObject {
         try? fm.createDirectory(at: workflowPath.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? Self.githubWorkflowTemplate(productName: product).write(to: workflowPath, atomically: true, encoding: .utf8)
 
-        guard let zipData = await Task.detached(priority: .userInitiated) { () -> Data? in
+        guard let zipData = await Task.detached(priority: .userInitiated, operation: { () -> Data? in
             Self.createCleanXtoolZipData(workspaceRoot: workspaceRoot)
-        }.value else {
+        }).value else {
             appendLog("[3012 xtool] Lỗi đóng gói .zip ngoại tuyến.\n", runner: runner)
             buildStatusText = "Lỗi nén .zip"
             return

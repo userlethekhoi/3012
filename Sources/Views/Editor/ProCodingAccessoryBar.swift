@@ -21,7 +21,7 @@ public final class ProCodingAccessoryBar: UIInputView {
             if isSelectionMode {
                 if let tv = targetTextView {
                     let maxLen = (tv.text as NSString).length
-                    selectionAnchor = clampRange(tv.selectedRange, maxLength: maxLen).location
+                    selectionAnchor = Self.clampRange(tv.selectedRange, maxLength: maxLen).location
                 }
             } else {
                 selectionAnchor = nil

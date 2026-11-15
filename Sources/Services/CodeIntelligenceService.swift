@@ -166,7 +166,7 @@ public final class CodeIntelligenceService: ObservableObject {
         }
     }
 
-    private static let regexCache = RegexBox()
+    nonisolated private static let regexCache = RegexBox()
 
     public init() {}
 

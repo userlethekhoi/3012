@@ -656,7 +656,7 @@ public struct DeveloperPowerToolsSheet: View {
 
     private func saveEnvPairs() {
         let envURL = workspace.rootURL.appendingPathComponent(".env")
-        var sanitizedPairs = envPairs.compactMap { item -> (key: String, value: String)? in
+        let sanitizedPairs = envPairs.compactMap { item -> (key: String, value: String)? in
             let k = sanitizeEnvField(item.key).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !k.isEmpty else { return nil }
             return (key: k, value: sanitizeEnvField(item.value))

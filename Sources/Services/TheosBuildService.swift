@@ -678,9 +678,9 @@ public final class TheosBuildService: ObservableObject {
             return
         }
 
-        guard let zipData = await Task.detached(priority: .userInitiated) { () -> Data? in
+        guard let zipData = await Task.detached(priority: .userInitiated, operation: { () -> Data? in
             Self.createCleanTheosZipData(workspaceRoot: workspaceRoot)
-        }.value else {
+        }).value else {
             appendLog("[3012] Không thể nén dự án thành file .zip.\n", runner: runner)
             buildStatusText = "Lỗi nén .zip"
             return
@@ -816,9 +816,9 @@ public final class TheosBuildService: ObservableObject {
             buildStatusText = "Chưa kết nối SSH VPS"
             return
         }
-        guard let zipData = await Task.detached(priority: .userInitiated) { () -> Data? in
+        guard let zipData = await Task.detached(priority: .userInitiated, operation: { () -> Data? in
             Self.createCleanTheosZipData(workspaceRoot: workspaceRoot)
-        }.value else {
+        }).value else {
             appendLog("[3012] Không thể nén dự án Theos.\n", runner: runner)
             buildStatusText = "Lỗi nén .zip"
             return
@@ -905,7 +905,9 @@ public final class TheosBuildService: ObservableObject {
         try? fm.createDirectory(at: workflowPath.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? Self.githubWorkflowTemplate(scheme: packageScheme).write(to: workflowPath, atomically: true, encoding: .utf8)
 
-        guard let zipData = createCleanTheosZipData(workspaceRoot: workspaceRoot) else {
+        guard let zipData = await Task.detached(priority: .userInitiated, operation: { () -> Data? in
+            Self.createCleanTheosZipData(workspaceRoot: workspaceRoot)
+        }).value else {
             appendLog("[3012] Lỗi đóng gói .zip ngoại tuyến.\n", runner: runner)
             buildStatusText = "Lỗi nén .zip"
             return

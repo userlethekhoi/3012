@@ -220,6 +220,7 @@ public struct PCSyncCompanionSheet: View {
                         copyToClipboard(generated, notice: preferences.tr("Đã tạo & copy Key mới", "Generated & copied new Key"))
                     }
                     .font(.caption.bold())
+                    .buttonStyle(.borderless)
                 }
 
                 HStack(spacing: 8) {
@@ -360,134 +361,162 @@ public struct PCSyncCompanionSheet: View {
 
     private var manualAndOutboxSection: some View {
         Section {
-            HStack(spacing: 10) {
-                Button {
-                    Task { () -> Void in
-                        await pcSync.pullSnapshotFromPC()
-                    }
-                } label: {
-                    Label(preferences.tr("Kéo từ PC", "Pull from PC"), systemImage: "arrow.down.doc")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(!pcSync.isConnected)
-
-                Button {
-                    Task { () -> Void in
-                        await pcSync.pushFullWorkspaceToPC()
-                    }
-                } label: {
-                    Label(preferences.tr("Đẩy lên PC", "Push to PC"), systemImage: "arrow.up.doc")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(!pcSync.isConnected)
-            }
-
-            if pcSync.pendingOutboxCount > 0 {
-                Button(role: .destructive) {
-                    pcSync.clearOutbox()
-                } label: {
-                    Label(
-                        preferences.tr("Xóa hàng đợi Outbox (\(pcSync.pendingOutboxCount))", "Clear Pending Outbox (\(pcSync.pendingOutboxCount))"),
-                        systemImage: "trash"
-                    )
-                }
-            }
-
-            DisclosureGroup(
-                preferences.tr("Cấu hình Relay / LAN Wi-Fi / Tunnel thủ công", "Manual Relay / LAN Wi-Fi / Tunnel Overrides"),
-                isExpanded: $showManualOverrides
-            ) {
-                VStack(alignment: .leading, spacing: 8) {
-                    labeledField(preferences.tr("Relay Server (Mặc định build.kaydus.xyz)", "Relay Server"), text: $pcSync.relayServerURL, placeholder: PCSyncService.defaultRelayBaseURL)
-                    labeledField(preferences.tr("LAN WebSocket (Cùng Wi-Fi)", "LAN WebSocket (Same Wi-Fi)"), text: $pcSync.lanWebSocketURL, placeholder: "ws://192.168.1.10:30120")
-                    labeledField(preferences.tr("Tunnel / WSS dự phòng", "Backup WSS Tunnel"), text: $pcSync.internetWebSocketURL, placeholder: "wss://...")
-                    labeledField(preferences.tr("Auth Token dự phòng", "Backup Auth Token"), text: $pcSync.authToken, placeholder: "token")
-                    Toggle(preferences.tr("Tự kết nối lại khi rớt mạng", "Auto-reconnect on drop"), isOn: $pcSync.autoReconnect)
-                }
-                .padding(.vertical, 4)
-            }
-
-            DisclosureGroup(
-                preferences.tr("Chạy lệnh từ xa trên PC (Remote Terminal)", "Remote PC Command Runner"),
-                isExpanded: $showRemoteTerminal
-            ) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        TextField("npm run build", text: $remoteCommand)
-                            .font(.system(.caption, design: .monospaced))
-                            .autocapitalization(.none)
-                            .disableAutocorrection(true)
-                            .textFieldStyle(.roundedBorder)
-
-                        Button {
-                            let cmd = remoteCommand
-                            isRunningRemoteCommand = true
-                            Task { () -> Void in
-                                let result = await pcSync.executeCommandOnPC(cmd)
-                                await MainActor.run {
-                                    remoteExitCode = result.exitCode
-                                    remoteCommandOutput = result.output
-                                    isRunningRemoteCommand = false
-                                }
-                            }
-                        } label: {
-                            if isRunningRemoteCommand {
-                                ProgressView()
-                            } else {
-                                Image(systemName: "play.fill")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!pcSync.isConnected || isRunningRemoteCommand || remoteCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-
-                    if let code = remoteExitCode {
-                        Text("Exit code: \(code)")
-                            .font(.caption2.bold())
-                            .foregroundColor(code == 0 ? .green : .red)
-                    }
-
-                    if !remoteCommandOutput.isEmpty {
-                        ScrollView {
-                            Text(remoteCommandOutput)
-                                .font(.system(.caption2, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(8)
-                        }
-                        .frame(maxHeight: 150)
-                        .background(Color.black.opacity(0.25))
-                        .cornerRadius(8)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            DisclosureGroup(
-                preferences.tr("Nhật ký đồng bộ (\(pcSync.activityLogs.count))", "Sync Activity Log (\(pcSync.activityLogs.count))"),
-                isExpanded: $showActivityLogs
-            ) {
-                if pcSync.activityLogs.isEmpty {
-                    Text(preferences.tr("Chưa có nhật ký.", "No logs yet."))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else {
-                    ForEach(pcSync.activityLogs.prefix(25)) { entry in
-                        HStack(alignment: .top, spacing: 6) {
-                            Text(entry.level)
-                                .font(.caption2.bold().monospaced())
-                                .foregroundColor(entry.level == "ERR" ? .red : (entry.level == "WARN" ? .orange : .green))
-                            Text(entry.message)
-                                .font(.caption2)
-                                .foregroundColor(.primary)
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-            }
+            pullPushButtonsRow
+            clearOutboxButtonRow
+            manualOverridesDisclosure
+            remoteTerminalDisclosure
+            syncActivityLogsDisclosure
         } header: {
             Text(preferences.tr("Công cụ & Nâng cao", "Tools & Advanced"))
+        }
+    }
+
+    private var pullPushButtonsRow: some View {
+        HStack(spacing: 10) {
+            Button {
+                Task { () -> Void in
+                    await pcSync.pullSnapshotFromPC()
+                }
+            } label: {
+                Label(preferences.tr("Kéo từ PC", "Pull from PC"), systemImage: "arrow.down.doc")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!pcSync.isConnected)
+
+            Button {
+                Task { () -> Void in
+                    await pcSync.pushFullWorkspaceToPC()
+                }
+            } label: {
+                Label(preferences.tr("Đẩy lên PC", "Push to PC"), systemImage: "arrow.up.doc")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!pcSync.isConnected)
+        }
+    }
+
+    @ViewBuilder
+    private var clearOutboxButtonRow: some View {
+        if pcSync.pendingOutboxCount > 0 {
+            Button(role: .destructive) {
+                pcSync.clearOutbox()
+            } label: {
+                Label(
+                    preferences.tr("Xóa hàng đợi Outbox (\(pcSync.pendingOutboxCount))", "Clear Pending Outbox (\(pcSync.pendingOutboxCount))"),
+                    systemImage: "trash"
+                )
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private var manualOverridesDisclosure: some View {
+        DisclosureGroup(
+            preferences.tr("Cấu hình Relay / LAN Wi-Fi / Tunnel thủ công", "Manual Relay / LAN Wi-Fi / Tunnel Overrides"),
+            isExpanded: $showManualOverrides
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                labeledField(preferences.tr("Relay Server (Mặc định build.kaydus.xyz)", "Relay Server"), text: $pcSync.relayServerURL, placeholder: PCSyncService.defaultRelayBaseURL)
+                labeledField(preferences.tr("LAN WebSocket (Cùng Wi-Fi)", "LAN WebSocket (Same Wi-Fi)"), text: $pcSync.lanWebSocketURL, placeholder: "ws://192.168.1.10:30120")
+                labeledField(preferences.tr("Tunnel / WSS dự phòng", "Backup WSS Tunnel"), text: $pcSync.internetWebSocketURL, placeholder: "wss://...")
+                labeledField(preferences.tr("Auth Token dự phòng", "Backup Auth Token"), text: $pcSync.authToken, placeholder: "token")
+                Toggle(preferences.tr("Tự kết nối lại khi rớt mạng", "Auto-reconnect on drop"), isOn: $pcSync.autoReconnect)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var remoteTerminalDisclosure: some View {
+        DisclosureGroup(
+            preferences.tr("Chạy lệnh từ xa trên PC (Remote Terminal)", "Remote PC Command Runner"),
+            isExpanded: $showRemoteTerminal
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    TextField("npm run build", text: $remoteCommand)
+                        .font(.system(.caption, design: .monospaced))
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        .textFieldStyle(.roundedBorder)
+
+                    Button {
+                        let cmd = remoteCommand
+                        isRunningRemoteCommand = true
+                        Task { () -> Void in
+                            let result = await pcSync.executeCommandOnPC(cmd)
+                            await MainActor.run {
+                                remoteExitCode = result.exitCode
+                                remoteCommandOutput = result.output
+                                isRunningRemoteCommand = false
+                            }
+                        }
+                    } label: {
+                        if isRunningRemoteCommand {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "play.fill")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!pcSync.isConnected || isRunningRemoteCommand || remoteCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if let code = remoteExitCode {
+                    Text("Exit code: \(code)")
+                        .font(.caption2.bold())
+                        .foregroundColor(code == 0 ? .green : .red)
+                }
+
+                if !remoteCommandOutput.isEmpty {
+                    ScrollView {
+                        Text(remoteCommandOutput)
+                            .font(.system(.caption2, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(maxHeight: 150)
+                    .background(Color.black.opacity(0.25))
+                    .cornerRadius(8)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var syncActivityLogsDisclosure: some View {
+        let recentLogs: [PCSyncLogEntry] = Array(pcSync.activityLogs.prefix(25))
+        return DisclosureGroup(
+            preferences.tr("Nhật ký đồng bộ (\(pcSync.activityLogs.count))", "Sync Activity Log (\(pcSync.activityLogs.count))"),
+            isExpanded: $showActivityLogs
+        ) {
+            if recentLogs.isEmpty {
+                Text(preferences.tr("Chưa có nhật ký.", "No logs yet."))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(recentLogs) { entry in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(entry.direction)
+                            .font(.caption2.bold().monospaced())
+                            .foregroundColor(logDirectionColor(entry.direction))
+                        Text(entry.detail)
+                            .font(.caption2)
+                            .foregroundColor(.primary)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+    }
+
+    private func logDirectionColor(_ direction: String) -> Color {
+        switch direction {
+        case "ERR": return .red
+        case "SYS": return .orange
+        case "OUT": return .blue
+        default: return .green
         }
     }
 

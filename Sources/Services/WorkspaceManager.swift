@@ -416,7 +416,7 @@ public final class WorkspaceManager: ObservableObject {
         return result
     }
 
-    public static func canonicalPath(_ url: URL) -> String {
+    nonisolated public static func canonicalPath(_ url: URL) -> String {
         var path = url.resolvingSymlinksInPath().standardizedFileURL.path
         if path.hasPrefix("/private/var/") || path.hasPrefix("/private/tmp/") {
             path = String(path.dropFirst("/private".count))
