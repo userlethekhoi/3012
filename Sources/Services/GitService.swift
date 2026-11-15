@@ -175,26 +175,42 @@ public final class GitService: ObservableObject {
                 let branch = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
                 if !branch.isEmpty { currentBranch = branch }
                 let lines = parts[1].components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-                changedFiles = lines.map { line in
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    let code = String(trimmed.prefix(2)).trimmingCharacters(in: .whitespaces)
-                    let path = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+                changedFiles = lines.compactMap { line in
+                    let rawLine = line.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+                    guard rawLine.count >= 3 else { return nil }
+                    let xy = String(rawLine.prefix(2))
+                    let code = xy.trimmingCharacters(in: .whitespaces)
+                    var rawPath = String(rawLine.dropFirst(2))
+                    if rawPath.hasPrefix(" ") {
+                        rawPath.removeFirst()
+                    }
+                    rawPath = rawPath.trimmingCharacters(in: .whitespaces)
+                    if (xy.contains("R") || xy.contains("C")),
+                       let arrowRange = rawPath.range(of: " -> ", options: .backwards) {
+                        rawPath = String(rawPath[arrowRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+                    }
+                    if rawPath.hasPrefix("\""), rawPath.hasSuffix("\""), rawPath.count >= 2 {
+                        rawPath = String(rawPath.dropFirst().dropLast())
+                            .replacingOccurrences(of: "\\\"", with: "\"")
+                            .replacingOccurrences(of: "\\\\", with: "\\")
+                    }
+                    guard !rawPath.isEmpty else { return nil }
                     let kind: WorkspaceFileDiffStatus
                     let badge: String
                     if code.contains("?") {
                         kind = .untrackedNew
                         badge = "U"
-                    } else if code.contains("A") {
-                        kind = .addedCode
-                        badge = "A"
                     } else if code.contains("D") {
                         kind = .deleted
                         badge = "D"
+                    } else if code.contains("A") {
+                        kind = .addedCode
+                        badge = "A"
                     } else {
                         kind = .modified
                         badge = "M"
                     }
-                    return GitChangedFile(relativePath: path, statusBadge: badge, diffKind: kind)
+                    return GitChangedFile(relativePath: rawPath, statusBadge: badge, diffKind: kind)
                 }
                 return
             }
@@ -299,6 +315,12 @@ public final class GitService: ObservableObject {
     }
 
     public func discardChanges(for filePath: String, workspaceRoot: URL) async {
+        guard WorkspaceManager.isSafeRelativeSyncPath(filePath) else { return }
+        let rootCanon = WorkspaceManager.canonicalPath(workspaceRoot)
+        let rootPrefix = rootCanon == "/" ? "/" : rootCanon + "/"
+        let targetURL = workspaceRoot.appendingPathComponent(filePath)
+        guard WorkspaceManager.canonicalPath(targetURL).hasPrefix(rootPrefix) else { return }
+
         loadLocalRepoMeta(workspaceRoot: workspaceRoot)
         let metaDir = workspaceMetaDirectory(for: workspaceRoot)
         let fallbackBaseline: [String: String] = {
@@ -309,27 +331,42 @@ public final class GitService: ObservableObject {
             }
             return [:]
         }()
-        let deletedGhosts: [String: String] = {
-            if let data = (try? Data(contentsOf: metaDir.appendingPathComponent("deleted.json")))
-                ?? (try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012deleted.json"))),
+        let deletedMetaURL = metaDir.appendingPathComponent("deleted.json")
+        let legacyDeletedURL = workspaceRoot.appendingPathComponent(".3012deleted.json")
+        var deletedGhosts: [String: String] = {
+            if let data = (try? Data(contentsOf: deletedMetaURL))
+                ?? (try? Data(contentsOf: legacyDeletedURL)),
                let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
                 return decoded
             }
             return [:]
         }()
         let snapshot = commits.first?.snapshotFiles ?? fallbackBaseline
-        let targetURL = workspaceRoot.appendingPathComponent(filePath)
         if let oldContent = snapshot[filePath] ?? deletedGhosts[filePath] {
             if let current = try? String(contentsOf: targetURL, encoding: .utf8) {
                 FileTimelineAndArchiveService.shared.recordSnapshot(for: targetURL, content: current, label: "Before Discard")
             }
             try? FileManager.default.createDirectory(at: targetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? oldContent.write(to: targetURL, atomically: true, encoding: .utf8)
+            if deletedGhosts.removeValue(forKey: filePath) != nil {
+                try? FileManager.default.createDirectory(at: metaDir, withIntermediateDirectories: true)
+                if let encoded = try? JSONEncoder().encode(deletedGhosts) {
+                    try? encoded.write(to: deletedMetaURL, options: .atomic)
+                }
+                if FileManager.default.fileExists(atPath: legacyDeletedURL.path),
+                   let encoded = try? JSONEncoder().encode(deletedGhosts) {
+                    try? encoded.write(to: legacyDeletedURL, options: .atomic)
+                }
+            }
         } else {
             if let current = try? String(contentsOf: targetURL, encoding: .utf8) {
                 FileTimelineAndArchiveService.shared.recordSnapshot(for: targetURL, content: current, label: "Before Discard Untracked")
             }
             try? FileManager.default.removeItem(at: targetURL)
+        }
+        if pendingPushDeletePaths.contains(filePath) {
+            pendingPushDeletePaths.removeAll { $0 == filePath }
+            saveLocalRepoMeta(workspaceRoot: workspaceRoot)
         }
         await refreshStatus(workspaceRoot: workspaceRoot, sshService: nil)
     }
@@ -494,6 +531,7 @@ public final class GitService: ObservableObject {
 
             let zipReq = makeGitHubRequest(url: zipEndpoint, pat: pat)
             let (tempZipURL, response) = try await archiveDownloadSession.download(for: zipReq)
+            defer { try? FileManager.default.removeItem(at: tempZipURL) }
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 if code == 404 {
@@ -604,8 +642,8 @@ public final class GitService: ObservableObject {
             var deleteSet = Set(changedFiles.filter { $0.statusBadge == "D" }.map(\.relativePath))
             deleteSet.formUnion(pendingPushDeletePaths)
 
-            if upsertSet.isEmpty && deleteSet.isEmpty && aheadCount > 0 {
-                // User tapped "Commit All" before "Push": compute changed paths across all workspace files against remote tree
+            if aheadCount > 0 {
+                // User tapped "Commit All" before "Push": include committed workspace files alongside any new working-tree edits
                 upsertSet.formUnion(collectWorkspacePushableRelativePaths(at: workspaceRoot))
             }
             deleteSet.subtract(upsertSet)
@@ -1041,6 +1079,7 @@ public final class GitService: ObservableObject {
             }
             let zipReq = makeGitHubRequest(url: zipEndpoint, pat: pat)
             let (tempZipURL, response) = try await archiveDownloadSession.download(for: zipReq)
+            defer { try? FileManager.default.removeItem(at: tempZipURL) }
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 if code == 401 || code == 403 || code == 404 {

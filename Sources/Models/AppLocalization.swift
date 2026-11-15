@@ -203,6 +203,49 @@ public struct CompatibleFileShareButton<LabelContent: View>: View {
     }
 }
 
+public struct CompatibleTextShareButton<LabelContent: View>: View {
+    private let textProvider: () -> String
+    private let label: () -> LabelContent
+
+    public init(text: @escaping () -> String, @ViewBuilder label: @escaping () -> LabelContent) {
+        self.textProvider = text
+        self.label = label
+    }
+
+    public var body: some View {
+        Button {
+            Self.presentShare(text: textProvider())
+        } label: {
+            label()
+        }
+    }
+
+    @MainActor
+    public static func presentShare(text: String) {
+        let scenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+        let activeScene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+        let normalWindows = activeScene?.windows.filter { $0.windowLevel == .normal && !$0.isHidden } ?? []
+        guard let rootVC = normalWindows.first(where: { $0.isKeyWindow })?.rootViewController
+                ?? normalWindows.first?.rootViewController
+                ?? activeScene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
+                ?? activeScene?.windows.first?.rootViewController else {
+            return
+        }
+        var topVC = rootVC
+        while let presented = topVC.presentedViewController, !presented.isBeingDismissed {
+            topVC = presented
+        }
+        let activity = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        if let pop = activity.popoverPresentationController {
+            pop.sourceView = topVC.view
+            pop.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 1, height: 1)
+            pop.permittedArrowDirections = []
+        }
+        topVC.present(activity, animated: true)
+    }
+}
+
 private struct CompatibleTextInputAlertModifier: ViewModifier {
     let title: String
     @Binding var isPresented: Bool

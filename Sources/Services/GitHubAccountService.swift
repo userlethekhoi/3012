@@ -129,6 +129,7 @@ public final class GitHubAccountService: ObservableObject {
 
     private var currentRepoPage: Int = 1
     private var pollingTask: Task<Void, Never>? = nil
+    private var repoFetchGeneration: UInt64 = 0
 
     public var effectiveOAuthClientID: String {
         let custom = customOAuthClientID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -468,7 +469,7 @@ public final class GitHubAccountService: ObservableObject {
                     ? L10n.tr("Không có scope (Chỉ đọc Public)", "No scopes (Public read-only)")
                     : scopes.joined(separator: ", ")
             } else {
-                let canReadPrivate = await probePrivateRepoAccess(token: token)
+                let canReadPrivate = await probePrivateRepoAccess(token: token, userJSON: json)
                 hasPrivateAccess = canReadPrivate
                 scopesSummary = canReadPrivate
                     ? L10n.tr("Fine-grained / App Token (Private OK)", "Fine-grained / App Token (Private OK)")
@@ -524,7 +525,10 @@ public final class GitHubAccountService: ObservableObject {
         return items.first(where: { ($0["verified"] as? Bool) == true })?["email"] as? String
     }
 
-    private func probePrivateRepoAccess(token: String) async -> Bool {
+    private func probePrivateRepoAccess(token: String, userJSON: [String: Any]) async -> Bool {
+        if userJSON["total_private_repos"] != nil || userJSON["owned_private_repos"] != nil {
+            return true
+        }
         guard let url = githubAPIURL(
             pathSegments: ["user", "repos"],
             queryItems: [
@@ -535,21 +539,25 @@ public final class GitHubAccountService: ObservableObject {
             return false
         }
         let req = makeGitHubAPIRequest(url: url, token: token)
-        guard let (_, resp) = try? await URLSession.shared.data(for: req),
-              let http = resp as? HTTPURLResponse else {
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse,
+              (200...299).contains(http.statusCode),
+              let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             return false
         }
-        return (200...299).contains(http.statusCode)
+        return !items.isEmpty
     }
 
     // MARK: - Multi-Account Switching & Sign Out
     public func switchActiveAccount(to id: String) {
         guard accounts.contains(where: { $0.id == id }) else { return }
+        repoFetchGeneration &+= 1
         activeAccountID = id
         persistAccounts()
         syncActiveTokenToLegacyPAT()
         repositories = []
         starredRepositories = []
+        hasMoreRepoPages = false
         errorMessage = nil
         if let login = activeAccount?.login {
             statusMessage = L10n.tr("Đã chuyển sang tài khoản @\(login).", "Switched to @\(login).")
@@ -561,20 +569,28 @@ public final class GitHubAccountService: ObservableObject {
     }
 
     public func signOutAccount(id: String) {
+        let wasActive = (activeAccountID == id)
         accounts.removeAll { $0.id == id }
         KeychainVault.delete(forKey: tokenKey(for: id))
-        if activeAccountID == id || activeAccountID == nil {
+        if wasActive || activeAccountID == nil {
             activeAccountID = accounts.first?.id
         }
         persistAccounts()
-        if let next = accounts.first {
+        if let active = activeAccount {
             syncActiveTokenToLegacyPAT()
-            statusMessage = L10n.tr("Đã đăng xuất tài khoản cũ, đang dùng @\(next.login).", "Signed out account; active account is @\(next.login).")
-            Task { @MainActor [weak self] () -> Void in
-                guard let self else { return }
-                await self.refreshRepositories(reset: true)
+            if wasActive {
+                repoFetchGeneration &+= 1
+                repositories = []
+                starredRepositories = []
+                hasMoreRepoPages = false
+                statusMessage = L10n.tr("Đã đăng xuất tài khoản cũ, đang dùng @\(active.login).", "Signed out account; active account is @\(active.login).")
+                Task { @MainActor [weak self] () -> Void in
+                    guard let self else { return }
+                    await self.refreshRepositories(reset: true)
+                }
             }
         } else {
+            repoFetchGeneration &+= 1
             KeychainVault.delete(forKey: legacyPATKey)
             repositories = []
             starredRepositories = []
@@ -603,6 +619,10 @@ public final class GitHubAccountService: ObservableObject {
 
     // MARK: - Repositories, Branches & Creation
     public func refreshRepositories(reset: Bool = true) async {
+        repoFetchGeneration &+= 1
+        let fetchGen = repoFetchGeneration
+        let capturedAccountID = activeAccountID
+        let capturedLogin = activeAccount?.login.lowercased() ?? ""
         let token = activeToken
         guard !token.isEmpty else {
             repositories = []
@@ -614,7 +634,11 @@ public final class GitHubAccountService: ObservableObject {
         let targetPage = reset ? 1 : (currentRepoPage + 1)
         isLoadingRepos = true
         errorMessage = nil
-        defer { isLoadingRepos = false }
+        defer {
+            if self.repoFetchGeneration == fetchGen {
+                isLoadingRepos = false
+            }
+        }
 
         guard let reposURL = githubAPIURL(
             pathSegments: ["user", "repos"],
@@ -647,13 +671,14 @@ public final class GitHubAccountService: ObservableObject {
                    let starHTTP = starResp as? HTTPURLResponse,
                    (200...299).contains(starHTTP.statusCode),
                    let starArray = try? JSONSerialization.jsonObject(with: starData) as? [[String: Any]] {
-                    let parsedStars = starArray.compactMap { parseRepoJSON($0, forcedStarred: true) }
+                    let parsedStars = starArray.compactMap { parseRepoJSON($0, activeLoginOverride: capturedLogin, forcedStarred: true) }
                     fetchedStarred = parsedStars
                     starredIDs = Set(parsedStars.map(\.id))
                 }
             }
 
             let (repoData, resp) = try await repoResponse
+            guard self.repoFetchGeneration == fetchGen, self.activeAccountID == capturedAccountID else { return }
             guard let http = resp as? HTTPURLResponse else {
                 errorMessage = L10n.tr("Lỗi phản hồi từ GitHub API.", "Invalid GitHub API response.")
                 return
@@ -666,7 +691,7 @@ public final class GitHubAccountService: ObservableObject {
             }
 
             let parsedPage = rawArray.compactMap { dict -> GitHubRepoItem? in
-                guard var item = parseRepoJSON(dict) else { return nil }
+                guard var item = parseRepoJSON(dict, activeLoginOverride: capturedLogin) else { return nil }
                 if starredIDs.contains(item.id) {
                     item.isStarred = true
                 }
@@ -696,6 +721,7 @@ public final class GitHubAccountService: ObservableObject {
                 "Loaded \(repositories.count) repositories (\(privateCount) Private)."
             )
         } catch {
+            guard self.repoFetchGeneration == fetchGen, self.activeAccountID == capturedAccountID else { return }
             errorMessage = L10n.tr("Lỗi tải kho repo: \(error.localizedDescription)", "Error loading repositories: \(error.localizedDescription)")
         }
     }
@@ -767,7 +793,7 @@ public final class GitHubAccountService: ObservableObject {
         return createdItem
     }
 
-    private func parseRepoJSON(_ dict: [String: Any], forcedStarred: Bool = false) -> GitHubRepoItem? {
+    private func parseRepoJSON(_ dict: [String: Any], activeLoginOverride: String? = nil, forcedStarred: Bool = false) -> GitHubRepoItem? {
         guard let id = dict["id"] as? Int,
               let name = dict["name"] as? String,
               let fullName = dict["full_name"] as? String else {
@@ -776,7 +802,7 @@ public final class GitHubAccountService: ObservableObject {
         let ownerDict = dict["owner"] as? [String: Any]
         let ownerLogin = (ownerDict?["login"] as? String) ?? (fullName.split(separator: "/").first.map(String.init) ?? "")
         let ownerType = (ownerDict?["type"] as? String) ?? ""
-        let activeLogin = activeAccount?.login.lowercased() ?? ""
+        let activeLogin = (activeLoginOverride ?? activeAccount?.login ?? "").lowercased()
         let isOrg = (ownerType == "Organization") || (!activeLogin.isEmpty && ownerLogin.lowercased() != activeLogin)
         let updatedStr = dict["updated_at"] as? String ?? dict["pushed_at"] as? String
         let updatedAt = updatedStr.flatMap { isoFormatter.date(from: $0) } ?? Date()

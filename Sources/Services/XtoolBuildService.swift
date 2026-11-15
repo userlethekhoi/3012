@@ -692,6 +692,10 @@ public final class XtoolBuildService: ObservableObject {
                 try generatedText.write(to: xtoolURL, atomically: true, encoding: .utf8)
                 syncOpenTab(in: workspace, fileURL: xtoolURL, content: generatedText)
                 workspace.reloadTree()
+                workspace.onFileSavedOrChanged?()
+                if !workspace.suppressOutboundSyncEvents {
+                    workspace.onWorkspaceMutation?(.upsertFile(relativePath: "xtool.yml", content: generatedText))
+                }
                 return isEnglish
                     ? "Created xtool.yml for product '\(primaryProduct)' (\(libraryProducts.count) library target(s))."
                     : "Đã khởi tạo xtool.yml cho product '\(primaryProduct)' (\(libraryProducts.count) thư viện)."
@@ -742,6 +746,10 @@ public final class XtoolBuildService: ObservableObject {
             try updatedYAML.write(to: xtoolURL, atomically: true, encoding: .utf8)
             syncOpenTab(in: workspace, fileURL: xtoolURL, content: updatedYAML)
             workspace.reloadTree()
+            workspace.onFileSavedOrChanged?()
+            if !workspace.suppressOutboundSyncEvents {
+                workspace.onWorkspaceMutation?(.upsertFile(relativePath: "xtool.yml", content: updatedYAML))
+            }
             return isEnglish
                 ? "Synced xtool.yml with Package.swift (product: \(primaryProduct))."
                 : "Đã đồng bộ xtool.yml với Package.swift (product: \(primaryProduct))."
@@ -1350,12 +1358,12 @@ public final class XtoolBuildService: ObservableObject {
             try fm.createDirectory(at: projectStage, withIntermediateDirectories: true)
             let excludedDirs: Set<String> = [".git", ".build", ".swiftpm", "packages", "xtool", ".xtool-tmp", "node_modules", "__MACOSX"]
             let canonicalRoot = WorkspaceManager.canonicalPath(workspaceRoot)
+            let rootPrefix = canonicalRoot == "/" ? "/" : canonicalRoot + "/"
             if let enumerator = fm.enumerator(
                 at: workspaceRoot,
                 includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                 options: []
             ) {
-                let rootPath = workspaceRoot.standardizedFileURL.path
                 for case let url as URL in enumerator {
                     let name = url.lastPathComponent
                     if excludedDirs.contains(name) || name.hasPrefix(".3012") || name == ".DS_Store" {
@@ -1369,14 +1377,11 @@ public final class XtoolBuildService: ObservableObject {
                         continue
                     }
                     let canonicalItem = WorkspaceManager.canonicalPath(url)
-                    guard canonicalItem.hasPrefix(canonicalRoot + "/") else {
+                    guard canonicalItem.hasPrefix(rootPrefix) else {
                         if isDir { enumerator.skipDescendants() }
                         continue
                     }
-                    var rel = url.standardizedFileURL.path
-                    if rel.hasPrefix(rootPath) {
-                        rel = String(rel.dropFirst(rootPath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                    }
+                    let rel = String(canonicalItem.dropFirst(rootPrefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                     guard !rel.isEmpty else { continue }
                     let targetURL = projectStage.appendingPathComponent(rel)
                     if isDir {

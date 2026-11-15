@@ -731,7 +731,7 @@ public struct AIAgentSidePanel: View {
     private func diffCard(messageID: UUID, edit: AgentProposedEdit, palette: IDEColorPalette) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Image(systemName: "doc.badge.gearshape.fill")
+                Image(systemName: "doc.text.fill")
                     .foregroundColor(Color(hex: palette.accent))
                 Text(edit.relativePath)
                     .font(.system(size: 11, weight: .bold, design: .monospaced))

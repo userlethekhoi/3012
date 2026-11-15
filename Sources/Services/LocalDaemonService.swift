@@ -318,7 +318,12 @@ public final class LocalDaemonService: ObservableObject {
         let pid = nextPID
         nextPID += 1
 
-        let relPath = fileURL.path.replacingOccurrences(of: workspaceRoot.path + "/", with: "")
+        let fileCanon = WorkspaceManager.canonicalPath(fileURL)
+        let rootCanon = WorkspaceManager.canonicalPath(workspaceRoot)
+        let rootPrefix = rootCanon == "/" ? "/" : rootCanon + "/"
+        let relPath = fileCanon.hasPrefix(rootPrefix)
+            ? String(fileCanon.dropFirst(rootPrefix.count))
+            : fileURL.lastPathComponent
         let job = LocalDaemonJob(
             pid: pid,
             name: fileURL.lastPathComponent,

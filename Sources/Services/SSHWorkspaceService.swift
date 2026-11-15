@@ -153,6 +153,9 @@ public final class SSHWorkspaceService: ObservableObject {
 
     // Mapping from local cached file URL -> remote SFTP path so Editor tabs sync automatically on Save!
     private var remoteFileBindings: [URL: String] = [:]
+    private var connectGeneration: UInt64 = 0
+    private var pendingSFTPMirrorWrites: [URL: (remotePath: String, content: String)] = [:]
+    private var activeSFTPMirrorWriteURLs: Set<URL> = []
 
     public var isConnected: Bool {
         sshClient != nil && connectedProfile != nil
@@ -169,6 +172,8 @@ public final class SSHWorkspaceService: ObservableObject {
             return
         }
         await disconnect()
+        connectGeneration &+= 1
+        let gen = connectGeneration
         isConnecting = true
         statusMessage = "Đang kết nối SSH tới \(profile.username)@\(profile.host):\(profile.port)..."
 
@@ -191,9 +196,23 @@ public final class SSHWorkspaceService: ObservableObject {
                 hostKeyValidator: .acceptAnything(),
                 reconnect: .once
             )
+            guard self.connectGeneration == gen else {
+                try? await client.close()
+                return
+            }
 
             let sftp = try await client.openSFTP()
+            guard self.connectGeneration == gen else {
+                try? await sftp.close()
+                try? await client.close()
+                return
+            }
             let resolvedStart = (try? await sftp.getRealPath(atPath: profile.initialRemotePath)) ?? "/"
+            guard self.connectGeneration == gen else {
+                try? await sftp.close()
+                try? await client.close()
+                return
+            }
 
             self.sshClient = client
             self.sftpClient = sftp
@@ -205,12 +224,15 @@ public final class SSHWorkspaceService: ObservableObject {
             await refreshRemoteDirectory()
             startInteractivePTYShell()
         } catch {
-            self.isConnecting = false
-            self.statusMessage = "Lỗi kết nối SSH: \(error.localizedDescription)"
+            if self.connectGeneration == gen {
+                self.isConnecting = false
+                self.statusMessage = "Lỗi kết nối SSH: \(error.localizedDescription)"
+            }
         }
     }
 
     public func disconnect() async {
+        connectGeneration &+= 1
         ptyTask?.cancel()
         ptyTask = nil
         ptyStdinWriter = nil
@@ -222,6 +244,8 @@ public final class SSHWorkspaceService: ObservableObject {
         tunnelConnectionStore.cancelAll()
         activeTunnels.removeAll()
         remoteFileBindings.removeAll()
+        pendingSFTPMirrorWrites.removeAll()
+        activeSFTPMirrorWriteURLs.removeAll()
 
         if let sftp = sftpClient {
             try? await sftp.close()
@@ -234,6 +258,7 @@ public final class SSHWorkspaceService: ObservableObject {
         sshClient = nil
         connectedProfile = nil
         remoteEntries = []
+        isConnecting = false
         statusMessage = "Đã ngắt kết nối VPS"
     }
 
@@ -322,19 +347,34 @@ public final class SSHWorkspaceService: ObservableObject {
     }
 
     public func syncSavedLocalMirrorIfNeeded(localURL: URL, content: String) {
-        guard let remotePath = remoteFileBindings[localURL.standardizedFileURL],
-              let sftp = sftpClient else { return }
-        Task {
-            do {
-                var buf = ByteBufferAllocator().buffer(capacity: content.utf8.count)
-                buf.writeString(content)
-                let finalBuf = buf
-                try await sftp.withFile(filePath: remotePath, flags: [.write, .create, .truncate]) { file in
-                    try await file.write(finalBuf)
+        let stdURL = localURL.standardizedFileURL
+        guard let remotePath = remoteFileBindings[stdURL],
+              sftpClient != nil else { return }
+        pendingSFTPMirrorWrites[stdURL] = (remotePath: remotePath, content: content)
+        guard !activeSFTPMirrorWriteURLs.contains(stdURL) else { return }
+        activeSFTPMirrorWriteURLs.insert(stdURL)
+        let gen = connectGeneration
+        Task { @MainActor [weak self] () -> Void in
+            guard let self else { return }
+            defer {
+                if self.connectGeneration == gen {
+                    self.activeSFTPMirrorWriteURLs.remove(stdURL)
                 }
-                self.statusMessage = "Đã lưu SFTP: \((remotePath as NSString).lastPathComponent)"
-            } catch {
-                self.statusMessage = "Lỗi lưu SFTP: \(error.localizedDescription)"
+            }
+            while self.connectGeneration == gen,
+                  let next = self.pendingSFTPMirrorWrites.removeValue(forKey: stdURL),
+                  let sftp = self.sftpClient {
+                do {
+                    var buf = ByteBufferAllocator().buffer(capacity: next.content.utf8.count)
+                    buf.writeString(next.content)
+                    let finalBuf = buf
+                    try await sftp.withFile(filePath: next.remotePath, flags: [.write, .create, .truncate]) { file in
+                        try await file.write(finalBuf)
+                    }
+                    self.statusMessage = "Đã lưu SFTP: \((next.remotePath as NSString).lastPathComponent)"
+                } catch {
+                    self.statusMessage = "Lỗi lưu SFTP: \(error.localizedDescription)"
+                }
             }
         }
     }

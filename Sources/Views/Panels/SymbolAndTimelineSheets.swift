@@ -187,15 +187,13 @@ public struct FileTimelineSheet: View {
 
                             HStack {
                                 Spacer()
-                                Button {
+                                IDEPillButton(prominence: .prominent, tint: .blue) {
                                     onRestoreContent(snap.content)
                                     dismiss()
                                 } label: {
                                     Label("Khôi phục bản này", systemImage: "arrow.counterclockwise")
                                         .font(.system(size: 12, weight: .semibold))
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
                             }
                         }
                         .padding(.vertical, 4)

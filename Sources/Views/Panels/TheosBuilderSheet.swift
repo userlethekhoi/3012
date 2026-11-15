@@ -296,8 +296,12 @@ public struct TheosBuilderSheet: View {
                                 CompatibleFileShareButton(item: item.localURL) {
                                     Label(preferences.tr("Xuất", "Export"), systemImage: "square.and.arrow.up")
                                         .font(.system(size: 12, weight: .bold))
+                                        .foregroundColor(.blue)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .background(Capsule().fill(Color.blue.opacity(0.14)))
                                 }
-                                .buttonStyle(.bordered)
+                                .buttonStyle(.plain)
                             }
                         }
                     }

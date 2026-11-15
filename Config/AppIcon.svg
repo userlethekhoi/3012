@@ -1,12 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" fill="none">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#1E232E"/>
-      <stop offset="100%" stop-color="#0F1218"/>
+    <linearGradient id="bgGrad" x1="512" y1="0" x2="512" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0B0F19"/>
+      <stop offset="55%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#090D17"/>
     </linearGradient>
+    <radialGradient id="emeraldGlow" cx="36%" cy="44%" r="42%">
+      <stop offset="0%" stop-color="#10B981" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#10B981" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="skyGlow" cx="64%" cy="56%" r="40%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="chevGrad" x1="512" y1="300" x2="512" y2="724" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#34D399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="slashGrad" x1="566" y1="272" x2="458" y2="752" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7DD3FC"/>
+      <stop offset="55%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#10B981"/>
+    </linearGradient>
+    
   </defs>
-  <rect width="1024" height="1024" fill="url(#bg)"/>
-  <polyline points="366,356 214,512 366,668" fill="none" stroke="#0A84FF" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
-  <line x1="558" y1="316" x2="466" y2="708" stroke="#64D2FF" stroke-width="64" stroke-linecap="round"/>
-  <polyline points="658,356 810,512 658,668" fill="none" stroke="#F2F5FA" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
+  <g>
+    <rect width="1024" height="1024" fill="url(#bgGrad)"/>
+    <rect width="1024" height="1024" fill="url(#emeraldGlow)"/>
+    <rect width="1024" height="1024" fill="url(#skyGlow)"/>
+    <rect x="108" y="108" width="808" height="808" rx="188" fill="#FFFFFF" fill-opacity="0.04" stroke="#94A3B8" stroke-opacity="0.16" stroke-width="4"/>
+    <path d="M 380 336 L 206 512 L 380 688" stroke="url(#chevGrad)" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 644 336 L 818 512 L 644 688" stroke="url(#chevGrad)" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="566" y1="272" x2="458" y2="752" stroke="url(#slashGrad)" stroke-width="68" stroke-linecap="round"/>
+  </g>
 </svg>

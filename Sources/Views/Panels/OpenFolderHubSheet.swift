@@ -37,22 +37,19 @@ public struct OpenFolderHubSheet: View {
                                 .font(.system(size: 12))
                                 .foregroundColor(.secondary)
                             HStack(spacing: 8) {
-                                Button {
+                                IDEPillButton(prominence: .prominent, tint: .blue) {
                                     startFolderFilesImport()
                                 } label: {
                                     Label(L10n.tr("Chọn File vào Dự án", "Pick Folder Files"), systemImage: "doc.on.doc.fill")
                                         .font(.system(size: 12, weight: .semibold))
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.blue)
 
-                                Button {
+                                IDEPillButton(prominence: .secondary, tint: .accentColor) {
                                     startZipImport()
                                 } label: {
                                     Label(L10n.tr("Nhập .zip", "Import .zip"), systemImage: "archivebox.fill")
                                         .font(.system(size: 12, weight: .semibold))
                                 }
-                                .buttonStyle(.bordered)
                             }
                         }
                         .padding(.vertical, 4)
@@ -60,7 +57,7 @@ public struct OpenFolderHubSheet: View {
                 }
 
                 Section {
-                    ForEach(workspace.listInternalProjectFolders(), id: \.path) { folderURL in
+                    ForEach(workspace.availableWorkspaces, id: \.path) { folderURL in
                         let isActive = folderURL.standardizedFileURL.path == workspace.rootURL.standardizedFileURL.path
                         Button {
                             workspace.switchWorkspaceFolder(to: folderURL, hasSecurityScope: false)
@@ -229,6 +226,9 @@ public struct OpenFolderHubSheet: View {
                     workspace.createNewProjectWorkspace(named: name)
                     dismiss()
                 }
+            }
+            .onAppear {
+                _ = workspace.listInternalProjectFolders()
             }
         }
     }

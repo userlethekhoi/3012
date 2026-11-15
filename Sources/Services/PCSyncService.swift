@@ -141,6 +141,7 @@ public final class PCSyncService: NSObject, ObservableObject {
     private var activeSessionIsPinPairing: Bool = false
     private var activeHandshakeCompleted: Bool = false
     private let clientDeviceUUID: String = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16))
+    private var boundWorkspaceCanonicalPath: String? = nil
 
     public override init() {
         let savedRelay = UserDefaults.standard.string(forKey: "3012.pcsync.relay") ?? Self.defaultRelayBaseURL
@@ -168,6 +169,29 @@ public final class PCSyncService: NSObject, ObservableObject {
 
     public func attachWorkspace(_ manager: WorkspaceManager) {
         self.workspaceManager = manager
+        self.boundWorkspaceCanonicalPath = WorkspaceManager.canonicalPath(manager.rootURL)
+    }
+
+    public func handleWorkspaceRootChanged(to newRoot: URL) {
+        let newCanon = WorkspaceManager.canonicalPath(newRoot)
+        guard let previous = boundWorkspaceCanonicalPath else {
+            boundWorkspaceCanonicalPath = newCanon
+            return
+        }
+        guard previous != newCanon else { return }
+        boundWorkspaceCanonicalPath = newCanon
+        for (_, task) in debounceTasks { task.cancel() }
+        debounceTasks.removeAll()
+        if !outbox.isEmpty {
+            outbox.removeAll()
+            saveOutboxToDisk()
+        }
+        if isConnected || isConnecting {
+            disconnectInternal(keepDesired: false)
+            isConnecting = false
+            statusMessage = "Đã đổi Workspace — tạm ngắt PC Sync cũ để tránh ghi đè chéo dự án."
+            appendLog("SYS", "Đổi Workspace sang \(newRoot.lastPathComponent): đã xoá Outbox cũ và ngắt phiên PC Sync trước đó.")
+        }
     }
 
     // MARK: - E2EE Key Derivation & AES-256-GCM Helpers (Identical to extension.js & sync.mjs)
@@ -1033,6 +1057,14 @@ public final class PCSyncService: NSObject, ObservableObject {
 
         case .deleteItem(let rel, let isDir):
             debounceTasks["upsert::\(rel)"]?.cancel()
+            debounceTasks.removeValue(forKey: "upsert::\(rel)")
+            if isDir {
+                let keyPrefix = "upsert::\(rel)/"
+                for k in debounceTasks.keys where k.hasPrefix(keyPrefix) {
+                    debounceTasks[k]?.cancel()
+                    debounceTasks.removeValue(forKey: k)
+                }
+            }
             let item = SyncOutboxItem(
                 kind: "delete",
                 path: rel,
@@ -1046,6 +1078,14 @@ public final class PCSyncService: NSObject, ObservableObject {
 
         case .renameItem(let oldRel, let newRel, let isDir):
             debounceTasks["upsert::\(oldRel)"]?.cancel()
+            debounceTasks.removeValue(forKey: "upsert::\(oldRel)")
+            if isDir {
+                let keyPrefix = "upsert::\(oldRel)/"
+                for k in debounceTasks.keys where k.hasPrefix(keyPrefix) {
+                    debounceTasks[k]?.cancel()
+                    debounceTasks.removeValue(forKey: k)
+                }
+            }
             let item = SyncOutboxItem(
                 kind: "rename",
                 path: newRel,
@@ -1118,6 +1158,12 @@ public final class PCSyncService: NSObject, ObservableObject {
     private func enqueueOrSend(_ item: SyncOutboxItem) async {
         if item.kind == "upsert" {
             outbox.removeAll { $0.kind == "upsert" && $0.path == item.path }
+        } else if item.kind == "delete" {
+            let prefix = item.path + "/"
+            outbox.removeAll { existing in
+                (existing.kind == "upsert" || existing.kind == "mkdir") &&
+                (existing.path == item.path || (item.isDir == true && existing.path.hasPrefix(prefix)))
+            }
         }
         outbox.append(item)
         saveOutboxToDisk()
@@ -1132,16 +1178,17 @@ public final class PCSyncService: NSObject, ObservableObject {
         isFlushingOutbox = true
         defer { isFlushingOutbox = false }
 
-        let snapshot = outbox
         var sentCount = 0
-        for item in snapshot {
+        while let item = outbox.first {
             guard self.webSocketTask === task, self.isConnected else { break }
             var payload: [String: Any] = ["type": item.kind, "path": item.path]
             if let old = item.oldPath { payload["oldPath"] = old }
             if let content = item.content { payload["content"] = content }
             if let isDir = item.isDir { payload["isDir"] = isDir }
             if await sendProtocolJSON(payload, on: task) {
-                outbox.removeAll { $0.id == item.id }
+                if let idx = outbox.firstIndex(where: { $0.id == item.id }) {
+                    outbox.remove(at: idx)
+                }
                 sentCount += 1
                 syncedFilesCount += 1
                 appendLog("OUT", "\(item.kind): \(item.path)")

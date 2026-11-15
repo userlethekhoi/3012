@@ -180,7 +180,7 @@ public final class FileTimelineAndArchiveService: ObservableObject {
             let children = ((try? fm.contentsOfDirectory(
                 at: tempExtract,
                 includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
+                options: []
             )) ?? []).filter { $0.lastPathComponent != "__MACOSX" && $0.lastPathComponent != ".DS_Store" }
 
             let sourceDir: URL
@@ -236,7 +236,7 @@ public final class FileTimelineAndArchiveService: ObservableObject {
             let children = ((try? fm.contentsOfDirectory(
                 at: tempExtract,
                 includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
+                options: []
             )) ?? []).filter { $0.lastPathComponent != "__MACOSX" && $0.lastPathComponent != ".DS_Store" }
 
             let sourceToCopy: URL

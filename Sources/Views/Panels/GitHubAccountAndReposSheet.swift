@@ -28,13 +28,23 @@ private enum GitHubRepoFilterMode: Int, CaseIterable, Identifiable {
 
     var id: Int { rawValue }
 
+    var systemImage: String {
+        switch self {
+        case .all: return "square.grid.2x2"
+        case .privateOnly: return "lock.fill"
+        case .publicOnly: return "globe"
+        case .orgOnly: return "building.2.fill"
+        case .starred: return "star.fill"
+        }
+    }
+
     func title(using preferences: EditorPreferences) -> String {
         switch self {
         case .all: return preferences.tr("Tất cả", "All")
-        case .privateOnly: return "Private 🔒"
-        case .publicOnly: return "Public 🌐"
-        case .orgOnly: return "Org 🏢"
-        case .starred: return "Starred ⭐"
+        case .privateOnly: return "Private"
+        case .publicOnly: return "Public"
+        case .orgOnly: return "Org"
+        case .starred: return "Starred"
         }
     }
 }
@@ -90,22 +100,31 @@ public struct GitHubAccountAndReposSheet: View {
 
     public var body: some View {
         CompatibleNavigationContainer {
-            VStack(spacing: 0) {
-                Picker("", selection: $selectedTab) {
-                    Text(preferences.tr("Tài khoản", "Accounts")).tag(0)
-                    Text(preferences.tr("Kho Repo", "Repositories")).tag(1)
-                    Text("Publish & PR").tag(2)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+            ZStack {
+                Color(uiColor: .systemGroupedBackground)
+                    .ignoresSafeArea()
 
-                if selectedTab == 0 {
-                    accountsTabView
-                } else if selectedTab == 1 {
-                    repositoriesTabView
-                } else {
-                    publishAndPRTabView
+                VStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        Picker("", selection: $selectedTab) {
+                            Text(preferences.tr("Tài khoản", "Accounts")).tag(0)
+                            Text(preferences.tr("Kho Repo", "Repositories")).tag(1)
+                            Text("Publish & PR").tag(2)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        Divider()
+                    }
+                    .background(Color(uiColor: .secondarySystemGroupedBackground))
+
+                    if selectedTab == 0 {
+                        accountsTabView
+                    } else if selectedTab == 1 {
+                        repositoriesTabView
+                    } else {
+                        publishAndPRTabView
+                    }
                 }
             }
             .navigationTitle("GitHub Integration")
@@ -132,6 +151,9 @@ public struct GitHubAccountAndReposSheet: View {
                     Task { @MainActor () -> Void in
                         await githubAuth.refreshRepositories(reset: true)
                     }
+                }
+                Task { @MainActor () -> Void in
+                    await gitService.refreshStatus(workspaceRoot: workspace.rootURL, sshService: nil)
                 }
             }
         }
@@ -183,13 +205,16 @@ public struct GitHubAccountAndReposSheet: View {
                                                 .font(.system(size: 14, weight: .bold))
                                                 .foregroundColor(.primary)
 
-                                            Text(acct.hasPrivateRepoAccess ? "Private + Public 🔒" : "Public Only 🌐")
-                                                .font(.system(size: 10, weight: .bold))
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background((acct.hasPrivateRepoAccess ? Color.green : Color.orange).opacity(0.16))
-                                                .foregroundColor(acct.hasPrivateRepoAccess ? .green : .orange)
-                                                .cornerRadius(4)
+                                            Label(
+                                                acct.hasPrivateRepoAccess ? "Private + Public" : "Public Only",
+                                                systemImage: acct.hasPrivateRepoAccess ? "lock.fill" : "globe"
+                                            )
+                                            .font(.system(size: 10, weight: .bold))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background((acct.hasPrivateRepoAccess ? Color.green : Color.orange).opacity(0.16))
+                                            .foregroundColor(acct.hasPrivateRepoAccess ? .green : .orange)
+                                            .cornerRadius(4)
                                         }
 
                                         if !acct.name.isEmpty && acct.name != acct.login {
@@ -226,35 +251,30 @@ public struct GitHubAccountAndReposSheet: View {
                         .padding(.vertical, 3)
                     }
 
-                    Button {
+                    IDEActionButton(prominence: .prominent, tint: .blue, fullWidth: true) {
                         selectedTab = 1
                     } label: {
                         Label(
                             preferences.tr("Mở Kho Repo (Private & Public)", "Browse Private & Public Repos"),
                             systemImage: "arrow.triangle.branch"
                         )
-                        .font(.system(size: 13.5, weight: .semibold))
                     }
-                    .buttonStyle(.borderedProminent)
+                    .padding(.vertical, 2)
                 }
             }
 
             Section {
                 switch githubAuth.deviceFlowState {
                 case .idle:
-                    Button {
+                    IDEActionButton(prominence: .prominent, tint: .blue, fullWidth: true) {
                         githubAuth.startDeviceFlow()
                     } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "safari")
-                            Text(preferences.tr(
-                                "Đăng nhập 1-Chạm qua GitHub Browser",
-                                "1-Tap Sign In via GitHub Browser"
-                            ))
-                            .font(.system(size: 14, weight: .semibold))
-                        }
+                        Label(
+                            preferences.tr("Đăng nhập 1-Chạm qua GitHub Browser", "1-Tap Sign In via GitHub Browser"),
+                            systemImage: "safari"
+                        )
                     }
-                    .buttonStyle(.borderedProminent)
+                    .padding(.vertical, 2)
 
                 case .requestingCode:
                     HStack(spacing: 10) {
@@ -284,34 +304,27 @@ public struct GitHubAccountAndReposSheet: View {
 
                             Spacer()
 
-                            Button {
+                            IDEPillButton(prominence: .secondary, tint: .blue) {
                                 UIPasteboard.general.string = userCode
                             } label: {
                                 Label(preferences.tr("Copy Mã", "Copy"), systemImage: "doc.on.doc")
-                                    .font(.system(size: 12, weight: .semibold))
                             }
-                            .buttonStyle(.bordered)
                         }
 
                         HStack(spacing: 8) {
-                            Button {
+                            IDEActionButton(prominence: .prominent, tint: .blue, fullWidth: true, compact: true) {
                                 if let target = URL(string: verificationURI) {
                                     safariTarget = GitHubSafariURLItem(url: target)
                                 }
                             } label: {
-                                Label(preferences.tr("Mở GitHub Xác nhận Ngay", "Authorize in GitHub"), systemImage: "safari")
-                                    .font(.system(size: 13, weight: .semibold))
+                                Label(preferences.tr("Mở GitHub Xác nhận", "Authorize GitHub"), systemImage: "safari")
                             }
-                            .buttonStyle(.borderedProminent)
 
-                            Button {
+                            IDEActionButton(prominence: .destructive, tint: .red, fullWidth: true, compact: true) {
                                 githubAuth.cancelDeviceFlow()
                             } label: {
                                 Text(preferences.tr("Hủy", "Cancel"))
-                                    .font(.system(size: 12.5, weight: .semibold))
-                                    .foregroundColor(.red)
                             }
-                            .buttonStyle(.bordered)
                         }
 
                         HStack(spacing: 8) {
@@ -330,11 +343,12 @@ public struct GitHubAccountAndReposSheet: View {
                         Text(preferences.tr("Đã kết nối thành công @\(login)!", "Successfully authorized @\(login)!"))
                             .font(.system(size: 13, weight: .semibold))
                         Spacer()
-                        Button(preferences.tr("Đăng nhập thêm", "Add Another")) {
+                        IDEPillButton(prominence: .secondary, tint: .blue) {
                             githubAuth.deviceFlowState = .idle
                             githubAuth.startDeviceFlow()
+                        } label: {
+                            Text(preferences.tr("Đăng nhập thêm", "Add Another"))
                         }
-                        .buttonStyle(.bordered)
                     }
 
                 case .failed(let reason):
@@ -342,10 +356,11 @@ public struct GitHubAccountAndReposSheet: View {
                         Text(reason)
                             .font(.system(size: 12.5))
                             .foregroundColor(.orange)
-                        Button(preferences.tr("Thử lại Device Flow", "Retry Device Flow")) {
+                        IDEActionButton(prominence: .prominent, tint: .blue, fullWidth: true, compact: true) {
                             githubAuth.startDeviceFlow()
+                        } label: {
+                            Text(preferences.tr("Thử lại Device Flow", "Retry Device Flow"))
                         }
-                        .buttonStyle(.borderedProminent)
                     }
                 }
 
@@ -375,7 +390,7 @@ public struct GitHubAccountAndReposSheet: View {
                     .autocorrectionDisabled(true)
 
                 HStack(spacing: 8) {
-                    Button {
+                    IDEActionButton(prominence: .prominent, tint: .blue, fullWidth: true, compact: true) {
                         let candidate = patInput
                         Task { @MainActor () -> Void in
                             let ok = await githubAuth.signInWithToken(candidate, authKind: "pat")
@@ -390,23 +405,20 @@ public struct GitHubAccountAndReposSheet: View {
                                 Text(preferences.tr("Đang kiểm tra...", "Verifying..."))
                             }
                         } else {
-                            Label(preferences.tr("Đăng nhập bằng Token", "Sign In with Token"), systemImage: "key.fill")
-                                .font(.system(size: 13, weight: .semibold))
+                            Label(preferences.tr("Đăng nhập Token", "Sign In Token"), systemImage: "key.fill")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
                     .disabled(githubAuth.isAuthenticating || patInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                    Button {
+                    IDEActionButton(prominence: .secondary, tint: .blue, fullWidth: true, compact: true) {
                         if let createTokenURL = URL(string: "https://github.com/settings/tokens/new?description=3012%20Mobile%20IDE&scopes=repo,read:org,user:email,workflow,gist") {
                             safariTarget = GitHubSafariURLItem(url: createTokenURL)
                         }
                     } label: {
                         Label(preferences.tr("Tạo Token 1-Chạm", "Create Token"), systemImage: "safari")
-                            .font(.system(size: 12.5, weight: .semibold))
                     }
-                    .buttonStyle(.bordered)
                 }
+                .padding(.vertical, 2)
             } header: {
                 Text("Personal Access Token (Classic & Fine-grained)")
             } footer: {
@@ -469,23 +481,22 @@ public struct GitHubAccountAndReposSheet: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
-                    .background(Color(.secondarySystemBackground))
+                    .background(Color(uiColor: .secondarySystemGroupedBackground))
                     .cornerRadius(8)
 
                     if githubAuth.isSignedIn {
-                        Button {
+                        IDEPillButton(prominence: .secondary, tint: .blue) {
                             Task { @MainActor () -> Void in
                                 await githubAuth.refreshRepositories(reset: true)
                             }
                         } label: {
                             if githubAuth.isLoadingRepos {
-                                ProgressView().scaleEffect(0.8)
+                                ProgressView().scaleEffect(0.75)
                             } else {
                                 Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(.system(size: 13.5, weight: .semibold))
                             }
                         }
-                        .buttonStyle(.bordered)
                         .disabled(githubAuth.isLoadingRepos)
                     }
                 }
@@ -496,13 +507,14 @@ public struct GitHubAccountAndReposSheet: View {
                             Button {
                                 repoFilter = mode
                             } label: {
-                                Text(mode.title(using: preferences))
+                                Label(mode.title(using: preferences), systemImage: mode.systemImage)
                                     .font(.system(size: 11.5, weight: repoFilter == mode ? .bold : .medium))
+                                    .lineLimit(1)
                                     .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(repoFilter == mode ? Color.accentColor : Color(.secondarySystemBackground))
+                                    .padding(.vertical, 5.5)
+                                    .background(repoFilter == mode ? Color.accentColor : Color(uiColor: .secondarySystemGroupedBackground))
                                     .foregroundColor(repoFilter == mode ? .white : .primary)
-                                    .cornerRadius(14)
+                                    .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
                         }
@@ -517,12 +529,13 @@ public struct GitHubAccountAndReposSheet: View {
                 }
             }
             .padding(.horizontal, 16)
+            .padding(.top, 10)
             .padding(.bottom, 8)
 
             List {
                 if !githubAuth.isSignedIn {
                     Section {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 10) {
                             Text(preferences.tr(
                                 "Kết nối Tài khoản GitHub để tự động tải toàn bộ Private & Public Repositories của bạn.",
                                 "Connect your GitHub Account to automatically list all of your Private & Public Repositories."
@@ -530,16 +543,14 @@ public struct GitHubAccountAndReposSheet: View {
                             .font(.system(size: 13))
                             .foregroundColor(.secondary)
 
-                            Button {
+                            IDEActionButton(prominence: .prominent, tint: .blue, fullWidth: true) {
                                 selectedTab = 0
                             } label: {
                                 Label(
                                     preferences.tr("Kết nối Tài khoản GitHub Ngay", "Connect GitHub Account"),
                                     systemImage: "person.crop.circle.badge.checkmark"
                                 )
-                                .font(.system(size: 13, weight: .semibold))
                             }
-                            .buttonStyle(.borderedProminent)
                         }
                         .padding(.vertical, 4)
                     }
@@ -552,7 +563,7 @@ public struct GitHubAccountAndReposSheet: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
 
-                        Button {
+                        IDEPillButton(prominence: .prominent, tint: .blue) {
                             let target = quickCloneInput
                             cloningRepoName = target
                             Task { @MainActor () -> Void in
@@ -568,7 +579,6 @@ public struct GitHubAccountAndReposSheet: View {
                             Text(preferences.tr("Clone", "Clone"))
                                 .font(.system(size: 12.5, weight: .bold))
                         }
-                        .buttonStyle(.borderedProminent)
                         .disabled(gitService.isBusy || quickCloneInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
@@ -592,22 +602,18 @@ public struct GitHubAccountAndReposSheet: View {
                             }
 
                             if repoFilter != .starred && githubAuth.hasMoreRepoPages {
-                                Button {
+                                IDEActionButton(prominence: .secondary, tint: .blue, fullWidth: true, compact: true) {
                                     Task { @MainActor () -> Void in
                                         await githubAuth.refreshRepositories(reset: false)
                                     }
                                 } label: {
-                                    HStack {
-                                        Spacer()
+                                    HStack(spacing: 8) {
                                         if githubAuth.isLoadingRepos {
-                                            ProgressView().scaleEffect(0.8)
+                                            ProgressView().scaleEffect(0.75)
                                         }
                                         Text(preferences.tr("Tải thêm Repository...", "Load More Repositories..."))
-                                            .font(.system(size: 13, weight: .semibold))
-                                        Spacer()
                                     }
                                 }
-                                .buttonStyle(.bordered)
                             }
                         }
                     }
@@ -653,11 +659,12 @@ public struct GitHubAccountAndReposSheet: View {
                     .lineLimit(2)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 if !repo.language.isEmpty {
                     Text(repo.language)
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
 
                 if repo.stargazersCount > 0 {
@@ -671,7 +678,7 @@ public struct GitHubAccountAndReposSheet: View {
                     }
                 }
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 Menu {
                     ForEach(branches, id: \.self) { branch in
@@ -707,16 +714,22 @@ public struct GitHubAccountAndReposSheet: View {
                         } else {
                             Text(selectedBranch)
                                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
                         }
                     }
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color(.secondarySystemBackground))
+                    .padding(.vertical, 5)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Color.secondary.opacity(0.22), lineWidth: 0.6)
+                    )
                     .cornerRadius(6)
                 }
                 .buttonStyle(.borderless)
 
-                Button {
+                IDEPillButton(prominence: .prominent, tint: .blue) {
                     cloningRepoName = repo.fullName
                     Task { @MainActor () -> Void in
                         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -743,7 +756,7 @@ public struct GitHubAccountAndReposSheet: View {
                             .font(.system(size: 11.5, weight: .bold))
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .layoutPriority(2)
                 .disabled(gitService.isBusy)
             }
         }
@@ -755,7 +768,7 @@ public struct GitHubAccountAndReposSheet: View {
         Form {
             Section {
                 if !githubAuth.isSignedIn {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         Text(preferences.tr(
                             "Vui lòng kết nối Tài khoản GitHub trước khi tạo Repository hoặc Pull Request.",
                             "Connect your GitHub Account before publishing a workspace or creating a Pull Request."
@@ -763,10 +776,11 @@ public struct GitHubAccountAndReposSheet: View {
                         .font(.system(size: 12.5))
                         .foregroundColor(.orange)
 
-                        Button(preferences.tr("Đi tới Đăng nhập GitHub", "Go to GitHub Sign In")) {
+                        IDEActionButton(prominence: .prominent, tint: .blue, fullWidth: true) {
                             selectedTab = 0
+                        } label: {
+                            Text(preferences.tr("Đi tới Đăng nhập GitHub", "Go to GitHub Sign In"))
                         }
-                        .buttonStyle(.borderedProminent)
                     }
                 } else {
                     HStack {
@@ -800,7 +814,7 @@ public struct GitHubAccountAndReposSheet: View {
                         }
                     }
 
-                    Button {
+                    IDEActionButton(prominence: .prominent, tint: .blue, fullWidth: true) {
                         workspace.saveAllTabs()
                         let name = publishRepoName
                         let desc = publishDescription
@@ -829,20 +843,17 @@ public struct GitHubAccountAndReposSheet: View {
                                 preferences.tr("Tạo Repo & Push Toàn Bộ Code", "Create Repo & Push Workspace"),
                                 systemImage: "arrow.up.to.line"
                             )
-                            .font(.system(size: 13.5, weight: .bold))
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .padding(.vertical, 2)
                     .disabled(gitService.isBusy || publishRepoName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     if let repoLink = publishedRepoURLString, let url = URL(string: repoLink) {
-                        Button {
+                        IDEActionButton(prominence: .secondary, tint: .blue, fullWidth: true, compact: true) {
                             safariTarget = GitHubSafariURLItem(url: url)
                         } label: {
                             Label(preferences.tr("Mở Repo vừa tạo trên GitHub", "Open Repository on GitHub"), systemImage: "safari")
-                                .font(.system(size: 12.5, weight: .semibold))
                         }
-                        .buttonStyle(.bordered)
                     }
                 }
             } header: {
@@ -872,7 +883,7 @@ public struct GitHubAccountAndReposSheet: View {
                     TextField(preferences.tr("Mô tả thay đổi...", "Description..."), text: $prBodyInput)
                         .font(.system(size: 12.5))
 
-                    Button {
+                    IDEActionButton(prominence: .prominent, tint: .blue, fullWidth: true) {
                         let title = prTitleInput
                         let body = prBodyInput
                         let base = prBaseBranch
@@ -893,19 +904,16 @@ public struct GitHubAccountAndReposSheet: View {
                             preferences.tr("Tạo Pull Request (\(gitService.currentBranch) -> \(prBaseBranch))", "Create Pull Request"),
                             systemImage: "arrow.triangle.branch"
                         )
-                        .font(.system(size: 13, weight: .semibold))
                     }
-                    .buttonStyle(.borderedProminent)
+                    .padding(.vertical, 2)
                     .disabled(gitService.isBusy || !githubAuth.isSignedIn || prTitleInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     if let prLink = createdPRURLString, let url = URL(string: prLink) {
-                        Button {
+                        IDEActionButton(prominence: .secondary, tint: .blue, fullWidth: true, compact: true) {
                             safariTarget = GitHubSafariURLItem(url: url)
                         } label: {
                             Label(preferences.tr("Xem Pull Request vừa tạo", "Open Created Pull Request"), systemImage: "safari")
-                                .font(.system(size: 12.5, weight: .semibold))
                         }
-                        .buttonStyle(.bordered)
                     }
                 } header: {
                     Text(preferences.tr("Tạo Pull Request Nhanh", "Quick Create Pull Request"))

@@ -1166,6 +1166,7 @@ public struct LeftExplorerDrawer: View {
                         Button {
                             let msg = commitMessageInput
                             commitMessageInput = ""
+                            workspace.saveAllTabs()
                             Task {
                                 await gitService.commitAll(message: msg, workspaceRoot: workspace.rootURL, sshService: sshService)
                                 workspace.resetDiffBaselineToCurrentDisk(with: gitService.commits.first?.snapshotFiles)
@@ -1212,6 +1213,7 @@ public struct LeftExplorerDrawer: View {
 
                         Button {
                             let msg = commitMessageInput
+                            workspace.saveAllTabs()
                             Task {
                                 if sshService.isConnected {
                                     let escapedDir = sshService.currentRemoteDirectory.replacingOccurrences(of: "'", with: "'\"'\"'")
@@ -1273,6 +1275,7 @@ public struct LeftExplorerDrawer: View {
 
                             Button {
                                 let msg = commitMessageInput
+                                workspace.saveAllTabs()
                                 Task {
                                     let ok = await gitService.pushToGitHubREST(workspaceRoot: workspace.rootURL, commitMessage: msg, force: true)
                                     if ok {
@@ -1349,11 +1352,24 @@ public struct LeftExplorerDrawer: View {
                                 } else {
                                     await gitService.discardChanges(for: item.relativePath, workspaceRoot: workspace.rootURL)
                                     let targetURL = workspace.rootURL.appendingPathComponent(item.relativePath)
-                                    if let tabIdx = workspace.openTabs.firstIndex(where: { WorkspaceManager.canonicalPath($0.fileURL) == WorkspaceManager.canonicalPath(targetURL) }),
-                                       let reloaded = try? String(contentsOf: targetURL, encoding: .utf8) {
-                                        workspace.openTabs[tabIdx].content = reloaded
-                                        workspace.openTabs[tabIdx].savedContent = reloaded
+                                    let targetCanon = WorkspaceManager.canonicalPath(targetURL)
+                                    if FileManager.default.fileExists(atPath: targetURL.path) {
+                                        if let tabIdx = workspace.openTabs.firstIndex(where: { WorkspaceManager.canonicalPath($0.fileURL) == targetCanon }),
+                                           let reloaded = try? String(contentsOf: targetURL, encoding: .utf8) {
+                                            workspace.openTabs[tabIdx].content = reloaded
+                                            workspace.openTabs[tabIdx].savedContent = reloaded
+                                            workspace.openTabs[tabIdx].selectedRangeLocation = min(
+                                                workspace.openTabs[tabIdx].selectedRangeLocation,
+                                                (reloaded as NSString).length
+                                            )
+                                            workspace.openTabs[tabIdx].selectedRangeLength = 0
+                                        }
+                                    } else if let tabIdx = workspace.openTabs.firstIndex(where: { WorkspaceManager.canonicalPath($0.fileURL) == targetCanon }) {
+                                        workspace.openTabs[tabIdx].savedContent = workspace.openTabs[tabIdx].content
+                                        let tabID = workspace.openTabs[tabIdx].id
+                                        workspace.closeTab(tabID)
                                     }
+                                    workspace.clearDeletedGhostEntry(relativePath: item.relativePath)
                                     workspace.reloadTree()
                                 }
                             }

@@ -140,25 +140,24 @@ public struct DeveloperPowerToolsSheet: View {
                 }
 
                 HStack {
-                    Button {
+                    IDEPillButton(prominence: .secondary, tint: .accentColor) {
                         testCases.append(CPTestCaseItem(input: "", expectedOutput: ""))
                     } label: {
                         Label(preferences.tr("+ Thêm Test", "+ Add Test"), systemImage: "plus.circle")
+                            .font(.system(size: 12, weight: .semibold))
                     }
-                    .buttonStyle(.bordered)
 
                     Spacer()
 
-                    Button {
+                    IDEPillButton(prominence: .prominent, tint: .accentColor) {
                         Task { await runAllTests() }
                     } label: {
-                        HStack {
-                            if isJudging { ProgressView().scaleEffect(0.8) }
+                        HStack(spacing: 6) {
+                            if isJudging { ProgressView().scaleEffect(0.75) }
                             Text(preferences.tr("Chấm toàn bộ (\(testCases.count))", "Run All Tests (\(testCases.count))"))
-                                .font(.system(size: 13, weight: .bold))
+                                .font(.system(size: 12.5, weight: .bold))
                         }
                     }
-                    .buttonStyle(.borderedProminent)
                     .disabled(isJudging || workspace.activeTab == nil)
                 }
             }
@@ -326,17 +325,14 @@ public struct DeveloperPowerToolsSheet: View {
                     }
                 }
 
-                Button {
+                IDEActionButton(prominence: .prominent, tint: .accentColor, fullWidth: true, compact: true) {
                     Task { await sendHTTPRequest() }
                 } label: {
-                    HStack {
-                        if isSendingHTTP { ProgressView().scaleEffect(0.8) }
+                    HStack(spacing: 6) {
+                        if isSendingHTTP { ProgressView().scaleEffect(0.75) }
                         Text(preferences.tr("Gửi Request", "Send Request"))
-                            .font(.system(size: 14, weight: .bold))
                     }
-                    .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
                 .disabled(isSendingHTTP)
             }
 
@@ -354,10 +350,11 @@ public struct DeveloperPowerToolsSheet: View {
                         Text("\(responseLatencyMs) ms")
                             .font(.caption.monospaced())
                             .foregroundColor(.secondary)
-                        Button(preferences.tr("Copy JSON", "Copy")) {
+                        IDEPillButton(prominence: .secondary, tint: .accentColor) {
                             UIPasteboard.general.string = responseBody
+                        } label: {
+                            Text(preferences.tr("Copy JSON", "Copy"))
                         }
-                        .buttonStyle(.bordered)
                     }
 
                     ScrollView {
@@ -373,21 +370,24 @@ public struct DeveloperPowerToolsSheet: View {
             Section(preferences.tr("Xuất Code 1-Chạm", "1-Tap Client Codegen")) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        Button("Copy cURL") {
+                        IDEPillButton(prominence: .secondary, tint: .accentColor) {
                             UIPasteboard.general.string = generateCurlCode()
                             postmanNotice = "Copied cURL command."
+                        } label: {
+                            Text("Copy cURL")
                         }
-                        .buttonStyle(.bordered)
-                        Button("Copy JS fetch") {
+                        IDEPillButton(prominence: .secondary, tint: .accentColor) {
                             UIPasteboard.general.string = generateJSFetchCode()
                             postmanNotice = "Copied JavaScript fetch()."
+                        } label: {
+                            Text("Copy JS fetch")
                         }
-                        .buttonStyle(.bordered)
-                        Button("Copy Python") {
+                        IDEPillButton(prominence: .secondary, tint: .accentColor) {
                             UIPasteboard.general.string = generatePythonRequestsCode()
                             postmanNotice = "Copied Python requests code."
+                        } label: {
+                            Text("Copy Python")
                         }
-                        .buttonStyle(.bordered)
                     }
                 }
                 if let postmanNotice {
@@ -538,15 +538,17 @@ public struct DeveloperPowerToolsSheet: View {
                         .font(.system(size: 12.5, design: .monospaced))
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
-                    Button("+") {
+                    IDEPillButton(prominence: .prominent, tint: .accentColor) {
                         let k = newEnvKey.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !k.isEmpty else { return }
                         envPairs.append((id: UUID(), key: k, value: newEnvValue, hidden: true))
                         newEnvKey = ""
                         newEnvValue = ""
                         saveEnvPairs()
+                    } label: {
+                        Text("+")
+                            .font(.system(size: 13, weight: .bold))
                     }
-                    .buttonStyle(.borderedProminent)
                 }
             } header: {
                 Text(preferences.tr("Thêm biến môi trường (.env)", "Add Variable to .env"))
@@ -743,14 +745,15 @@ public struct DeveloperPowerToolsSheet: View {
                 HStack {
                     TextField(preferences.tr("Lưu nhanh lệnh hoặc đoạn code...", "Save snippet or note..."), text: $newClipText)
                         .font(.system(size: 12.5, design: .monospaced))
-                    Button(preferences.tr("Lưu", "Save")) {
+                    IDEPillButton(prominence: .prominent, tint: .accentColor) {
                         let clean = newClipText.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !clean.isEmpty else { return }
                         clipNotes.insert(clean, at: 0)
                         newClipText = ""
                         persistClipboardHistory()
+                    } label: {
+                        Text(preferences.tr("Lưu", "Save"))
                     }
-                    .buttonStyle(.borderedProminent)
                 }
 
                 Button {
@@ -768,10 +771,11 @@ public struct DeveloperPowerToolsSheet: View {
                             .font(.system(size: 12, design: .monospaced))
                             .lineLimit(2)
                         Spacer()
-                        Button(preferences.tr("Copy", "Copy")) {
+                        IDEPillButton(prominence: .secondary, tint: .accentColor) {
                             UIPasteboard.general.string = note
+                        } label: {
+                            Text(preferences.tr("Copy", "Copy"))
                         }
-                        .buttonStyle(.bordered)
                         Button(role: .destructive) {
                             if clipNotes.indices.contains(idx) {
                                 clipNotes.remove(at: idx)
@@ -797,10 +801,11 @@ public struct DeveloperPowerToolsSheet: View {
             Text(value)
                 .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
                 .textSelection(.enabled)
-            Button(preferences.tr("Copy", "Copy")) {
+            IDEPillButton(prominence: .secondary, tint: .accentColor) {
                 UIPasteboard.general.string = value
+            } label: {
+                Text(preferences.tr("Copy", "Copy"))
             }
-            .buttonStyle(.bordered)
         }
     }
 

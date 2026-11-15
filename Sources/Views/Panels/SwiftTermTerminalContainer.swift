@@ -1400,6 +1400,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 if let mIdx = args.firstIndex(where: { $0 == "-m" || $0 == "-am" }), mIdx + 1 < args.count {
                     message = args[mIdx + 1]
                 }
+                parent.workspace.saveAllTabs()
                 await parent.gitService.commitAll(message: message, workspaceRoot: root, sshService: nil)
                 parent.workspace.resetDiffBaselineToCurrentDisk(with: parent.gitService.commits.first?.snapshotFiles)
                 emit(parent.gitService.statusBanner + "\n")
@@ -1425,6 +1426,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     }
                 }
             case "branch":
+                await parent.gitService.refreshStatus(workspaceRoot: root, sshService: nil)
                 let rest = Array(args.dropFirst())
                 if rest.contains("-a") || rest.contains("-r") || rest.contains("--all") {
                     emit("* \(parent.gitService.currentBranch)\n")
@@ -1439,6 +1441,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     emit("* \(parent.gitService.currentBranch)\n")
                 }
             case "checkout", "switch":
+                await parent.gitService.refreshStatus(workspaceRoot: root, sshService: nil)
                 let rest = Array(args.dropFirst())
                 if let idx = rest.firstIndex(where: { $0 == "-b" || $0 == "-c" }), idx + 1 < rest.count {
                     let newBranch = rest[idx + 1]
@@ -1451,6 +1454,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     emit("usage: git \(sub) [-b|-c] <branch>\n")
                 }
             case "remote":
+                await parent.gitService.refreshStatus(workspaceRoot: root, sshService: nil)
                 let rest = Array(args.dropFirst())
                 if rest.isEmpty || rest == ["-v"] {
                     if parent.gitService.remoteOriginURL.isEmpty {
@@ -1479,6 +1483,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     emit("\u{001B}[31m\(parent.gitService.statusBanner)\u{001B}[0m\n")
                 }
             case "push":
+                parent.workspace.saveAllTabs()
                 let rest = Array(args.dropFirst())
                 let force = rest.contains("-f") || rest.contains("--force")
                 let ok = await parent.gitService.pushToGitHubREST(
@@ -1519,14 +1524,15 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     emit("usage: git clone [-b <branch>] <owner/repo | https://github.com/owner/repo>\n")
                     return
                 }
-                emit("Cloning \(repo) into Workspace...\n")
+                emit("Cloning \(repo) into Documents workspace...\n")
                 if let dest = await parent.gitService.cloneGitHubRepository(
                     repoInput: repo,
-                    into: parent.workspace.rootURL,
+                    into: parent.workspace.documentsDirectory,
                     branchOverride: branchArg
                 ) {
-                    parent.workspace.reloadTree()
-                    emit("\u{001B}[32m[CLONED]\u{001B}[0m \(repo) -> \(dest.lastPathComponent)/\n")
+                    parent.workspace.switchWorkspaceFolder(to: dest)
+                    self.localCWD = dest
+                    emit("\u{001B}[32m[CLONED]\u{001B}[0m \(repo) -> opened workspace \(dest.lastPathComponent)/\n")
                 } else {
                     emit("\u{001B}[31m\(parent.gitService.statusBanner)\u{001B}[0m\n")
                 }
@@ -1653,19 +1659,36 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                         emit("usage: gh repo clone <owner/repo> [-b <branch>]\n")
                         return
                     }
-                    emit("Cloning \(repo) into Workspace...\n")
+                    emit("Cloning \(repo) into Documents workspace...\n")
                     if let dest = await parent.gitService.cloneGitHubRepository(
                         repoInput: repo,
-                        into: parent.workspace.rootURL,
+                        into: parent.workspace.documentsDirectory,
                         branchOverride: branchArg
                     ) {
-                        parent.workspace.reloadTree()
-                        emit("\u{001B}[32m[CLONED]\u{001B}[0m \(repo) -> \(dest.lastPathComponent)/\n")
+                        parent.workspace.switchWorkspaceFolder(to: dest)
+                        self.localCWD = dest
+                        emit("\u{001B}[32m[CLONED]\u{001B}[0m \(repo) -> opened workspace \(dest.lastPathComponent)/\n")
                     } else {
                         emit("\u{001B}[31m\(parent.gitService.statusBanner)\u{001B}[0m\n")
                     }
                 case "create":
-                    guard let name = rest.first(where: { !$0.hasPrefix("-") }) else {
+                    var repoName: String? = nil
+                    var skipCreateVal = false
+                    for token in rest {
+                        if skipCreateVal {
+                            skipCreateVal = false
+                            continue
+                        }
+                        if token == "-d" || token == "--description" {
+                            skipCreateVal = true
+                            continue
+                        }
+                        if !token.hasPrefix("-") {
+                            repoName = token
+                            break
+                        }
+                    }
+                    guard let name = repoName else {
                         emit("usage: gh repo create <name> [--private|--public] [-d <description>] [--push]\n")
                         return
                     }
@@ -1675,6 +1698,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                         desc = rest[dIdx + 1]
                     }
                     if rest.contains("--push") {
+                        parent.workspace.saveAllTabs()
                         let ok = await parent.gitService.publishWorkspaceToNewRepo(
                             name: name,
                             description: desc,

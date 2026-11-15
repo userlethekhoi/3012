@@ -17,6 +17,7 @@ public struct PCSyncCompanionSheet: View {
     @State private var showManualOverrides: Bool = false
     @State private var showRemoteTerminal: Bool = false
     @State private var showActivityLogs: Bool = false
+    @State private var cliPlatform: Int = 0 // 0 = Windows PowerShell, 1 = macOS / Linux / Git Bash
 
     public init(
         pcSync: PCSyncService,
@@ -32,13 +33,27 @@ public struct PCSyncCompanionSheet: View {
         preferences.activePalette
     }
 
-    private var oneLineCLIInstallCommand: String {
+    private var effectiveSyncBaseAndKey: (base: String, key: String) {
         let base = pcSync.relayServerURL
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let effectiveBase = base.isEmpty ? PCSyncService.defaultRelayBaseURL : base
         let safeKey = pcSync.permanentSyncKey.isEmpty ? "YOUR_SYNC_KEY" : pcSync.permanentSyncKey
-        return "curl -fsSL \(effectiveBase)/sync.mjs -o 3012-sync.mjs && node 3012-sync.mjs --key \(safeKey)"
+        return (effectiveBase, safeKey)
+    }
+
+    private var windowsPowerShellCLICommand: String {
+        let info = effectiveSyncBaseAndKey
+        return "curl.exe -fsSL \(info.base)/sync.mjs -o \"$env:TEMP\\3012-sync.mjs\"; node \"$env:TEMP\\3012-sync.mjs\" --key \(info.key)"
+    }
+
+    private var unixBashCLICommand: String {
+        let info = effectiveSyncBaseAndKey
+        return "curl -fsSL \(info.base)/sync.mjs -o /tmp/3012-sync.mjs && node /tmp/3012-sync.mjs --key \(info.key)"
+    }
+
+    private var activeCLICommand: String {
+        cliPlatform == 0 ? windowsPowerShellCLICommand : unixBashCLICommand
     }
 
     public var body: some View {
@@ -194,16 +209,14 @@ public struct PCSyncCompanionSheet: View {
                         .font(.system(size: 18, weight: .bold, design: .monospaced))
                         .textFieldStyle(.roundedBorder)
 
-                    Button {
+                    IDEPillButton(prominence: .prominent, tint: .accentColor) {
                         let pin = pinInput
                         Task { () -> Void in
                             await pcSync.connectWithQuickPIN(pin)
                         }
                     } label: {
                         Text(preferences.tr("Ghép PIN", "Pair PIN"))
-                            .fontWeight(.semibold)
                     }
-                    .buttonStyle(.borderedProminent)
                     .disabled(pinInput.filter(\.isNumber).count < 4 || pcSync.isConnecting)
                 }
             }
@@ -230,17 +243,16 @@ public struct PCSyncCompanionSheet: View {
                         .autocorrectionDisabled(true)
                         .textFieldStyle(.roundedBorder)
 
-                    Button {
+                    IDEPillButton(prominence: .secondary, tint: .accentColor) {
                         copyToClipboard(pcSync.permanentSyncKey, notice: preferences.tr("Đã copy Permanent Key", "Copied Permanent Key"))
                     } label: {
                         Image(systemName: "doc.on.clipboard")
                     }
-                    .buttonStyle(.bordered)
                     .disabled(pcSync.permanentSyncKey.isEmpty)
                 }
 
                 HStack(spacing: 10) {
-                    Button {
+                    IDEActionButton(prominence: .prominent, tint: .accentColor, fullWidth: true) {
                         Task { () -> Void in
                             await pcSync.connectAuto()
                         }
@@ -251,18 +263,15 @@ public struct PCSyncCompanionSheet: View {
                                 : preferences.tr("Kết nối ngay", "Connect Now"),
                             systemImage: "bolt.fill"
                         )
-                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
                     .disabled(pcSync.isConnecting)
 
                     if pcSync.isConnected || pcSync.isConnecting || pcSync.isRelayRoomActive {
-                        Button(role: .destructive) {
+                        IDEPillButton(prominence: .destructive, tint: .red) {
                             pcSync.disconnect()
                         } label: {
                             Label(preferences.tr("Ngắt", "Disconnect"), systemImage: "xmark.circle.fill")
                         }
-                        .buttonStyle(.bordered)
                     }
                 }
             }
@@ -275,7 +284,7 @@ public struct PCSyncCompanionSheet: View {
         }
     }
 
-    // MARK: - Card 2: PC Setup (Extension .vsix & Node 1-Liner)
+    // MARK: - Card 2: PC Setup (Extension .vsix & Platform-aware Node 1-Liner)
 
     private var pcSetupSection: some View {
         Section {
@@ -291,36 +300,58 @@ public struct PCSyncCompanionSheet: View {
             }
             .padding(.vertical, 2)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Label(preferences.tr("Cách 2: Lệnh 1 dòng (Không cần mở VS Code)", "Option 2: 1-Line CLI (No Extension Needed)"), systemImage: "terminal.fill")
+            VStack(alignment: .leading, spacing: 8) {
+                Label(preferences.tr("Cách 2: Lệnh 1 dòng (Không cần Extension)", "Option 2: 1-Line CLI (No Extension Needed)"), systemImage: "terminal.fill")
                     .font(.subheadline.bold())
 
-                Text(oneLineCLIInstallCommand)
+                Picker("", selection: $cliPlatform) {
+                    Text("Windows PowerShell").tag(0)
+                    Text("macOS / Linux / Bash").tag(1)
+                }
+                .pickerStyle(.segmented)
+
+                Text(activeCLICommand)
                     .font(.system(.caption2, design: .monospaced))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.secondary.opacity(0.1))
                     .cornerRadius(8)
+                    .textSelection(.enabled)
 
-                HStack {
-                    Button {
-                        copyToClipboard(oneLineCLIInstallCommand, notice: preferences.tr("Đã copy lệnh chạy trên PC", "Copied PC CLI command"))
+                if cliPlatform == 0 {
+                    Text(preferences.tr(
+                        "PowerShell 5.1 không hỗ trợ '&&' và 'curl' bị map sang Invoke-WebRequest — lệnh trên dùng curl.exe + ';' và chạy đúng tại thư mục dự án bạn đang mở.",
+                        "Windows PowerShell 5.1 rejects '&&' and aliases 'curl' — the command above uses curl.exe + ';' in your opened project folder."
+                    ))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    IDEActionButton(prominence: .secondary, tint: .accentColor, fullWidth: true, compact: true) {
+                        copyToClipboard(
+                            activeCLICommand,
+                            notice: cliPlatform == 0
+                                ? preferences.tr("Đã copy lệnh Windows PowerShell", "Copied Windows PowerShell command")
+                                : preferences.tr("Đã copy lệnh macOS/Linux", "Copied macOS/Linux command")
+                        )
                     } label: {
-                        Label(preferences.tr("Copy lệnh 1 dòng", "Copy 1-Line Cmd"), systemImage: "doc.on.clipboard")
+                        Label(
+                            cliPlatform == 0 ? preferences.tr("Copy PowerShell", "Copy PowerShell") : preferences.tr("Copy Bash/Zsh", "Copy Bash/Zsh"),
+                            systemImage: "doc.on.clipboard"
+                        )
                     }
-                    .buttonStyle(.bordered)
 
-                    Button {
+                    IDEActionButton(prominence: .secondary, tint: .accentColor, fullWidth: true, compact: true) {
                         let script = PCSyncService.generateCompanionScript(
                             suggestedToken: pcSync.permanentSyncKey,
                             relayBaseURL: pcSync.relayServerURL
                         )
                         copyToClipboard(script, notice: preferences.tr("Đã copy hướng dẫn & Script", "Copied setup script"))
                     } label: {
-                        Label(preferences.tr("Copy Script đầy đủ", "Copy Full Script"), systemImage: "doc.on.doc")
+                        Label(preferences.tr("Script đầy đủ", "Full Script"), systemImage: "doc.on.doc")
                     }
-                    .buttonStyle(.bordered)
                 }
             }
             .padding(.vertical, 2)
@@ -337,7 +368,7 @@ public struct PCSyncCompanionSheet: View {
                         .autocorrectionDisabled(true)
                         .textFieldStyle(.roundedBorder)
 
-                    Button(preferences.tr("Áp dụng", "Apply")) {
+                    IDEPillButton(prominence: .secondary, tint: .accentColor) {
                         if pcSync.applyPairingString(pairingInput) {
                             copiedMessage = preferences.tr("Đã áp dụng cấu hình ghép đôi!", "Pairing configuration applied!")
                             Task { () -> Void in
@@ -346,8 +377,9 @@ public struct PCSyncCompanionSheet: View {
                         } else {
                             copiedMessage = preferences.tr("Link ghép đôi không hợp lệ.", "Invalid pairing URL.")
                         }
+                    } label: {
+                        Text(preferences.tr("Áp dụng", "Apply"))
                     }
-                    .buttonStyle(.bordered)
                     .disabled(pairingInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
@@ -373,26 +405,22 @@ public struct PCSyncCompanionSheet: View {
 
     private var pullPushButtonsRow: some View {
         HStack(spacing: 10) {
-            Button {
+            IDEActionButton(prominence: .secondary, tint: .accentColor, fullWidth: true, compact: true) {
                 Task { () -> Void in
                     await pcSync.pullSnapshotFromPC()
                 }
             } label: {
                 Label(preferences.tr("Kéo từ PC", "Pull from PC"), systemImage: "arrow.down.doc")
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
             .disabled(!pcSync.isConnected)
 
-            Button {
+            IDEActionButton(prominence: .secondary, tint: .accentColor, fullWidth: true, compact: true) {
                 Task { () -> Void in
                     await pcSync.pushFullWorkspaceToPC()
                 }
             } label: {
                 Label(preferences.tr("Đẩy lên PC", "Push to PC"), systemImage: "arrow.up.doc")
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
             .disabled(!pcSync.isConnected)
         }
     }
@@ -441,7 +469,7 @@ public struct PCSyncCompanionSheet: View {
                         .autocorrectionDisabled(true)
                         .textFieldStyle(.roundedBorder)
 
-                    Button {
+                    IDEPillButton(prominence: .prominent, tint: .accentColor) {
                         let cmd = remoteCommand
                         isRunningRemoteCommand = true
                         Task { () -> Void in
@@ -454,12 +482,11 @@ public struct PCSyncCompanionSheet: View {
                         }
                     } label: {
                         if isRunningRemoteCommand {
-                            ProgressView()
+                            ProgressView().scaleEffect(0.75)
                         } else {
                             Image(systemName: "play.fill")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
                     .disabled(!pcSync.isConnected || isRunningRemoteCommand || remoteCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
 

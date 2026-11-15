@@ -44,6 +44,34 @@ public final class LiveServerService: ObservableObject {
     private var rootDirectory: URL?
     private var silentAudioPlayer: AVAudioPlayer?
     private var recentRemoteViewers: [String: Date] = [:]
+    private var hasRegisteredAudioObserver: Bool = false
+
+    private final class ObserverBag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var tokens: [NSObjectProtocol] = []
+
+        func add(_ token: NSObjectProtocol) {
+            lock.lock()
+            tokens.append(token)
+            lock.unlock()
+        }
+
+        func removeAll() {
+            lock.lock()
+            let current = tokens
+            tokens.removeAll()
+            lock.unlock()
+            for token in current {
+                NotificationCenter.default.removeObserver(token)
+            }
+        }
+    }
+
+    private let observerBag = ObserverBag()
+
+    deinit {
+        observerBag.removeAll()
+    }
 
     private final class LockedRootBox: @unchecked Sendable {
         private let lock = NSLock()
@@ -224,9 +252,41 @@ public final class LiveServerService: ObservableObject {
         }
     }
 
+    private func registerAudioInterruptionObserverIfNeeded() {
+        guard !hasRegisteredAudioObserver else { return }
+        hasRegisteredAudioObserver = true
+        let token = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            let typeVal = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            let optVal = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt
+            Task { @MainActor [weak self] in
+                guard let self,
+                      let raw = typeVal,
+                      let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+                if type == .ended {
+                    let opts = AVAudioSession.InterruptionOptions(rawValue: optVal ?? 0)
+                    if opts.contains(.shouldResume) || (self.isRunning && self.isBackgroundKeepAliveActive) {
+                        self.updateBackgroundKeepAlive(enabled: true)
+                    }
+                }
+            }
+        }
+        observerBag.add(token)
+    }
+
     public func updateBackgroundKeepAlive(enabled: Bool) {
         if enabled && isRunning {
-            guard silentAudioPlayer == nil else {
+            registerAudioInterruptionObserverIfNeeded()
+            if let existing = silentAudioPlayer {
+                if !existing.isPlaying {
+                    let session = AVAudioSession.sharedInstance()
+                    try? session.setCategory(.playback, options: [.mixWithOthers])
+                    try? session.setActive(true)
+                    existing.play()
+                }
                 isBackgroundKeepAliveActive = true
                 return
             }
@@ -247,6 +307,8 @@ public final class LiveServerService: ObservableObject {
         } else {
             silentAudioPlayer?.stop()
             silentAudioPlayer = nil
+            observerBag.removeAll()
+            hasRegisteredAudioObserver = false
             isBackgroundKeepAliveActive = false
         }
     }

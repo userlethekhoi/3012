@@ -409,8 +409,9 @@ public final class AIAgentService: ObservableObject {
     }
 
     public func switchSession(to id: UUID) {
-        guard let target = sessions.first(where: { $0.id == id }) else { return }
+        guard activeSessionID != id else { return }
         stopGenerating()
+        guard let target = sessions.first(where: { $0.id == id }) else { return }
         activeSessionID = id
         messages = target.messages
     }
@@ -461,6 +462,51 @@ public final class AIAgentService: ObservableObject {
         }
     }
 
+    public func loadCustomHeaderSecrets(for profile: AIProviderProfile) -> [String: String] {
+        guard let raw = KeychainVault.loadString(forKey: profile.customHeadersKeychainAccount),
+              let data = raw.data(using: .utf8),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return [:]
+        }
+        return dict
+    }
+
+    public func saveCustomHeaderSecrets(from profile: AIProviderProfile) {
+        guard let cfg = profile.customPostConfig else {
+            KeychainVault.delete(forKey: profile.customHeadersKeychainAccount)
+            return
+        }
+        var secrets: [String: String] = [:]
+        for item in cfg.headers where item.isSecret {
+            let trimmedVal = item.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedVal.isEmpty {
+                secrets[item.id.uuidString] = item.value
+            }
+        }
+        if secrets.isEmpty {
+            KeychainVault.delete(forKey: profile.customHeadersKeychainAccount)
+        } else if let data = try? JSONEncoder().encode(secrets),
+                  let jsonStr = String(data: data, encoding: .utf8) {
+            KeychainVault.saveString(jsonStr, forKey: profile.customHeadersKeychainAccount)
+        }
+    }
+
+    public func hydratedProfile(_ profile: AIProviderProfile) -> AIProviderProfile {
+        guard var cfg = profile.customPostConfig else { return profile }
+        let secrets = loadCustomHeaderSecrets(for: profile)
+        guard !secrets.isEmpty else { return profile }
+        cfg.headers = cfg.headers.map { item in
+            var copy = item
+            if copy.isSecret, let secret = secrets[copy.id.uuidString], !secret.isEmpty {
+                copy.value = secret
+            }
+            return copy
+        }
+        var updated = profile
+        updated.customPostConfig = cfg
+        return updated
+    }
+
     // MARK: - Profile Management
 
     @discardableResult
@@ -469,13 +515,16 @@ public final class AIAgentService: ObservableObject {
         let sameCount = profiles.filter { $0.presetID == preset.id }.count
         if sameCount > 0 { profile.name = "\(preset.name) \(sameCount + 1)" }
         profiles.append(profile)
+        saveCustomHeaderSecrets(from: profile)
         persistProfiles()
         activeProfileID = profile.id
         return profile.id
     }
 
     public func updateProfile(_ updated: AIProviderProfile) {
-        guard let idx = profiles.firstIndex(where: { $0.id == updated.id }), profiles[idx] != updated else { return }
+        guard let idx = profiles.firstIndex(where: { $0.id == updated.id }) else { return }
+        saveCustomHeaderSecrets(from: updated)
+        guard profiles[idx] != updated else { return }
         profiles[idx] = updated
         persistProfiles()
     }
@@ -483,6 +532,7 @@ public final class AIAgentService: ObservableObject {
     public func deleteProfile(id: UUID) {
         if let profile = self.profile(id: id) {
             KeychainVault.delete(forKey: profile.keychainAccount)
+            KeychainVault.delete(forKey: profile.customHeadersKeychainAccount)
         }
         profiles.removeAll { $0.id == id }
         lastRefreshMessage[id] = nil
@@ -515,19 +565,33 @@ public final class AIAgentService: ObservableObject {
             return false
         }
 
+        let discoveryBaseURL: String
+        if profile.format == .customPost {
+            let trimmedBase = profile.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            let fallbackEndpoint = profile.customPostConfig?.endpointURL.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            discoveryBaseURL = !trimmedBase.isEmpty && trimmedBase != "https://" ? trimmedBase : fallbackEndpoint
+        } else {
+            discoveryBaseURL = profile.baseURL
+        }
+
         refreshingProfileIDs.insert(profileID)
         defer { refreshingProfileIDs.remove(profileID) }
         let previousModel = profile.resolvedModelID
 
         do {
-            let models = try await AIProviderClient.listModels(format: profile.format, baseURL: profile.baseURL, apiKey: key)
+            let models = try await AIProviderClient.listModels(format: profile.format, baseURL: discoveryBaseURL, apiKey: key)
             guard var latest = self.profile(id: profileID) else { return false }
             latest.cachedModels = models
             latest.lastModelRefresh = Date()
             updateProfile(latest)
 
             let resolved = latest.resolvedModelID
-            let chatCount = AIModelRanker.rankedCandidates(from: models, presetID: latest.presetID, filter: latest.modelFilter).count
+            let chatCount = AIModelRanker.rankedCandidates(
+                from: models,
+                presetID: latest.presetID,
+                filter: latest.modelFilter,
+                format: latest.format
+            ).count
             lastRefreshMessage[profileID] = "Đã tải \(models.count) model (\(chatCount) model chat). Đang dùng: \(resolved.isEmpty ? "chưa chọn" : resolved)"
 
             if announceChanges, latest.selectionMode != .fixed, !previousModel.isEmpty,
@@ -546,7 +610,9 @@ public final class AIAgentService: ObservableObject {
 
     /// Called when the agent panel appears; re-fetches the catalogue if it is older than the refresh interval.
     public func refreshStaleModelsIfNeeded() async {
-        guard let profile = activeProfile else { return }
+        guard let profile = activeProfile,
+              profile.format != .customPost,
+              profile.format != .appleOnDevice else { return }
         let isStale = profile.lastModelRefresh.map { Date().timeIntervalSince($0) > Self.modelRefreshInterval } ?? true
         if isStale {
             await refreshModels(for: profile.id)
@@ -849,22 +915,25 @@ public final class AIAgentService: ObservableObject {
             return
         }
 
-        let key = apiKey(for: active)
-        var model = active.resolvedModelID
-        if model.isEmpty {
-            _ = await refreshModels(for: active.id, announceChanges: false)
-            if let refreshed = profile(id: active.id) {
-                active = refreshed
-                model = refreshed.resolvedModelID
+        let hydratedActive = hydratedProfile(active)
+        let key = apiKey(for: hydratedActive)
+        var model = hydratedActive.resolvedModelID
+        if model.isEmpty && hydratedActive.format != .customPost {
+            _ = await refreshModels(for: hydratedActive.id, announceChanges: false)
+            if let refreshed = profile(id: hydratedActive.id) {
+                active = hydratedProfile(refreshed)
+                model = active.resolvedModelID
             }
         }
-        guard !model.isEmpty else {
+        let allowsEmptyModel = (hydratedActive.format == .customPost) && (hydratedActive.customPostConfig?.allowEmptyModel ?? true)
+        guard !model.isEmpty || allowsEmptyModel else {
             onPrint("\u{001B}[33m[\(cliName.uppercased())]\u{001B}[0m Could not resolve model ID. Switching to built-in offline scaffolder...\n")
             await offlineSynthesizeCLIResponse(cliName: cliName, prompt: promptText, cwd: cwd, workspace: workspace, scannedTree: scannedTree, onPrint: onPrint)
             return
         }
 
-        onPrint("\u{001B}[1;35m[\(cliName.uppercased()) • \(model)]\u{001B}[0m Thinking & editing files...\n")
+        let displayModel = model.isEmpty ? "custom-post" : model
+        onPrint("\u{001B}[1;35m[\(cliName.uppercased()) • \(displayModel)]\u{001B}[0m Thinking & editing files...\n")
         messages.append(AIChatMessage(role: .user, text: "[\(cliName) CLI @ \(displayDir)] \(promptText)"))
 
         let cliContext = PromptContext(
@@ -878,7 +947,7 @@ public final class AIAgentService: ObservableObject {
             mentionedFilesBlock: "",
             activeSkillInstructions: resolveActiveSkills(in: promptText)
         )
-        let systemPrompt = active.format == .appleOnDevice
+        let systemPrompt = hydratedActive.format == .appleOnDevice
             ? buildCompactSystemPrompt(cliContext)
             : buildSystemPrompt(cliContext)
 
@@ -886,14 +955,15 @@ public final class AIAgentService: ObservableObject {
         defer { isThinking = false }
 
         let stream = AIProviderClient.streamChat(
-            format: active.format,
-            baseURL: active.baseURL,
+            format: hydratedActive.format,
+            baseURL: hydratedActive.baseURL,
             apiKey: key,
             model: model,
             systemPrompt: systemPrompt,
             history: [AIChatTurn(role: .user, text: promptText)],
-            temperature: active.useCustomTemperature ? active.temperature : nil,
-            maxOutputTokens: active.maxOutputTokens
+            temperature: hydratedActive.useCustomTemperature ? hydratedActive.temperature : nil,
+            maxOutputTokens: hydratedActive.maxOutputTokens,
+            customConfig: hydratedActive.customPostConfig
         )
 
         var accumulated = ""
@@ -902,35 +972,38 @@ public final class AIAgentService: ObservableObject {
                 accumulated += chunk
                 onPrint(chunk)
             }
-            let (cleaned, edits) = Self.extractFileEdits(from: accumulated) { rel in
-                guard WorkspaceManager.isSafeRelativeSyncPath(rel) else { return nil }
-                let targetURL = workspace.rootURL.appendingPathComponent(rel)
-                let rootCanon = WorkspaceManager.canonicalPath(workspace.rootURL)
-                let rootPrefix = rootCanon == "/" ? "/" : rootCanon + "/"
+            let rootCanon = WorkspaceManager.canonicalPath(workspace.rootURL)
+            let rootPrefix = rootCanon == "/" ? "/" : rootCanon + "/"
+            let (cleaned, rawEdits) = Self.extractFileEdits(from: accumulated) { rel in
+                let resolvedRel = resolveWorkspaceRelativePath(rel, cwd: cwd, workspace: workspace)
+                guard WorkspaceManager.isSafeRelativeSyncPath(resolvedRel) else { return nil }
+                let targetURL = workspace.rootURL.appendingPathComponent(resolvedRel)
                 guard WorkspaceManager.canonicalPath(targetURL).hasPrefix(rootPrefix) else { return nil }
                 return try? String(contentsOf: targetURL, encoding: .utf8)
             }
-            messages.append(AIChatMessage(role: .assistant, text: cleaned.isEmpty ? accumulated : cleaned, proposedEdits: edits, modelLabel: model))
 
-            if !edits.isEmpty {
+            var finalEdits = rawEdits
+            if !finalEdits.isEmpty {
                 onPrint("\n")
-                let rootCanon = WorkspaceManager.canonicalPath(workspace.rootURL)
-                let rootPrefix = rootCanon == "/" ? "/" : rootCanon + "/"
-                for edit in edits {
-                    let finalRel = resolveWorkspaceRelativePath(edit.relativePath, cwd: cwd, workspace: workspace)
+                for idx in finalEdits.indices {
+                    let finalRel = resolveWorkspaceRelativePath(finalEdits[idx].relativePath, cwd: cwd, workspace: workspace)
                     let targetURL = workspace.rootURL.appendingPathComponent(finalRel)
                     guard WorkspaceManager.isSafeRelativeSyncPath(finalRel),
                           WorkspaceManager.canonicalPath(targetURL).hasPrefix(rootPrefix) else {
-                        onPrint("\u{001B}[31m[SKIP]\u{001B}[0m Unsafe path rejected: \(edit.relativePath)\n")
+                        finalEdits[idx].state = .rejected
+                        onPrint("\u{001B}[31m[SKIP]\u{001B}[0m Unsafe path rejected: \(finalEdits[idx].relativePath)\n")
                         continue
                     }
-                    workspace.applyAgentFileEdit(relativePath: finalRel, newContent: edit.newContent)
-                    let lines = edit.newContent.components(separatedBy: "\n").count
+                    workspace.applyAgentFileEdit(relativePath: finalRel, newContent: finalEdits[idx].newContent)
+                    finalEdits[idx].state = .applied
+                    let lines = finalEdits[idx].newContent.components(separatedBy: "\n").count
                     onPrint("\u{001B}[1;32m[WRITE]\u{001B}[0m \(finalRel) (\(lines) lines) -> opened in Editor.\n")
                 }
             } else {
                 onPrint("\n")
             }
+            messages.append(AIChatMessage(role: .assistant, text: cleaned.isEmpty ? accumulated : cleaned, proposedEdits: finalEdits, modelLabel: model))
+            persistSessions()
         } catch {
             onPrint("\n\u{001B}[31m[\(cliName.uppercased()) ERROR]\u{001B}[0m \(error.localizedDescription)\n")
         }
@@ -1060,19 +1133,21 @@ public final class AIAgentService: ObservableObject {
         context: PromptContext,
         existingFileReader: @escaping (String) -> String?
     ) async {
-        guard var profile = self.profile(id: profileID), self.activeGenerationID == generationID else { return }
+        guard let rawProfile = self.profile(id: profileID), self.activeGenerationID == generationID else { return }
+        var profile = hydratedProfile(rawProfile)
 
         var model = profile.resolvedModelID
-        if model.isEmpty {
+        if model.isEmpty && profile.format != .customPost {
             await refreshModels(for: profileID, announceChanges: false)
             guard self.activeGenerationID == generationID else { return }
             if let refreshed = self.profile(id: profileID) {
-                profile = refreshed
-                model = refreshed.resolvedModelID
+                profile = hydratedProfile(refreshed)
+                model = profile.resolvedModelID
             }
         }
         guard self.activeGenerationID == generationID else { return }
-        guard !model.isEmpty else {
+        let allowsEmptyModel = (profile.format == .customPost) && (profile.customPostConfig?.allowEmptyModel ?? true)
+        guard !model.isEmpty || allowsEmptyModel else {
             let detail = lastRefreshMessage[profileID].map { "\n\n\($0)" } ?? ""
             messages.append(AIChatMessage(
                 role: .assistant,
@@ -1086,7 +1161,8 @@ public final class AIAgentService: ObservableObject {
             : buildSystemPrompt(context)
         let history = buildHistory()
 
-        let placeholder = AIChatMessage(role: .assistant, text: "", isStreaming: true, modelLabel: model)
+        let displayModel = model.isEmpty ? "custom-post" : model
+        let placeholder = AIChatMessage(role: .assistant, text: "", isStreaming: true, modelLabel: displayModel)
         messages.append(placeholder)
         let messageID = placeholder.id
 
@@ -1098,7 +1174,8 @@ public final class AIAgentService: ObservableObject {
             systemPrompt: systemPrompt,
             history: history,
             temperature: profile.useCustomTemperature ? profile.temperature : nil,
-            maxOutputTokens: profile.maxOutputTokens
+            maxOutputTokens: profile.maxOutputTokens,
+            customConfig: profile.customPostConfig
         )
 
         var accumulated = ""
@@ -1285,7 +1362,7 @@ public final class AIAgentService: ObservableObject {
         let defaults = UserDefaults.standard
         if let data = defaults.data(forKey: Self.profilesKey),
            let decoded = try? JSONDecoder().decode([AIProviderProfile].self, from: data) {
-            profiles = decoded
+            profiles = decoded.map { hydratedProfile($0) }
         } else {
             profiles = migrateLegacyConfiguration()
             persistProfiles()

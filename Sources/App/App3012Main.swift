@@ -94,7 +94,7 @@ public struct MainIDEWorkspaceView: View {
     @State private var isFullScreenZenMode: Bool = false
     @State private var isEditorKeyboardActive: Bool = false
     @State private var pendingSaveSideEffectTask: Task<Void, Never>? = nil
-    @State private var pendingSavedTabInfo: (url: URL, content: String)? = nil
+    @State private var pendingSavedTabs: [URL: String] = [:]
     @State private var findAdvanceMinLocation: Int? = nil
 
     @State private var markdownMode: MarkdownDisplayMode = .editor
@@ -348,6 +348,9 @@ public struct MainIDEWorkspaceView: View {
                 pcSyncService?.handleWorkspaceMutation(event)
             }
             pcSyncService.autoConnectIfConfigured()
+            Task { @MainActor () -> Void in
+                await gitService.refreshStatus(workspaceRoot: workspace.rootURL, sshService: sshService)
+            }
             liveServer.start(
                 serving: workspace.rootURL,
                 keepAliveInBackground: false
@@ -373,6 +376,7 @@ public struct MainIDEWorkspaceView: View {
         }
         .onChange(of: workspace.rootURL) { newRoot in
             liveServer.updateRootDirectory(newRoot)
+            pcSyncService.handleWorkspaceRootChanged(to: newRoot)
             Task { @MainActor () -> Void in
                 await gitService.refreshStatus(workspaceRoot: newRoot, sshService: sshService)
             }
@@ -2531,7 +2535,7 @@ public struct MainIDEWorkspaceView: View {
     }
 
     private func scheduleDebouncedSaveSideEffects(fileURL: URL, content: String) {
-        pendingSavedTabInfo = (fileURL, content)
+        pendingSavedTabs[fileURL.standardizedFileURL] = content
         pendingSaveSideEffectTask?.cancel()
         let delayNs: UInt64 = 550_000_000
         pendingSaveSideEffectTask = Task { @MainActor () -> Void in
@@ -2544,20 +2548,23 @@ public struct MainIDEWorkspaceView: View {
     private func flushPendingSaveSideEffects() {
         pendingSaveSideEffectTask?.cancel()
         pendingSaveSideEffectTask = nil
-        guard let saved = pendingSavedTabInfo else { return }
-        pendingSavedTabInfo = nil
-        sshService.syncSavedLocalMirrorIfNeeded(localURL: saved.url, content: saved.content)
-        liveServer.notifyFileChanged()
-        if let active = workspace.activeTab, active.fileURL.standardizedFileURL == saved.url.standardizedFileURL {
-            intelligence.scheduleAnalysis(
-                code: saved.content,
-                language: active.language,
-                fileName: active.title,
-                cursorLocation: active.selectedRangeLocation,
-                diagnosticsEnabled: preferences.enableLiveDiagnostics,
-                sshService: sshService
-            )
+        let batch = pendingSavedTabs
+        guard !batch.isEmpty else { return }
+        pendingSavedTabs.removeAll()
+        for (url, content) in batch {
+            sshService.syncSavedLocalMirrorIfNeeded(localURL: url, content: content)
+            if let active = workspace.activeTab, active.fileURL.standardizedFileURL == url {
+                intelligence.scheduleAnalysis(
+                    code: content,
+                    language: active.language,
+                    fileName: active.title,
+                    cursorLocation: active.selectedRangeLocation,
+                    diagnosticsEnabled: preferences.enableLiveDiagnostics,
+                    sshService: sshService
+                )
+            }
         }
+        liveServer.notifyFileChanged()
         Task { @MainActor () -> Void in
             await gitService.refreshStatus(workspaceRoot: workspace.rootURL, sshService: sshService)
         }
@@ -3040,8 +3047,9 @@ public struct MainIDEWorkspaceView: View {
                 Text(preferences.tr("Không có tệp nào đang mở.", "No active file open."))
                     .font(.subheadline)
                     .foregroundColor(.secondary)
-                Button(preferences.tr("Đóng", "Done"), action: onDismiss)
-                    .buttonStyle(.borderedProminent)
+                IDEActionButton(prominence: .prominent, tint: .accentColor, fullWidth: false, compact: true, action: onDismiss) {
+                    Text(preferences.tr("Đóng", "Done"))
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(hex: palette.editorBackground))

@@ -64,11 +64,13 @@ public struct LiveServerShareSheet: View {
                                     .foregroundColor(.blue)
                                     .textSelection(.enabled)
                                 Spacer()
-                                Button(preferences.tr("Copy", "Copy")) {
+                                IDEPillButton(prominence: .secondary, tint: .blue) {
                                     UIPasteboard.general.string = lanURL
                                     copiedLinkNotice = preferences.tr("Đã copy link \(lanURL)", "Copied \(lanURL)")
+                                } label: {
+                                    Text(preferences.tr("Copy", "Copy"))
+                                        .font(.system(size: 12, weight: .semibold))
                                 }
-                                .buttonStyle(.bordered)
                             }
 
                             if let qr = LiveServerService.generateQRCodeImage(from: lanURL) {

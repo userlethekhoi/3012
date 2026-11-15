@@ -57,6 +57,146 @@ public struct AIChatTurn: Sendable {
     }
 }
 
+// MARK: - URL Normalization (prevents duplicate /v1/v1 or endpoint suffix duplication)
+
+public enum AIURLBuilder {
+    static func normalize(_ raw: String) -> (url: String, isExactEndpoint: Bool) {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasSuffix("#") {
+            s.removeLast()
+            s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            while s.hasSuffix("/") { s.removeLast() }
+            return (s, true)
+        }
+        while s.hasSuffix("/") { s.removeLast() }
+        return (collapseDuplicateV1(in: s), false)
+    }
+
+    static func collapseDuplicateV1(in raw: String) -> String {
+        var result = raw
+        while result.contains("/v1/v1") {
+            result = result.replacingOccurrences(of: "/v1/v1", with: "/v1")
+        }
+        return result
+    }
+
+    public static func modelsURL(base raw: String) -> URL? {
+        let (clean, _) = normalize(raw)
+        guard !clean.isEmpty else { return nil }
+        let stripped: String
+        if clean.hasSuffix("/chat/completions") {
+            stripped = String(clean.dropLast("/chat/completions".count))
+        } else if clean.hasSuffix("/responses") {
+            stripped = String(clean.dropLast("/responses".count))
+        } else if clean.hasSuffix("/messages") {
+            stripped = String(clean.dropLast("/messages".count))
+        } else if clean.hasSuffix("/models") {
+            return URL(string: clean)
+        } else {
+            stripped = clean
+        }
+        return URL(string: collapseDuplicateV1(in: stripped + "/models"))
+    }
+
+    public static func chatCompletionsURL(base raw: String) -> URL? {
+        let (clean, isExact) = normalize(raw)
+        guard !clean.isEmpty else { return nil }
+        if isExact || clean.hasSuffix("/chat/completions") {
+            return URL(string: clean)
+        }
+        if clean.hasSuffix("/v1/chat") {
+            return URL(string: clean + "/completions")
+        }
+        return URL(string: collapseDuplicateV1(in: clean + "/chat/completions"))
+    }
+
+    public static func responsesURL(base raw: String) -> URL? {
+        let (clean, isExact) = normalize(raw)
+        guard !clean.isEmpty else { return nil }
+        if isExact || clean.hasSuffix("/responses") {
+            return URL(string: clean)
+        }
+        if clean.hasSuffix("/chat/completions") {
+            let root = String(clean.dropLast("/chat/completions".count))
+            return URL(string: collapseDuplicateV1(in: root + "/responses"))
+        }
+        return URL(string: collapseDuplicateV1(in: clean + "/responses"))
+    }
+
+    public static func anthropicMessagesURL(base raw: String) -> URL? {
+        let (clean, isExact) = normalize(raw)
+        guard !clean.isEmpty else { return nil }
+        if isExact || clean.hasSuffix("/messages") {
+            return URL(string: clean)
+        }
+        return URL(string: collapseDuplicateV1(in: clean + "/messages"))
+    }
+
+    public static func geminiStreamURL(base raw: String, model: String) -> URL? {
+        let (clean, isExact) = normalize(raw)
+        guard !clean.isEmpty else { return nil }
+        if isExact || clean.contains(":streamGenerateContent") {
+            return URL(string: clean)
+        }
+        let modelPath = model.hasPrefix("models/") ? String(model.dropFirst(7)) : model
+        let encodedModelPath = modelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? modelPath
+        return URL(string: "\(clean)/models/\(encodedModelPath):streamGenerateContent?alt=sse")
+    }
+}
+
+// MARK: - Live Custom POST Inspection Result
+
+public struct AICustomPostInspectionResult: Identifiable, Sendable {
+    public let id: UUID
+    public let timestamp: Date
+    public let endpointURL: String
+    public let httpMethod: String
+    public let statusCode: Int?
+    public let durationSeconds: Double
+    public let responseByteCount: Int
+    public let renderedRequestText: String
+    public let rawResponseText: String
+    public let extractedAssistantText: String
+    public let errorMessage: String?
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        endpointURL: String,
+        httpMethod: String = "POST",
+        statusCode: Int?,
+        durationSeconds: Double,
+        responseByteCount: Int,
+        renderedRequestText: String,
+        rawResponseText: String,
+        extractedAssistantText: String,
+        errorMessage: String?
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.endpointURL = endpointURL
+        self.httpMethod = httpMethod
+        self.statusCode = statusCode
+        self.durationSeconds = durationSeconds
+        self.responseByteCount = responseByteCount
+        self.renderedRequestText = renderedRequestText
+        self.rawResponseText = rawResponseText
+        self.extractedAssistantText = extractedAssistantText
+        self.errorMessage = errorMessage
+    }
+
+    public var formattedDuration: String {
+        String(format: "%.2fs", durationSeconds)
+    }
+
+    public var formattedBytes: String {
+        if responseByteCount < 1024 {
+            return "\(responseByteCount) B"
+        }
+        return String(format: "%.1fkb", Double(responseByteCount) / 1024.0)
+    }
+}
+
 // MARK: - Generic Provider Client (model discovery + realtime streaming)
 
 public enum AIProviderClient {
@@ -67,6 +207,27 @@ public enum AIProviderClient {
         cfg.waitsForConnectivity = false
         return URLSession(configuration: cfg)
     }()
+
+    private static func makeStreamingSession() -> URLSession {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 300
+        cfg.timeoutIntervalForResource = 900
+        cfg.waitsForConnectivity = false
+        return URLSession(configuration: cfg)
+    }
+
+    public static func defaultUserAgentString() -> String {
+        let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "5.3.0"
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        return "3012/\(appVersion) (iOS \(os.majorVersion).\(os.minorVersion))"
+    }
+
+    private static func applyStandardHeaders(to req: inout URLRequest) {
+        let hasUA = req.allHTTPHeaderFields?.keys.contains(where: { $0.caseInsensitiveCompare("User-Agent") == .orderedSame }) ?? false
+        if !hasUA {
+            req.setValue(defaultUserAgentString(), forHTTPHeaderField: "User-Agent")
+        }
+    }
 
     private static let isoLock = NSLock()
     private static let isoFractionalFormatter: ISO8601DateFormatter = {
@@ -81,9 +242,7 @@ public enum AIProviderClient {
     }()
 
     static func normalizedBase(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        while s.hasSuffix("/") { s.removeLast() }
-        return s
+        AIURLBuilder.normalize(raw).url
     }
 
     // MARK: Model Discovery
@@ -92,7 +251,7 @@ public enum AIProviderClient {
         let base = normalizedBase(baseURL)
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         switch format {
-        case .openAICompatible:
+        case .openAICompatible, .openAIResponses, .customPost:
             return try await listOpenAICompatibleModels(base: base, key: key)
         case .anthropic:
             return try await listAnthropicModels(base: base, key: key)
@@ -106,9 +265,10 @@ public enum AIProviderClient {
     }
 
     private static func listOpenAICompatibleModels(base: String, key: String) async throws -> [AIModelInfo] {
-        guard let url = URL(string: base + "/models") else { throw AIProviderError.invalidURL(base) }
+        guard let url = AIURLBuilder.modelsURL(base: base) else { throw AIProviderError.invalidURL(base) }
         var req = URLRequest(url: url)
         req.timeoutInterval = 30
+        applyStandardHeaders(to: &req)
         if !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         let json = try await fetchJSON(req)
 
@@ -133,9 +293,15 @@ public enum AIProviderClient {
     }
 
     private static func listAnthropicModels(base: String, key: String) async throws -> [AIModelInfo] {
-        guard let url = URL(string: base + "/models?limit=1000") else { throw AIProviderError.invalidURL(base) }
+        guard let modelsURL = AIURLBuilder.modelsURL(base: base),
+              var comps = URLComponents(url: modelsURL, resolvingAgainstBaseURL: false) else {
+            throw AIProviderError.invalidURL(base)
+        }
+        comps.queryItems = [URLQueryItem(name: "limit", value: "1000")]
+        guard let url = comps.url else { throw AIProviderError.invalidURL(base) }
         var req = URLRequest(url: url)
         req.timeoutInterval = 30
+        applyStandardHeaders(to: &req)
         req.setValue(key, forHTTPHeaderField: "x-api-key")
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         let json = try await fetchJSON(req)
@@ -161,6 +327,7 @@ public enum AIProviderClient {
             guard let url = comps.url else { throw AIProviderError.invalidURL(base) }
             var req = URLRequest(url: url)
             req.timeoutInterval = 30
+            applyStandardHeaders(to: &req)
             req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
             let json = try await fetchJSON(req)
             guard let dict = json as? [String: Any] else { break }
@@ -191,8 +358,10 @@ public enum AIProviderClient {
         systemPrompt: String,
         history: [AIChatTurn],
         temperature: Double?,
-        maxOutputTokens: Int
+        maxOutputTokens: Int,
+        customConfig: AICustomPostConfig? = nil
     ) -> AsyncThrowingStream<String, Error> {
+        let rawBase = baseURL
         let base = normalizedBase(baseURL)
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         return AsyncThrowingStream { continuation in
@@ -201,17 +370,26 @@ public enum AIProviderClient {
                     let emit: (String) -> Void = { continuation.yield($0) }
                     switch format {
                     case .openAICompatible:
-                        try await streamOpenAICompatible(base: base, key: key, model: model, system: systemPrompt,
+                        try await streamOpenAICompatible(base: rawBase, key: key, model: model, system: systemPrompt,
                                                          history: history, temperature: temperature,
                                                          maxTokens: maxOutputTokens, emit: emit)
+                    case .openAIResponses:
+                        try await streamOpenAIResponses(base: rawBase, key: key, model: model, system: systemPrompt,
+                                                        history: history, temperature: temperature,
+                                                        maxTokens: maxOutputTokens, emit: emit)
                     case .anthropic:
-                        try await streamAnthropic(base: base, key: key, model: model, system: systemPrompt,
+                        try await streamAnthropic(base: rawBase, key: key, model: model, system: systemPrompt,
                                                   history: history, temperature: temperature,
                                                   maxTokens: maxOutputTokens, emit: emit)
                     case .gemini:
-                        try await streamGemini(base: base, key: key, model: model, system: systemPrompt,
+                        try await streamGemini(base: rawBase, key: key, model: model, system: systemPrompt,
                                                history: history, temperature: temperature,
                                                maxTokens: maxOutputTokens, emit: emit)
+                    case .customPost:
+                        let cfg = customConfig ?? AICustomPostConfig(endpointURL: base.isEmpty ? rawBase : base)
+                        try await streamCustomPost(config: cfg, key: key, model: model, system: systemPrompt,
+                                                   history: history, temperature: temperature,
+                                                   maxTokens: maxOutputTokens, emit: emit)
                     case .appleOnDevice:
                         try await runAppleOnDevice(system: systemPrompt, history: history, emit: emit)
                     }
@@ -224,12 +402,11 @@ public enum AIProviderClient {
         }
     }
 
-    private static func streamOpenAICompatible(
-        base: String, key: String, model: String, system: String,
-        history: [AIChatTurn], temperature: Double?, maxTokens: Int, emit: (String) -> Void
-    ) async throws {
-        guard let url = URL(string: base + "/chat/completions") else { throw AIProviderError.invalidURL(base) }
-        var messages: [[String: Any]] = [["role": "system", "content": system]]
+    private static func buildOpenAIMessages(system: String, history: [AIChatTurn], includeSystem: Bool) -> [[String: Any]] {
+        var messages: [[String: Any]] = []
+        if includeSystem && !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            messages.append(["role": "system", "content": system])
+        }
         for turn in history {
             if turn.attachments.isEmpty {
                 messages.append(["role": turn.role.rawValue, "content": turn.text])
@@ -247,14 +424,62 @@ public enum AIProviderClient {
                 messages.append(["role": turn.role.rawValue, "content": parts])
             }
         }
+        return messages
+    }
+
+    private static func buildResponsesInput(history: [AIChatTurn]) -> [[String: Any]] {
+        history.map { turn in
+            if turn.attachments.isEmpty || turn.role == .assistant {
+                return ["role": turn.role.rawValue, "content": turn.text]
+            }
+            var parts: [[String: Any]] = []
+            if !turn.text.isEmpty {
+                parts.append(["type": "input_text", "text": turn.text])
+            }
+            for img in turn.attachments {
+                parts.append([
+                    "type": "input_image",
+                    "image_url": "data:image/jpeg;base64,\(img.base64JPEG)"
+                ])
+            }
+            return ["role": "user", "content": parts]
+        }
+    }
+
+    private static func buildGeminiContents(history: [AIChatTurn]) -> [[String: Any]] {
+        history.map { turn in
+            var parts: [[String: Any]] = turn.attachments.map { img in
+                ["inlineData": ["mimeType": "image/jpeg", "data": img.base64JPEG]]
+            }
+            if !turn.text.isEmpty || parts.isEmpty {
+                parts.append(["text": turn.text])
+            }
+            return ["role": turn.role == .user ? "user" : "model", "parts": parts]
+        }
+    }
+
+    private static func isReasoningModel(_ model: String) -> Bool {
+        let lower = model.lowercased()
+        let lastSeg = lower.split(separator: "/").last.map(String.init) ?? lower
+        return lastSeg.hasPrefix("o1") || lastSeg.hasPrefix("o3") || lastSeg.hasPrefix("o4")
+            || lastSeg.hasSuffix("-pro") || lastSeg.contains("-pro-")
+    }
+
+    private static func streamOpenAICompatible(
+        base: String, key: String, model: String, system: String,
+        history: [AIChatTurn], temperature: Double?, maxTokens: Int, emit: (String) -> Void
+    ) async throws {
+        guard let url = AIURLBuilder.chatCompletionsURL(base: base) else { throw AIProviderError.invalidURL(base) }
+        let messages = buildOpenAIMessages(system: system, history: history, includeSystem: true)
         var payload: [String: Any] = ["model": model, "messages": messages, "stream": true]
-        if let temperature { payload["temperature"] = temperature }
+        if let temperature, !isReasoningModel(model) { payload["temperature"] = temperature }
         if maxTokens > 0 { payload["max_tokens"] = maxTokens }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        applyStandardHeaders(to: &req)
         if !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         if base.contains("openrouter.ai") {
             req.setValue("https://github.com/userlethekhoi/3012", forHTTPHeaderField: "HTTP-Referer")
@@ -280,11 +505,105 @@ public enum AIProviderClient {
         }
     }
 
+    private static func streamOpenAIResponses(
+        base: String, key: String, model: String, system: String,
+        history: [AIChatTurn], temperature: Double?, maxTokens: Int, emit: (String) -> Void
+    ) async throws {
+        guard let url = AIURLBuilder.responsesURL(base: base) else { throw AIProviderError.invalidURL(base) }
+        var payload: [String: Any] = [
+            "model": model,
+            "input": buildResponsesInput(history: history),
+            "stream": true
+        ]
+        if !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["instructions"] = system
+        }
+        if let temperature, !isReasoningModel(model) {
+            payload["temperature"] = temperature
+        }
+        if maxTokens > 0 {
+            payload["max_output_tokens"] = maxTokens
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        applyStandardHeaders(to: &req)
+        if !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+        if base.contains("openrouter.ai") {
+            req.setValue("https://github.com/userlethekhoi/3012", forHTTPHeaderField: "HTTP-Referer")
+            req.setValue("3012 Mobile IDE", forHTTPHeaderField: "X-Title")
+        }
+        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        var produced = false
+        var completedFallbackText = ""
+
+        func extractResponsesOutputText(from dict: [String: Any]) -> String? {
+            if let t = dict["output_text"] as? String, !t.isEmpty { return t }
+            let target = (dict["response"] as? [String: Any]) ?? dict
+            if let t = target["output_text"] as? String, !t.isEmpty { return t }
+            if let output = target["output"] as? [[String: Any]] {
+                var joined = ""
+                for item in output {
+                    if let contents = item["content"] as? [[String: Any]] {
+                        for part in contents {
+                            if let txt = part["text"] as? String {
+                                joined += txt
+                            }
+                        }
+                    }
+                }
+                if !joined.isEmpty { return joined }
+            }
+            return nil
+        }
+
+        let leftover = try await consumeSSE(req) { event in
+            let eventType = (event["type"] as? String) ?? ""
+            if eventType == "response.failed" || eventType == "error" {
+                let errObj = event["error"] ?? (event["response"] as? [String: Any])?["error"]
+                throw AIProviderError.http(0, errObj.map { messageText(from: $0) } ?? "Responses API error")
+            }
+            if eventType == "response.output_text.delta",
+               let delta = event["delta"] as? String, !delta.isEmpty {
+                produced = true
+                emit(delta)
+                return
+            }
+            // Compatibility if proxy relays OpenAI Chat Completions deltas on /responses.
+            if let choices = event["choices"] as? [[String: Any]],
+               let delta = choices.first?["delta"] as? [String: Any],
+               let content = delta["content"] as? String, !content.isEmpty {
+                produced = true
+                emit(content)
+                return
+            }
+            if (eventType == "response.completed" || eventType == "response.done") && completedFallbackText.isEmpty {
+                completedFallbackText = extractResponsesOutputText(from: event) ?? ""
+            }
+        }
+
+        if !produced {
+            if !completedFallbackText.isEmpty {
+                emit(completedFallbackText)
+            } else if let obj = jsonObject(leftover), let extracted = extractResponsesOutputText(from: obj) {
+                emit(extracted)
+            } else if let obj = jsonObject(leftover),
+                      let choices = obj["choices"] as? [[String: Any]],
+                      let message = choices.first?["message"] as? [String: Any],
+                      let content = message["content"] as? String, !content.isEmpty {
+                emit(content)
+            }
+        }
+    }
+
     private static func streamAnthropic(
         base: String, key: String, model: String, system: String,
         history: [AIChatTurn], temperature: Double?, maxTokens: Int, emit: (String) -> Void
     ) async throws {
-        guard let url = URL(string: base + "/messages") else { throw AIProviderError.invalidURL(base) }
+        guard let url = AIURLBuilder.anthropicMessagesURL(base: base) else { throw AIProviderError.invalidURL(base) }
         let formattedMessages: [[String: Any]] = history.map { turn in
             if turn.attachments.isEmpty {
                 return ["role": turn.role.rawValue, "content": turn.text]
@@ -324,6 +643,7 @@ public enum AIProviderClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        applyStandardHeaders(to: &req)
         req.setValue(key, forHTTPHeaderField: "x-api-key")
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -350,22 +670,12 @@ public enum AIProviderClient {
         base: String, key: String, model: String, system: String,
         history: [AIChatTurn], temperature: Double?, maxTokens: Int, emit: (String) -> Void
     ) async throws {
-        let modelPath = model.hasPrefix("models/") ? String(model.dropFirst(7)) : model
-        let encodedModelPath = modelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? modelPath
-        guard let url = URL(string: "\(base)/models/\(encodedModelPath):streamGenerateContent?alt=sse") else {
+        guard let url = AIURLBuilder.geminiStreamURL(base: base, model: model) else {
             throw AIProviderError.invalidURL(base)
         }
         var payload: [String: Any] = [
             "systemInstruction": ["parts": [["text": system]]],
-            "contents": history.map { turn in
-                var parts: [[String: Any]] = turn.attachments.map { img in
-                    ["inlineData": ["mimeType": "image/jpeg", "data": img.base64JPEG]]
-                }
-                if !turn.text.isEmpty || parts.isEmpty {
-                    parts.append(["text": turn.text])
-                }
-                return ["role": turn.role == .user ? "user" : "model", "parts": parts]
-            }
+            "contents": buildGeminiContents(history: history)
         ]
         var genConfig: [String: Any] = [:]
         if let temperature { genConfig["temperature"] = temperature }
@@ -375,6 +685,7 @@ public enum AIProviderClient {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyStandardHeaders(to: &req)
         req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
@@ -414,6 +725,479 @@ public enum AIProviderClient {
                     _ = try emitGeminiEvent(item)
                 }
             }
+        }
+    }
+
+    // MARK: - Custom POST API Engine & Live Request/Response Inspector
+
+    public static func renderCustomPostBody(
+        template: String,
+        model: String,
+        system: String,
+        history: [AIChatTurn],
+        apiKey: String,
+        temperature: Double?,
+        maxTokens: Int,
+        stream: Bool
+    ) -> String {
+        let messagesJSON = jsonSerializedString(buildOpenAIMessages(system: system, history: history, includeSystem: true), fallback: "[]")
+        let messagesNoSysJSON = jsonSerializedString(buildOpenAIMessages(system: system, history: history, includeSystem: false), fallback: "[]")
+        let responsesInputJSON = jsonSerializedString(buildResponsesInput(history: history), fallback: "[]")
+        let geminiContentsJSON = jsonSerializedString(buildGeminiContents(history: history), fallback: "[]")
+        let lastUserPrompt = history.last(where: { $0.role == .user })?.text ?? history.last?.text ?? ""
+
+        let tempNum = temperature.map { String(format: "%.2f", $0) } ?? "0.2"
+        let maxTokStr = String(max(256, maxTokens))
+        let streamStr = stream ? "true" : "false"
+
+        var output = template
+        output = output.replacingOccurrences(of: "{{messages_no_system}}", with: messagesNoSysJSON)
+        output = output.replacingOccurrences(of: "{{messages}}", with: messagesJSON)
+        output = output.replacingOccurrences(of: "{{responses_input}}", with: responsesInputJSON)
+        output = output.replacingOccurrences(of: "{{gemini_contents}}", with: geminiContentsJSON)
+        output = output.replacingOccurrences(of: "{{prompt_json}}", with: jsonQuotedString(lastUserPrompt))
+        output = output.replacingOccurrences(of: "{{system_json}}", with: jsonQuotedString(system))
+        output = output.replacingOccurrences(of: "{{model}}", with: jsonEscapedInnerString(model))
+        output = output.replacingOccurrences(of: "{{system}}", with: jsonEscapedInnerString(system))
+        output = output.replacingOccurrences(of: "{{prompt}}", with: jsonEscapedInnerString(lastUserPrompt))
+        output = output.replacingOccurrences(of: "{{api_key}}", with: jsonEscapedInnerString(apiKey))
+        output = output.replacingOccurrences(of: "{{temperature}}", with: tempNum)
+        output = output.replacingOccurrences(of: "{{max_tokens}}", with: maxTokStr)
+        output = output.replacingOccurrences(of: "{{stream}}", with: streamStr)
+        return output
+    }
+
+    public static func buildCustomPostURLRequest(
+        config: AICustomPostConfig,
+        apiKey: String,
+        model: String,
+        system: String,
+        history: [AIChatTurn],
+        temperature: Double?,
+        maxTokens: Int
+    ) throws -> (request: URLRequest, renderedPreview: String) {
+        let effectiveModel = model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? config.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            : model.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let rawURL = config.endpointURL
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "{{model}}", with: effectiveModel.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? effectiveModel)
+            .replacingOccurrences(of: "{{api_key}}", with: apiKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? apiKey)
+        guard let url = URL(string: rawURL), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            throw AIProviderError.invalidURL(config.endpointURL)
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+
+        var hasContentType = false
+        var hasAccept = false
+        var previewHeaders: [(String, String)] = []
+
+        for item in config.headers where item.isEnabled {
+            let headerKey = item.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !headerKey.isEmpty else { continue }
+            let resolvedVal = item.value
+                .replacingOccurrences(of: "{{api_key}}", with: apiKey)
+                .replacingOccurrences(of: "{{model}}", with: effectiveModel)
+
+            if headerKey.caseInsensitiveCompare("Content-Type") == .orderedSame { hasContentType = true }
+            if headerKey.caseInsensitiveCompare("Accept") == .orderedSame { hasAccept = true }
+            req.setValue(resolvedVal, forHTTPHeaderField: headerKey)
+
+            let maskedVal: String
+            if item.isSecret || (!apiKey.isEmpty && item.value.contains("{{api_key}}")) {
+                maskedVal = maskSecretPreview(resolvedVal)
+            } else {
+                maskedVal = resolvedVal
+            }
+            previewHeaders.append((headerKey, maskedVal))
+        }
+
+        if !hasContentType {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            previewHeaders.append(("Content-Type", "application/json"))
+        }
+        if !hasAccept && config.useSSEResponse {
+            req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            previewHeaders.append(("Accept", "text/event-stream"))
+        }
+
+        applyStandardHeaders(to: &req)
+        if !previewHeaders.contains(where: { $0.0.caseInsensitiveCompare("User-Agent") == .orderedSame }),
+           let ua = req.value(forHTTPHeaderField: "User-Agent") {
+            previewHeaders.append(("User-Agent", ua))
+        }
+
+        let bodyText = renderCustomPostBody(
+            template: config.bodyTemplate,
+            model: effectiveModel,
+            system: system,
+            history: history,
+            apiKey: apiKey,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            stream: config.useSSEResponse
+        )
+        req.httpBody = bodyText.data(using: .utf8)
+
+        let pathWithQuery = (url.path.isEmpty ? "/" : url.path) + (url.query.map { "?\($0)" } ?? "")
+        var lines: [String] = ["POST \(pathWithQuery) HTTP/1.1"]
+        if let host = url.host {
+            let portSuffix = url.port.map { ":\($0)" } ?? ""
+            lines.append("Host: \(host)\(portSuffix)")
+        }
+        for (hk, hv) in previewHeaders {
+            lines.append("\(hk): \(hv)")
+        }
+        lines.append("")
+        lines.append(bodyText)
+
+        return (req, lines.joined(separator: "\n"))
+    }
+
+    public static func extractValue(atDotPath path: String, from root: Any) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let normalized = trimmed
+            .replacingOccurrences(of: "[", with: ".")
+            .replacingOccurrences(of: "]", with: "")
+        let segments = normalized.split(separator: ".").map(String.init)
+        guard !segments.isEmpty else { return nil }
+
+        var current: Any = root
+        for seg in segments {
+            if let dict = current as? [String: Any] {
+                guard let next = dict[seg] else { return nil }
+                current = next
+            } else if let arr = current as? [Any], let idx = Int(seg), arr.indices.contains(idx) {
+                current = arr[idx]
+            } else {
+                return nil
+            }
+        }
+        if let str = current as? String {
+            return str
+        }
+        if let parts = current as? [[String: Any]] {
+            let texts = parts.compactMap { $0["text"] as? String }
+            return texts.isEmpty ? nil : texts.joined()
+        }
+        return nil
+    }
+
+    public static func extractDeltaOrFullText(
+        from event: [String: Any],
+        primaryPath: String,
+        fallbackPath: String,
+        isFinalPass: Bool = false
+    ) -> String? {
+        let eventType = (event["type"] as? String) ?? ""
+        let isTerminalDoneEvent = [
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+            "content_block_stop"
+        ].contains(eventType)
+
+        if !isFinalPass && isTerminalDoneEvent {
+            return nil
+        }
+
+        if let s = extractValue(atDotPath: primaryPath, from: event), !s.isEmpty {
+            return s
+        }
+        if let s = extractValue(atDotPath: fallbackPath, from: event), !s.isEmpty {
+            return s
+        }
+
+        let candidates = isFinalPass
+            ? [
+                "choices.0.message.content",
+                "output_text",
+                "response.output_text",
+                "output.0.content.0.text",
+                "response.output.0.content.0.text",
+                "candidates.0.content.parts.0.text",
+                "content.0.text",
+                "choices.0.delta.content",
+                "delta.text",
+                "delta",
+                "text",
+                "content"
+            ]
+            : [
+                "choices.0.delta.content",
+                "delta.text",
+                "candidates.0.content.parts.0.text",
+                "output_text",
+                "choices.0.message.content"
+            ]
+        for candidate in candidates {
+            if candidate == "delta" && !eventType.isEmpty && !eventType.contains("delta") {
+                continue
+            }
+            if let s = extractValue(atDotPath: candidate, from: event), !s.isEmpty {
+                return s
+            }
+        }
+        if eventType == "response.output_text.delta", let d = event["delta"] as? String, !d.isEmpty {
+            return d
+        }
+        return nil
+    }
+
+    private static func streamCustomPost(
+        config: AICustomPostConfig,
+        key: String,
+        model: String,
+        system: String,
+        history: [AIChatTurn],
+        temperature: Double?,
+        maxTokens: Int,
+        emit: (String) -> Void
+    ) async throws {
+        let built = try buildCustomPostURLRequest(
+            config: config,
+            apiKey: key,
+            model: model,
+            system: system,
+            history: history,
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
+
+        var produced = false
+        var finalEvents: [[String: Any]] = []
+
+        if config.useSSEResponse {
+            let leftover = try await consumeSSE(built.request) { event in
+                if finalEvents.count < 8 { finalEvents.append(event) }
+                else { finalEvents[finalEvents.count - 1] = event }
+                if let chunk = extractDeltaOrFullText(
+                    from: event,
+                    primaryPath: config.streamDeltaPath,
+                    fallbackPath: config.streamEventTextFallback,
+                    isFinalPass: false
+                ), !chunk.isEmpty {
+                    produced = true
+                    emit(chunk)
+                }
+            }
+            if !produced {
+                if let obj = jsonObject(leftover),
+                   let text = extractDeltaOrFullText(
+                       from: obj,
+                       primaryPath: config.responsePath,
+                       fallbackPath: config.streamDeltaPath,
+                       isFinalPass: true
+                   ), !text.isEmpty {
+                    produced = true
+                    emit(text)
+                } else {
+                    for ev in finalEvents.reversed() {
+                        if let text = extractDeltaOrFullText(
+                            from: ev,
+                            primaryPath: config.responsePath,
+                            fallbackPath: config.streamEventTextFallback,
+                            isFinalPass: true
+                        ), !text.isEmpty {
+                            produced = true
+                            emit(text)
+                            break
+                        }
+                    }
+                }
+            }
+        } else {
+            let streamSession = makeStreamingSession()
+            defer { streamSession.finishTasksAndInvalidate() }
+            let (data, response) = try await streamSession.data(for: built.request)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw AIProviderError.http(http.statusCode, extractErrorMessage(data))
+            }
+            if let json = try? JSONSerialization.jsonObject(with: data) {
+                if let dict = json as? [String: Any] {
+                    if let err = dict["error"] {
+                        throw AIProviderError.http(0, messageText(from: err))
+                    }
+                    if let text = extractDeltaOrFullText(
+                        from: dict,
+                        primaryPath: config.responsePath,
+                        fallbackPath: config.streamDeltaPath,
+                        isFinalPass: true
+                    ), !text.isEmpty {
+                        emit(text)
+                        return
+                    }
+                } else if let text = extractValue(atDotPath: config.responsePath, from: json), !text.isEmpty {
+                    emit(text)
+                    return
+                }
+            }
+            let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !raw.isEmpty {
+                emit(raw)
+            } else {
+                throw AIProviderError.emptyResponse
+            }
+        }
+    }
+
+    /// Executes a live Custom POST request and streams raw bytes + metrics for `AICustomPostInspectorSheet`.
+    public static func inspectCustomPost(
+        config: AICustomPostConfig,
+        apiKey: String,
+        model: String,
+        prompt: String,
+        systemPrompt: String = "You are a helpful coding assistant.",
+        temperature: Double? = nil,
+        maxOutputTokens: Int = 2048,
+        onLiveUpdate: (@MainActor @Sendable (AICustomPostInspectionResult) -> Void)? = nil
+    ) async -> AICustomPostInspectionResult {
+        let start = CFAbsoluteTimeGetCurrent()
+        let history = [AIChatTurn(role: .user, text: prompt.isEmpty ? "Hey" : prompt)]
+
+        let built: (request: URLRequest, renderedPreview: String)
+        do {
+            built = try buildCustomPostURLRequest(
+                config: config,
+                apiKey: apiKey,
+                model: model,
+                system: systemPrompt,
+                history: history,
+                temperature: temperature,
+                maxTokens: maxOutputTokens
+            )
+        } catch {
+            return AICustomPostInspectionResult(
+                endpointURL: config.endpointURL,
+                statusCode: nil,
+                durationSeconds: 0,
+                responseByteCount: 0,
+                renderedRequestText: config.bodyTemplate,
+                rawResponseText: "",
+                extractedAssistantText: "",
+                errorMessage: error.localizedDescription
+            )
+        }
+
+        let streamSession = makeStreamingSession()
+        defer { streamSession.finishTasksAndInvalidate() }
+
+        var capturedStatus: Int? = nil
+        var rawData = Data()
+        var extracted = ""
+        var lineBuffer: [UInt8] = []
+        var eventDataLines: [String] = []
+        var lastPublishAt = CFAbsoluteTimeGetCurrent()
+
+        func makeSnapshot(error: String? = nil) -> AICustomPostInspectionResult {
+            let elapsed = max(0, CFAbsoluteTimeGetCurrent() - start)
+            let rawText = String(data: rawData, encoding: .utf8) ?? "<binary \(rawData.count) bytes>"
+            return AICustomPostInspectionResult(
+                endpointURL: built.request.url?.absoluteString ?? config.endpointURL,
+                statusCode: capturedStatus,
+                durationSeconds: elapsed,
+                responseByteCount: rawData.count,
+                renderedRequestText: built.renderedPreview,
+                rawResponseText: rawText,
+                extractedAssistantText: extracted,
+                errorMessage: error
+            )
+        }
+
+        func consumeInspectorSSELine(_ bytesLine: [UInt8]) {
+            var slice = bytesLine
+            if slice.last == 0x0D { slice.removeLast() }
+            guard let line = String(bytes: slice, encoding: .utf8) else { return }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                let payload = eventDataLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                eventDataLines.removeAll(keepingCapacity: true)
+                if !payload.isEmpty && payload != "[DONE]", let obj = jsonObject(payload) {
+                    if let chunk = extractDeltaOrFullText(
+                        from: obj,
+                        primaryPath: config.streamDeltaPath,
+                        fallbackPath: config.streamEventTextFallback,
+                        isFinalPass: false
+                    ) {
+                        extracted += chunk
+                    }
+                }
+            } else if trimmed.hasPrefix("data:") {
+                var val = String(trimmed.dropFirst(5))
+                if val.hasPrefix(" ") { val.removeFirst() }
+                if val.trimmingCharacters(in: .whitespaces) != "[DONE]" {
+                    if !eventDataLines.isEmpty, jsonObject(eventDataLines.joined(separator: "\n")) != nil {
+                        let payload = eventDataLines.joined(separator: "\n")
+                        eventDataLines.removeAll(keepingCapacity: true)
+                        if let obj = jsonObject(payload),
+                           let chunk = extractDeltaOrFullText(
+                               from: obj,
+                               primaryPath: config.streamDeltaPath,
+                               fallbackPath: config.streamEventTextFallback,
+                               isFinalPass: false
+                           ) {
+                            extracted += chunk
+                        }
+                    }
+                    eventDataLines.append(val)
+                }
+            }
+        }
+
+        do {
+            let (bytes, response) = try await streamSession.bytes(for: built.request)
+            if let http = response as? HTTPURLResponse {
+                capturedStatus = http.statusCode
+            }
+            if let onLiveUpdate {
+                await onLiveUpdate(makeSnapshot())
+            }
+
+            for try await byte in bytes {
+                try Task.checkCancellation()
+                rawData.append(byte)
+                if byte == 0x0A {
+                    consumeInspectorSSELine(lineBuffer)
+                    lineBuffer.removeAll(keepingCapacity: true)
+                } else {
+                    lineBuffer.append(byte)
+                }
+                let now = CFAbsoluteTimeGetCurrent()
+                if now - lastPublishAt >= 0.08, let onLiveUpdate {
+                    lastPublishAt = now
+                    await onLiveUpdate(makeSnapshot())
+                }
+                if rawData.count > 2_000_000 { break }
+            }
+            if !lineBuffer.isEmpty {
+                consumeInspectorSSELine(lineBuffer)
+            }
+            consumeInspectorSSELine([])
+
+            if extracted.isEmpty {
+                let rawText = String(data: rawData, encoding: .utf8) ?? ""
+                if let obj = jsonObject(rawText),
+                   let full = extractDeltaOrFullText(
+                       from: obj,
+                       primaryPath: config.responsePath,
+                       fallbackPath: config.streamDeltaPath,
+                       isFinalPass: true
+                   ) {
+                    extracted = full
+                }
+            }
+
+            let httpErr: String? = (capturedStatus.map { !(200..<300).contains($0) } ?? false)
+                ? "HTTP \(capturedStatus ?? 0): \(extractErrorMessage(rawData))"
+                : nil
+            return makeSnapshot(error: httpErr)
+        } catch {
+            return makeSnapshot(error: error.localizedDescription)
         }
     }
 
@@ -470,7 +1254,10 @@ public enum AIProviderClient {
         _ request: URLRequest,
         onEvent: ([String: Any]) throws -> Void
     ) async throws -> String {
-        let (bytes, response) = try await session.bytes(for: request)
+        let streamSession = makeStreamingSession()
+        defer { streamSession.finishTasksAndInvalidate() }
+
+        let (bytes, response) = try await streamSession.bytes(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             var body = Data()
             for try await byte in bytes {
@@ -566,6 +1353,48 @@ public enum AIProviderClient {
     private static func jsonObject(_ text: String) -> [String: Any]? {
         guard !text.isEmpty, let data = text.data(using: .utf8) else { return nil }
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    private static func jsonSerializedString(_ object: Any, fallback: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes]),
+              let str = String(data: data, encoding: .utf8) else {
+            return fallback
+        }
+        return str
+    }
+
+    private static func jsonQuotedString(_ value: String) -> String {
+        if let data = try? JSONSerialization.data(withJSONObject: [value], options: [.withoutEscapingSlashes]),
+           let arrStr = String(data: data, encoding: .utf8),
+           arrStr.count >= 2 {
+            return String(arrStr.dropFirst().dropLast())
+        }
+        return "\"\""
+    }
+
+    private static func jsonEscapedInnerString(_ value: String) -> String {
+        let quoted = jsonQuotedString(value)
+        if quoted.count >= 2 && quoted.hasPrefix("\"") && quoted.hasSuffix("\"") {
+            return String(quoted.dropFirst().dropLast())
+        }
+        return value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
+    }
+
+    private static func maskSecretPreview(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.lowercased().hasPrefix("bearer ") {
+            let token = String(trimmed.dropFirst(7))
+            let tail = token.count > 4 ? String(token.suffix(4)) : ""
+            return "Bearer ••••••••\(tail)"
+        }
+        let tail = trimmed.count > 4 ? String(trimmed.suffix(4)) : ""
+        return "••••••••\(tail)"
     }
 
     private static func messageText(from error: Any) -> String {

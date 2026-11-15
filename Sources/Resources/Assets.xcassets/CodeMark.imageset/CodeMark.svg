@@ -1,10 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="24" height="24" fill="none">
-  <rect x="176" y="190" width="40" height="644" rx="20" fill="#10B981"/>
-  <line x1="618" y1="418" x2="770" y2="266" stroke="#10B981" stroke-width="44" stroke-linecap="round"/>
-  <g stroke="#000000" stroke-width="58" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M 304 216 H 484 L 378 326 H 418 C 498 326 502 468 394 468 C 338 468 308 450 296 426"/>
-    <rect x="602" y="216" width="184" height="252" rx="92"/>
-    <path d="M 326 612 L 396 556 V 808 M 312 808 H 480"/>
-    <path d="M 604 620 C 614 556 664 556 696 556 C 772 556 800 616 752 676 L 602 808 H 790"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="512" y1="0" x2="512" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0B0F19"/>
+      <stop offset="55%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#090D17"/>
+    </linearGradient>
+    <radialGradient id="emeraldGlow" cx="36%" cy="44%" r="42%">
+      <stop offset="0%" stop-color="#10B981" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#10B981" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="skyGlow" cx="64%" cy="56%" r="40%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="chevGrad" x1="512" y1="300" x2="512" y2="724" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#34D399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="slashGrad" x1="566" y1="272" x2="458" y2="752" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7DD3FC"/>
+      <stop offset="55%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#10B981"/>
+    </linearGradient>
+    <clipPath id="squircle"><rect x="32" y="32" width="960" height="960" rx="224" ry="224"/></clipPath>
+  </defs>
+  <g clip-path="url(#squircle)">
+    <rect width="1024" height="1024" fill="url(#bgGrad)"/>
+    <rect width="1024" height="1024" fill="url(#emeraldGlow)"/>
+    <rect width="1024" height="1024" fill="url(#skyGlow)"/>
+    <rect x="108" y="108" width="808" height="808" rx="188" fill="#FFFFFF" fill-opacity="0.04" stroke="#94A3B8" stroke-opacity="0.16" stroke-width="4"/>
+    <path d="M 380 336 L 206 512 L 380 688" stroke="url(#chevGrad)" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 644 336 L 818 512 L 644 688" stroke="url(#chevGrad)" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="566" y1="272" x2="458" y2="752" stroke="url(#slashGrad)" stroke-width="68" stroke-linecap="round"/>
   </g>
 </svg>

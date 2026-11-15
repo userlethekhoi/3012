@@ -950,7 +950,8 @@ public final class TheosBuildService: ObservableObject {
 
         var sourceFiles: [String] = []
         var headerDirs: Set<String> = []
-        let rootPath = rootURL.path
+        let rootCanon = WorkspaceManager.canonicalPath(rootURL)
+        let rootPrefix = rootCanon == "/" ? "/" : rootCanon + "/"
 
         if let enumerator = fm.enumerator(
             at: rootURL,
@@ -966,12 +967,9 @@ public final class TheosBuildService: ObservableObject {
                 let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 if isDir { continue }
 
-                let stdPath = url.standardizedFileURL.path
-                var relPath = stdPath
-                if relPath.hasPrefix(rootPath) {
-                    relPath = String(relPath.dropFirst(rootPath.count))
-                }
-                relPath = relPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                let itemCanon = WorkspaceManager.canonicalPath(url)
+                guard itemCanon.hasPrefix(rootPrefix) else { continue }
+                let relPath = String(itemCanon.dropFirst(rootPrefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 if relPath.isEmpty { continue }
 
                 let ext = url.pathExtension.lowercased()
@@ -1086,6 +1084,11 @@ public final class TheosBuildService: ObservableObject {
                 workspace.openTabs[tabIdx].content = updatedContent
                 workspace.openTabs[tabIdx].savedContent = updatedContent
             }
+            workspace.onFileSavedOrChanged?()
+            if !workspace.suppressOutboundSyncEvents,
+               let rel = workspace.relativePathIfInsideRoot(targetURL) {
+                workspace.onWorkspaceMutation?(.upsertFile(relativePath: rel, content: updatedContent))
+            }
             let flagNote = missingIncludeFlags.isEmpty ? "" : " (\(missingIncludeFlags.joined(separator: " ")))"
             return isEnglish
                 ? "Synced \(sortedSources.count) source file(s) into \(filesKey)\(flagNote)."
@@ -1132,12 +1135,12 @@ public final class TheosBuildService: ObservableObject {
             try fm.createDirectory(at: projectStage, withIntermediateDirectories: true)
             let excludedDirs: Set<String> = [".git", ".theos", "packages", ".build", "node_modules", "__MACOSX"]
             let canonicalRoot = WorkspaceManager.canonicalPath(workspaceRoot)
+            let rootPrefix = canonicalRoot == "/" ? "/" : canonicalRoot + "/"
             if let enumerator = fm.enumerator(
                 at: workspaceRoot,
                 includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                 options: []
             ) {
-                let rootPath = workspaceRoot.standardizedFileURL.path
                 for case let url as URL in enumerator {
                     let name = url.lastPathComponent
                     if excludedDirs.contains(name) || name.hasPrefix(".3012") || name == ".DS_Store" {
@@ -1151,14 +1154,11 @@ public final class TheosBuildService: ObservableObject {
                         continue
                     }
                     let canonicalItem = WorkspaceManager.canonicalPath(url)
-                    guard canonicalItem.hasPrefix(canonicalRoot + "/") else {
+                    guard canonicalItem.hasPrefix(rootPrefix) else {
                         if isDir { enumerator.skipDescendants() }
                         continue
                     }
-                    var rel = url.standardizedFileURL.path
-                    if rel.hasPrefix(rootPath) {
-                        rel = String(rel.dropFirst(rootPath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                    }
+                    let rel = String(canonicalItem.dropFirst(rootPrefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                     guard !rel.isEmpty else { continue }
                     let targetURL = projectStage.appendingPathComponent(rel)
                     if isDir {

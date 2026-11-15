@@ -545,16 +545,18 @@ public final class WorkspaceManager: ObservableObject {
     }
 
     public func saveAllTabs() {
+        var didSaveAny = false
         for idx in openTabs.indices {
-            let hadUnsaved = openTabs[idx].content != openTabs[idx].savedContent
+            guard openTabs[idx].isDirty else { continue }
             persistTabContentIfTextFile(openTabs[idx])
             openTabs[idx].savedContent = openTabs[idx].content
-            if hadUnsaved {
-                onAnyTabSavedWithURL?(openTabs[idx].fileURL, openTabs[idx].content)
-            }
+            onAnyTabSavedWithURL?(openTabs[idx].fileURL, openTabs[idx].content)
+            didSaveAny = true
         }
-        recomputeAllFileStatuses()
-        onFileSavedOrChanged?()
+        if didSaveAny {
+            recomputeAllFileStatuses()
+            onFileSavedOrChanged?()
+        }
     }
 
     private func recordClosedTab(_ tab: OpenTab) {
@@ -586,7 +588,9 @@ public final class WorkspaceManager: ObservableObject {
     public func closeTab(_ tabID: URL) {
         guard let idx = openTabs.firstIndex(where: { $0.id == tabID }) else { return }
         let closing = openTabs[idx]
-        persistTabContentIfTextFile(closing)
+        if closing.isDirty {
+            persistTabContentIfTextFile(closing)
+        }
         recordClosedTab(closing)
         openTabs.remove(at: idx)
         if activeTabID == tabID {
@@ -601,7 +605,9 @@ public final class WorkspaceManager: ObservableObject {
     public func closeOtherTabs(keeping tabID: URL) {
         let toClose = openTabs.filter { $0.id != tabID && !$0.isPinned }
         for tab in toClose {
-            persistTabContentIfTextFile(tab)
+            if tab.isDirty {
+                persistTabContentIfTextFile(tab)
+            }
             recordClosedTab(tab)
         }
         openTabs.removeAll { $0.id != tabID && !$0.isPinned }
@@ -614,7 +620,9 @@ public final class WorkspaceManager: ObservableObject {
         let hasUnpinned = openTabs.contains { !$0.isPinned }
         let toClose = hasUnpinned ? openTabs.filter { !$0.isPinned } : openTabs
         for tab in toClose {
-            persistTabContentIfTextFile(tab)
+            if tab.isDirty {
+                persistTabContentIfTextFile(tab)
+            }
             recordClosedTab(tab)
         }
         if hasUnpinned {
@@ -1807,6 +1815,10 @@ public final class WorkspaceManager: ObservableObject {
             let oldStd = srcURL.standardizedFileURL.path
             let oldPrefix = oldStd + "/"
             do {
+                let dstCanon = Self.canonicalPath(dstURL)
+                if Self.canonicalPath(srcURL) != dstCanon && FileManager.default.fileExists(atPath: dstURL.path) {
+                    try FileManager.default.removeItem(at: dstURL)
+                }
                 try FileManager.default.moveItem(at: srcURL, to: dstURL)
                 if isDir {
                     let oldBasePrefix = oldRelativePath + "/"
@@ -2079,9 +2091,16 @@ public final class WorkspaceManager: ObservableObject {
 
     public func reloadOpenTabsFromDisk() {
         let fm = FileManager.default
+        var removedIDs: [URL] = []
         for i in openTabs.indices {
             let url = openTabs[i].fileURL
-            guard fm.fileExists(atPath: url.path), !openTabs[i].isDirty,
+            if !fm.fileExists(atPath: url.path) {
+                if !openTabs[i].isDirty {
+                    removedIDs.append(openTabs[i].id)
+                }
+                continue
+            }
+            guard !openTabs[i].isDirty,
                   let text = readTextWithEncodingFallback(from: url) else { continue }
             let clampedLoc = min(openTabs[i].selectedRangeLocation, (text as NSString).length)
             openTabs[i].content = text
@@ -2089,6 +2108,20 @@ public final class WorkspaceManager: ObservableObject {
             openTabs[i].selectedRangeLocation = clampedLoc
             openTabs[i].selectedRangeLength = 0
         }
+        if !removedIDs.isEmpty {
+            let removedSet = Set(removedIDs)
+            openTabs.removeAll { removedSet.contains($0.id) }
+            if let active = activeTabID, removedSet.contains(active) {
+                activeTabID = openTabs.first?.id
+            }
+        }
         recomputeAllFileStatuses()
+    }
+
+    public func clearDeletedGhostEntry(relativePath: String) {
+        if deletedGhostContents.removeValue(forKey: relativePath) != nil {
+            saveDeletedGhostsMeta()
+            recomputeAllFileStatuses()
+        }
     }
 }
