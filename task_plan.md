@@ -6,7 +6,7 @@
 
 ## Tổng kết Toàn bộ 23 Giai Đoạn Triển Khai
 
-### Phase 23 (v5.0.0 / Build 21): Big Update Đồng Bộ PC 2 Chiều (Wi-Fi & 4G/5G), Share Live Preview + Kill-Switch, Fast Runner, Multimodal AI Agent & Quét Lỗi Toàn App (`in_progress` 🚧)
+### Phase 23 (v5.0.0 / Build 21): Big Update Đồng Bộ PC 2 Chiều (Wi-Fi & 4G/5G), Share Live Preview + Kill-Switch, Fast Runner, Multimodal AI Agent & Quét Lỗi Toàn App (`completed` ✅)
 - [x] **Sửa Toàn Bộ Lỗi Đã Kiểm Kê (UI, Picker, Terminal, Runner, Git, Formatter, Audio, Diagnostics):**
   - Cô lập menu công cụ header `⋯` vào `HeaderToolsMenuView: View, Equatable` (`.equatable()`) chấm dứt hiện tượng tự cuộn/reload khi cursor, diagnostics hoặc daemon timer cập nhật.
   - Chuẩn hóa bộ chọn `Files.app` qua `NativeDocumentPickerPresenter` UIKit (`UIDocumentPickerViewController` đúng API cho `.folder`, không dùng hai `.fileImporter`/`.sheet` chồng nhau), sửa toàn bộ nhãn `(Files)` thành `(Folder)` / `(File)`, cách ly thư mục ngoài vào `_ExternalFolders/<name>-<hash>`, lưu tất cả tab trước khi đổi dự án và dọn sạch tab/baseline khi xóa hoặc đổi tên thư mục.
@@ -21,7 +21,7 @@
   - Đính kèm hình ảnh từ Thư viện / Camera / Clipboard (Vision base64 cho OpenAI/OpenRouter/Anthropic/Gemini/Ollama), gợi ý `/` Skills (`/fix`, `/ui`, `/refactor`, `/test`, `/explain`, `/security`, `/mermaid`, `/commit` + tự tạo skill riêng), `@` mentions (`@active`, `@selection`, `@problems`, `@terminal`, `@git`, `@<file>`), LCS Diff +/- với nút **Accept All / Reject All / Undo**, lưu nhiều phiên chat (`sessions.json`), Inline Selection AI trên sub-toolbar và nút **1-Chạm Sửa Lỗi AI** ngay ở Console Output / Web F12.
 - [x] **Bộ Công Cụ Developer & Khởi Tạo Nhanh (`DeveloperPowerToolsSheet.swift`, `WorkspaceManager.swift`, `LeftExplorerDrawer.swift`):**
   - Bổ sung 4 tab: **CP Multi-Test Judge** (chấm nhiều test case C++/Python/JS), **Mini Postman** (gửi HTTP & sinh code cURL/Swift/Python/JS), **Visual `.env` Editor** và **Color Converter + Clipboard Vault**; cùng Global Search & Replace trong project và 4 mẫu **Starter Templates** 1 chạm.
-- [ ] **Kiểm chứng Tĩnh & CI GitHub Actions `Build 3012 Unsigned IPA` (v5.0.0 / Build 21):** Đang chạy kiểm tra tĩnh và giám sát CI.
+- [x] **Kiểm chứng Tĩnh & CI GitHub Actions `Build 3012 Unsigned IPA` (v5.0.0 / Build 21):** Kiểm tra tĩnh toàn bộ 40 file Swift (`0` lỗi) và biên dịch thành công 100% trên GitHub Actions (`Run #43690835785` -> Release `v5.0.0-b36`, `3012-Unsigned.ipa`, `15,966,978` bytes).
 
 ### Phase 22: Tài liệu README Đa Ngôn Ngữ (7 Thứ Tiếng) & Đồng Bộ Tính Năng v4.0.1 (`completed` ✅)
 - [x] **Tối ưu CI Trigger (`.github/workflows/build-ipa.yml`):** Bổ sung `'**.md'` vào `paths-ignore` để các lần cập nhật tài liệu không kích hoạt build `.ipa` dư thừa.
@@ -179,3 +179,4 @@
 | Gọi nhầm `extStore.customSnippets` thay vì thuộc tính gộp `extStore.snippets` trong `App3012Main.swift` | 1 | Đổi sang `extStore.snippets` (commit `1e19490`), build xanh 100% ở Run `#43373662958`. |
 | `Task { [weak self] in await self?.run() }` suy luận kiểu `Task<()?, Never>` không gán được cho `Task<Void, Never>` | 1 | Khai báo tường minh `() -> Void` + `guard let self` (commit `2c052c9`), build xanh ở Run `#43410979250`. |
 | Cách ly Actor Swift Concurrency (`CodeFormatterService.format` gọi `ssh.isConnected` và `Task.detached` gọi `extractSymbols`) | 1 | Đánh dấu `@MainActor` cho `CodeFormatterService.format` và `nonisolated` cho `extractSymbols` + `computeLineUTF16Offsets` (commit `3cee80e`), build xanh 100% ở Run `#43378626235`. |
+| Lỗi suy luận kiểu Swift 5.10 & `@MainActor` trên CI v5.0.0 (`presentPhotoPicker`, `DispatchWorkItem` closure `() -> ()?`, `PHPickerViewControllerDelegate` `nonisolated`, tuple có nhãn trong `withCheckedContinuation`) | 1 | Đổi sang `presentPhotoLibraryPicker`, khai báo tường minh `() -> Void`, bọc `Task { @MainActor [weak self] in ... }`, và gán tuple `(Int, String)` trong `PCSyncService` (commit `7e143a2`), build xanh 100% ở Run `#43690835785` -> Release `v5.0.0-b36`. |
