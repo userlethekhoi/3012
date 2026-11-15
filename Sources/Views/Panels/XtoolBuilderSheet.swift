@@ -11,8 +11,8 @@ public struct XtoolBuilderSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedTemplate: XtoolTemplateKind = .swiftUIApp
-    @State private var appNameInput: String = "App3012"
-    @State private var bundleIDInput: String = "com.dev.app3012"
+    @State private var appNameInput: String = "SampleXtoolApp"
+    @State private var bundleIDInput: String = "com.example.samplextoolapp"
     @State private var showTemplateCreator: Bool = false
     @State private var templateNotice: String? = nil
     @State private var syncNotice: String? = nil
@@ -20,14 +20,7 @@ public struct XtoolBuilderSheet: View {
     // On-device IPA + Dylib Injection state
     @State private var pickedIPAURL: URL? = nil
     @State private var pickedDylibURL: URL? = nil
-    @State private var activePickerMode: XtoolPickerKind? = nil
     @State private var injectNotice: String? = nil
-
-    private enum XtoolPickerKind: Identifiable {
-        case ipa
-        case dylib
-        var id: Int { self == .ipa ? 1 : 2 }
-    }
 
     public init(
         xtoolService: XtoolBuildService,
@@ -119,11 +112,11 @@ public struct XtoolBuilderSheet: View {
                             .font(.footnote)
                             .foregroundColor(.secondary)
 
-                        TextField(preferences.tr("Tên App (ví dụ: App3012)", "App Name (e.g. App3012)"), text: $appNameInput)
+                        TextField(preferences.tr("Tên App (ví dụ: SampleXtoolApp)", "App Name (e.g. SampleXtoolApp)"), text: $appNameInput)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
 
-                        TextField("Bundle ID (com.dev.app3012)", text: $bundleIDInput)
+                        TextField("Bundle ID (com.example.samplextoolapp)", text: $bundleIDInput)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
 
@@ -202,14 +195,22 @@ public struct XtoolBuilderSheet: View {
                                 workspace.openFile(at: workspace.rootURL.appendingPathComponent("xtool.yml"))
                                 dismiss()
                             }
-                            .buttonStyle(.bordered)
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                            .buttonStyle(.borderless)
                         }
                         if manifest.hasPackageSwift {
                             Button(preferences.tr("Mở Package.swift", "Open Package.swift")) {
                                 workspace.openFile(at: workspace.rootURL.appendingPathComponent("Package.swift"))
                                 dismiss()
                             }
-                            .buttonStyle(.bordered)
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                            .buttonStyle(.borderless)
                         }
                     }
 
@@ -230,7 +231,9 @@ public struct XtoolBuilderSheet: View {
                     .foregroundColor(.secondary)
 
                     Button {
-                        activePickerMode = .ipa
+                        NativeDocumentPickerPresenter.shared.presentCustomFilePicker(allowedExtensions: ["ipa", "zip"]) { url in
+                            pickedIPAURL = url
+                        }
                     } label: {
                         HStack {
                             Label(preferences.tr("Chọn file .ipa nguồn", "Select Source .ipa"), systemImage: "shippingbox.fill")
@@ -243,7 +246,9 @@ public struct XtoolBuilderSheet: View {
                     }
 
                     Button {
-                        activePickerMode = .dylib
+                        NativeDocumentPickerPresenter.shared.presentCustomFilePicker(allowedExtensions: ["dylib"]) { url in
+                            pickedDylibURL = url
+                        }
                     } label: {
                         HStack {
                             Label(preferences.tr("Chọn file .dylib cần nhúng", "Select .dylib to Inject"), systemImage: "cpu")
@@ -267,7 +272,10 @@ public struct XtoolBuilderSheet: View {
                                         pickedDylibURL = url
                                     }
                                     .font(.system(size: 11, design: .monospaced))
-                                    .buttonStyle(.bordered)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 7))
+                                    .buttonStyle(.borderless)
                                 }
                             }
                         }
@@ -345,7 +353,7 @@ public struct XtoolBuilderSheet: View {
                     } else {
                         ForEach(xtoolService.downloadedArtifacts) { item in
                             HStack {
-                                Image(systemName: item.name.hasSuffix(".ipa") ? "iphone.and.arrow.forward" : "doc.zipper")
+                                Image(systemName: item.name.hasSuffix(".ipa") ? "shippingbox.fill" : "doc.zipper")
                                     .foregroundColor(.blue)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.name)
@@ -360,13 +368,19 @@ public struct XtoolBuilderSheet: View {
                                         pickedIPAURL = item.localURL
                                     }
                                     .font(.system(size: 11.5, weight: .semibold))
-                                    .buttonStyle(.bordered)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 7))
+                                    .buttonStyle(.borderless)
                                 }
                                 CompatibleFileShareButton(item: item.localURL) {
                                     Label(preferences.tr("Xuất", "Export"), systemImage: "square.and.arrow.up")
                                         .font(.system(size: 12, weight: .bold))
                                 }
-                                .buttonStyle(.bordered)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 7))
+                                .buttonStyle(.borderless)
                             }
                         }
                     }
@@ -399,18 +413,6 @@ public struct XtoolBuilderSheet: View {
                 }
                 if pickedDylibURL == nil {
                     pickedDylibURL = discoverWorkspaceFiles(withExtension: "dylib").first
-                }
-            }
-            .sheet(item: $activePickerMode) { mode in
-                XtoolFilePickerSheet(allowedExtensions: mode == .ipa ? ["ipa", "zip"] : ["dylib"]) { url in
-                    if mode == .ipa {
-                        pickedIPAURL = url
-                    } else {
-                        pickedDylibURL = url
-                    }
-                    activePickerMode = nil
-                } onCancel: {
-                    activePickerMode = nil
                 }
             }
         }
@@ -449,70 +451,5 @@ public struct XtoolBuilderSheet: View {
             }
         }
         return found
-    }
-}
-
-private struct XtoolFilePickerSheet: UIViewControllerRepresentable {
-    let allowedExtensions: [String]
-    let onPick: (URL) -> Void
-    let onCancel: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(allowedExtensions: allowedExtensions, onPick: onPick, onCancel: onCancel)
-    }
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        var contentTypes: [UTType] = [.item, .data]
-        for ext in allowedExtensions {
-            if let ut = UTType(filenameExtension: ext) {
-                contentTypes.insert(ut, at: 0)
-            }
-        }
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: contentTypes, asCopy: true)
-        picker.allowsMultipleSelection = false
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let allowedExtensions: [String]
-        let onPick: (URL) -> Void
-        let onCancel: () -> Void
-
-        init(allowedExtensions: [String], onPick: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
-            self.allowedExtensions = allowedExtensions
-            self.onPick = onPick
-            self.onCancel = onCancel
-        }
-
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let picked = urls.first else {
-                onCancel()
-                return
-            }
-            let accessed = picked.startAccessingSecurityScopedResource()
-            defer {
-                if accessed { picked.stopAccessingSecurityScopedResource() }
-            }
-
-            let stagingDir = FileManager.default.temporaryDirectory.appendingPathComponent("3012_xtool_picks", isDirectory: true)
-            try? FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
-            let localCopy = stagingDir.appendingPathComponent("\(UUID().uuidString.prefix(6))_\(picked.lastPathComponent)")
-            if FileManager.default.fileExists(atPath: localCopy.path) {
-                try? FileManager.default.removeItem(at: localCopy)
-            }
-            do {
-                try FileManager.default.copyItem(at: picked, to: localCopy)
-                onPick(localCopy)
-            } catch {
-                onPick(picked)
-            }
-        }
-
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            onCancel()
-        }
     }
 }

@@ -19,7 +19,13 @@ public final class CodeRunnerService: ObservableObject {
         didSet { UserDefaults.standard.set(vpsEndpointURL, forKey: "3012.vpsEndpointURL") }
     }
     @Published public var vpsAuthToken: String {
-        didSet { UserDefaults.standard.set(vpsAuthToken, forKey: "3012.vpsAuthToken") }
+        didSet {
+            if vpsAuthToken.isEmpty {
+                KeychainVault.delete(forKey: "3012.vpsAuthToken")
+            } else {
+                KeychainVault.saveString(vpsAuthToken, forKey: "3012.vpsAuthToken")
+            }
+        }
     }
 
     private struct CachedExecutionResult {
@@ -32,7 +38,17 @@ public final class CodeRunnerService: ObservableObject {
 
     public init() {
         self.vpsEndpointURL = UserDefaults.standard.string(forKey: "3012.vpsEndpointURL") ?? ""
-        self.vpsAuthToken = UserDefaults.standard.string(forKey: "3012.vpsAuthToken") ?? ""
+        let keychainToken = KeychainVault.loadString(forKey: "3012.vpsAuthToken") ?? ""
+        if keychainToken.isEmpty,
+           let legacyToken = UserDefaults.standard.string(forKey: "3012.vpsAuthToken"),
+           !legacyToken.isEmpty {
+            KeychainVault.saveString(legacyToken, forKey: "3012.vpsAuthToken")
+            UserDefaults.standard.removeObject(forKey: "3012.vpsAuthToken")
+            self.vpsAuthToken = legacyToken
+        } else {
+            UserDefaults.standard.removeObject(forKey: "3012.vpsAuthToken")
+            self.vpsAuthToken = keychainToken
+        }
     }
 
     public static let vpsBootstrapCommand: String = """
@@ -88,19 +104,18 @@ public final class CodeRunnerService: ObservableObject {
             return (vpsOut, failed, elapsed, "SSH VPS: \(ssh.connectedProfile?.host ?? "Remote")")
         }
 
-        // 1. Local JavaScriptCore for plain JS
+        // 1. Local JavaScriptCore for plain JS (off MainActor)
         if language == .javascript {
-            let output = executeJavaScriptLocally(code)
+            let jsResult = await executeJavaScriptOffMainActor(code)
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            let failed = Self.detectErrorInOutput(output)
-            return (output, failed, elapsed, "Local JavaScriptCore")
+            return (jsResult.output, jsResult.failed, elapsed, "Local JavaScriptCore")
         }
 
         // 2. Private VPS Runner URL
         let trimmedVPS = vpsEndpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedVPS.isEmpty, let vpsResult = await executeOnCustomVPS(endpoint: trimmedVPS, code: code, language: language, fileName: fileName, stdin: stdin) {
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            return (vpsResult, Self.detectErrorInOutput(vpsResult), elapsed, "Remote VPS")
+            return (vpsResult.output, vpsResult.failed, elapsed, "Remote VPS")
         }
 
         // 3. SHA-256 Instant Cache hit for identical code+stdin
@@ -120,11 +135,10 @@ public final class CodeRunnerService: ObservableObject {
         if let compilerName = wandboxCompiler(for: language) {
             let result = await executeViaZeroConfigSandbox(compiler: compilerName, code: code, stdin: stdin)
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            let failed = Self.detectErrorInOutput(result)
-            if !result.hasPrefix("[Network Error]") {
-                storeCache(key: cacheKey, output: result, backend: "Zero-Config: \(compilerName)", failed: failed)
+            if !result.output.hasPrefix("[Network Error]") {
+                storeCache(key: cacheKey, output: result.output, backend: "Zero-Config: \(compilerName)", failed: result.failed)
             }
-            return (result, failed, elapsed, "Zero-Config: \(compilerName)")
+            return (result.output, result.failed, elapsed, "Zero-Config: \(compilerName)")
         }
 
         return (
@@ -152,14 +166,21 @@ public final class CodeRunnerService: ObservableObject {
 
     private static func detectErrorInOutput(_ output: String) -> Bool {
         let low = output.lowercased()
-        return low.contains("[compiler diagnostics]")
+        if low.contains("[compiler diagnostics]")
             || low.contains("[runtime error]")
             || low.contains("[js exception]")
             || low.contains("[network error]")
-            || low.contains("traceback (most recent call last)")
-            || low.contains("syntaxerror:")
-            || low.contains("error:")
-            || (low.contains("[exit code:") && !low.contains("[exit code: 0]"))
+            || low.contains("traceback (most recent call last)") {
+            return true
+        }
+        if let range = low.range(of: "[exit code:") {
+            let tail = low[range.upperBound...]
+            if let close = tail.firstIndex(of: "]") {
+                let codeStr = tail[..<close].trimmingCharacters(in: .whitespaces)
+                return codeStr != "0"
+            }
+        }
+        return false
     }
 
     private func executeViaFastGodbolt(language: CodeLanguage, code: String, stdin: String) async -> (output: String, failed: Bool, backend: String)? {
@@ -240,26 +261,59 @@ public final class CodeRunnerService: ObservableObject {
         }
     }
 
-    private func executeJavaScriptLocally(_ script: String) -> String {
-        guard let context = JSContext() else {
-            return "Failed to initialize JavaScriptCore context."
+    private func executeJavaScriptOffMainActor(_ script: String) async -> (output: String, failed: Bool) {
+        let rawTuple: (String, Bool) = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let res = Self.executeJavaScriptSynchronously(script)
+                continuation.resume(returning: res)
+            }
         }
+        return (rawTuple.0, rawTuple.1)
+    }
+
+    nonisolated private static func executeJavaScriptSynchronously(_ script: String) -> (String, Bool) {
+        guard let context = JSContext() else {
+            return ("Failed to initialize JavaScriptCore context.", true)
+        }
+        let maxBytes = 128 * 1024
+        var totalBytes = 0
+        var truncated = false
         var logs: [String] = []
+        var hadError = false
+
+        func appendCapturedLine(_ line: String) {
+            guard !truncated else { return }
+            let byteCount = line.utf8.count + (logs.isEmpty ? 0 : 1)
+            if totalBytes + byteCount > maxBytes {
+                let remaining = max(0, maxBytes - totalBytes)
+                if remaining > 0 {
+                    logs.append(String(line.prefix(remaining)))
+                }
+                logs.append("... [Output truncated at 128 KB]")
+                truncated = true
+                totalBytes = maxBytes
+            } else {
+                logs.append(line)
+                totalBytes += byteCount
+            }
+        }
 
         let logBlock: @convention(block) () -> Void = {
             let args = JSContext.currentArguments() ?? []
             let line = args.map { "\($0)" }.joined(separator: " ")
-            logs.append(line)
+            appendCapturedLine(line)
         }
         let errorBlock: @convention(block) () -> Void = {
+            hadError = true
             let args = JSContext.currentArguments() ?? []
             let line = args.map { "\($0)" }.joined(separator: " ")
-            logs.append("[Error] " + line)
+            appendCapturedLine("[Error] " + line)
         }
 
         context.exceptionHandler = { _, exception in
+            hadError = true
             if let exc = exception {
-                logs.append("[JS Exception] \(exc)")
+                appendCapturedLine("[JS Exception] \(exc)")
             }
         }
 
@@ -273,9 +327,10 @@ public final class CodeRunnerService: ObservableObject {
 
         let result = context.evaluateScript(script)
         if logs.isEmpty, let res = result, !res.isUndefined {
-            logs.append("→ \(res)")
+            appendCapturedLine("→ \(res)")
         }
-        return logs.isEmpty ? "(No console output)" : logs.joined(separator: "\n")
+        let output = logs.isEmpty ? "(No console output)" : logs.joined(separator: "\n")
+        return (output, hadError)
     }
 
     private func wandboxCompiler(for language: CodeLanguage) -> String? {
@@ -314,9 +369,9 @@ public final class CodeRunnerService: ObservableObject {
         }
     }
 
-    private func executeViaZeroConfigSandbox(compiler: String, code: String, stdin: String) async -> String {
+    private func executeViaZeroConfigSandbox(compiler: String, code: String, stdin: String) async -> (output: String, failed: Bool) {
         guard let url = URL(string: "https://wandbox.org/api/compile.json") else {
-            return "Invalid compiler URL."
+            return ("Invalid compiler URL.", true)
         }
         var payload: [String: Any] = [
             "compiler": compiler,
@@ -338,10 +393,12 @@ public final class CodeRunnerService: ObservableObject {
         do {
             let (data, _) = try await URLSession.shared.data(for: req)
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return String(data: data, encoding: .utf8) ?? "Unexpected response."
+                let raw = String(data: data, encoding: .utf8) ?? "Unexpected response."
+                return (raw, Self.detectErrorInOutput(raw))
             }
             var pieces: [String] = []
-            if let compErr = json["compiler_error"] as? String, !compErr.isEmpty {
+            let compErr = (json["compiler_error"] as? String) ?? ""
+            if !compErr.isEmpty {
                 pieces.append("[Compiler Diagnostics]\n" + compErr)
             }
             if let progOut = json["program_output"] as? String, !progOut.isEmpty {
@@ -349,19 +406,23 @@ public final class CodeRunnerService: ObservableObject {
             } else if let progMsg = json["program_message"] as? String, !progMsg.isEmpty {
                 pieces.append(progMsg)
             }
-            if let progErr = json["program_error"] as? String, !progErr.isEmpty, pieces.isEmpty {
+            let progErr = (json["program_error"] as? String) ?? ""
+            if !progErr.isEmpty {
                 pieces.append("[Runtime Error]\n" + progErr)
             }
-            if let status = json["status"] as? String, status != "0" {
+            let status = (json["status"] as? String) ?? "0"
+            if status != "0" {
                 pieces.append("[Exit code: \(status)]")
             }
-            return pieces.isEmpty ? "(Program exited with 0 — no output)" : pieces.joined(separator: "\n")
+            let output = pieces.isEmpty ? "(Program exited with 0 — no output)" : pieces.joined(separator: "\n")
+            let failed = (status != "0") || !progErr.isEmpty
+            return (output, failed)
         } catch {
-            return "[Network Error] Could not reach Zero-Config Compiler (\(error.localizedDescription)). Configure your VPS or check internet connection."
+            return ("[Network Error] Could not reach Zero-Config Compiler (\(error.localizedDescription)). Configure your VPS or check internet connection.", true)
         }
     }
 
-    private func executeOnCustomVPS(endpoint: String, code: String, language: CodeLanguage, fileName: String, stdin: String) async -> String? {
+    private func executeOnCustomVPS(endpoint: String, code: String, language: CodeLanguage, fileName: String, stdin: String) async -> (output: String, failed: Bool)? {
         guard let url = URL(string: endpoint) else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -384,9 +445,12 @@ public final class CodeRunnerService: ObservableObject {
             }
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let out = json["output"] as? String {
-                return out
+                let exitCode = (json["exitCode"] as? Int) ?? (json["exit_code"] as? Int)
+                let failed = exitCode.map { $0 != 0 } ?? Self.detectErrorInOutput(out)
+                return (out, failed)
             }
-            return String(data: data, encoding: .utf8)
+            let text = String(data: data, encoding: .utf8) ?? ""
+            return (text, Self.detectErrorInOutput(text))
         } catch {
             return nil
         }
@@ -459,7 +523,13 @@ public final class CodeRunnerService: ObservableObject {
             shellHistory.append("Directory created: \(arg)")
         case "rm":
             guard !arg.isEmpty else { shellHistory.append("usage: rm <path>"); return }
-            let target = cwd.appendingPathComponent(arg)
+            let target = cwd.appendingPathComponent(arg).standardizedFileURL
+            let rootCanon = WorkspaceManager.canonicalPath(workspaceRoot)
+            let targetCanon = WorkspaceManager.canonicalPath(target)
+            guard arg != ".", arg != "..", targetCanon != rootCanon, targetCanon.hasPrefix(rootCanon + "/") else {
+                shellHistory.append("rm: refusing to remove workspace root or path outside workspace: \(arg)")
+                return
+            }
             do {
                 try fm.removeItem(at: target)
                 onFilesystemMutated()
@@ -469,7 +539,11 @@ public final class CodeRunnerService: ObservableObject {
             }
         case "js", "node":
             guard !arg.isEmpty else { shellHistory.append("usage: js <javascript code>"); return }
-            shellHistory.append(executeJavaScriptLocally(arg))
+            Task { @MainActor [weak self] () -> Void in
+                guard let self else { return }
+                let res = await self.executeJavaScriptOffMainActor(arg)
+                self.shellHistory.append(res.output)
+            }
         default:
             shellHistory.append("Command '\(cmd)' not found in local sandbox. Type 'help' or connect VPS SSH in Phase 3 for full Linux bash.")
         }

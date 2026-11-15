@@ -180,13 +180,13 @@ public struct DeveloperPowerToolsSheet: View {
                                 Image(systemName: "trash")
                                     .foregroundColor(.red)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.borderless)
                         }
 
                         Text("Input (stdin):")
                             .font(.caption2)
                             .foregroundColor(.secondary)
-                        TextEditor(text: $testCases[idx].input)
+                        TextEditor(text: bindingForTestCaseInput(id: tc.id))
                             .font(.system(size: 12, design: .monospaced))
                             .frame(minHeight: 54)
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
@@ -194,7 +194,7 @@ public struct DeveloperPowerToolsSheet: View {
                         Text("Expected Output:")
                             .font(.caption2)
                             .foregroundColor(.secondary)
-                        TextEditor(text: $testCases[idx].expectedOutput)
+                        TextEditor(text: bindingForTestCaseExpected(id: tc.id))
                             .font(.system(size: 12, design: .monospaced))
                             .frame(minHeight: 54)
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
@@ -217,21 +217,47 @@ public struct DeveloperPowerToolsSheet: View {
         }
     }
 
+    private func bindingForTestCaseInput(id: UUID) -> Binding<String> {
+        Binding(
+            get: { testCases.first(where: { $0.id == id })?.input ?? "" },
+            set: { newValue in
+                if let idx = testCases.firstIndex(where: { $0.id == id }) {
+                    testCases[idx].input = newValue
+                }
+            }
+        )
+    }
+
+    private func bindingForTestCaseExpected(id: UUID) -> Binding<String> {
+        Binding(
+            get: { testCases.first(where: { $0.id == id })?.expectedOutput ?? "" },
+            set: { newValue in
+                if let idx = testCases.firstIndex(where: { $0.id == id }) {
+                    testCases[idx].expectedOutput = newValue
+                }
+            }
+        )
+    }
+
     private func runAllTests() async {
         guard let tab = workspace.activeTab else { return }
+        let snapshot = testCases
+        let codeSnapshot = tab.content
+        let langSnapshot = tab.language
+        let titleSnapshot = tab.title
         isJudging = true
         defer { isJudging = false }
 
-        for idx in testCases.indices {
-            let stdinStr = testCases[idx].input
+        for item in snapshot {
             let res = await runner.executeCodeSnapshot(
-                code: tab.content,
-                language: tab.language,
-                fileName: tab.title,
-                stdin: stdinStr,
+                code: codeSnapshot,
+                language: langSnapshot,
+                fileName: titleSnapshot,
+                stdin: item.input,
                 sshService: sshService,
                 bypassCache: false
             )
+            guard let idx = testCases.firstIndex(where: { $0.id == item.id }) else { continue }
             let normActual = normalizeCPOutput(res.output)
             let normExpected = normalizeCPOutput(testCases[idx].expectedOutput)
             testCases[idx].actualOutput = res.output
@@ -248,12 +274,16 @@ public struct DeveloperPowerToolsSheet: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var methodAllowsBody: Bool {
+        !["GET", "HEAD", "DELETE"].contains(httpMethod)
+    }
+
     // MARK: - 2. Mini Postman REST API Tester
     private var miniPostmanView: some View {
         Form {
             Section(preferences.tr("Yêu cầu HTTP", "HTTP Request")) {
                 Picker("Method", selection: $httpMethod) {
-                    ForEach(["GET", "POST", "PUT", "PATCH", "DELETE"], id: \.self) { m in
+                    ForEach(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"], id: \.self) { m in
                         Text(m).tag(m)
                     }
                 }
@@ -274,7 +304,7 @@ public struct DeveloperPowerToolsSheet: View {
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
                 }
 
-                if httpMethod != "GET" && httpMethod != "DELETE" {
+                if methodAllowsBody {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Body (JSON / Raw):")
                             .font(.caption2)
@@ -307,8 +337,8 @@ public struct DeveloperPowerToolsSheet: View {
                             .font(.system(size: 12, weight: .bold, design: .monospaced))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(responseStatusBadge.hasPrefix("2") ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
-                            .foregroundColor(responseStatusBadge.hasPrefix("2") ? .green : .orange)
+                            .background(responseStatusBadge.hasPrefix("HTTP 2") ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
+                            .foregroundColor(responseStatusBadge.hasPrefix("HTTP 2") ? .green : .orange)
                             .clipShape(Capsule())
                         Spacer()
                         Text("\(responseLatencyMs) ms")
@@ -372,15 +402,10 @@ public struct DeveloperPowerToolsSheet: View {
         var req = URLRequest(url: url)
         req.httpMethod = httpMethod
         req.timeoutInterval = 20
-        for line in requestHeadersText.components(separatedBy: .newlines) {
-            let parts = line.split(separator: ":", maxSplits: 1)
-            if parts.count == 2 {
-                let k = String(parts[0]).trimmingCharacters(in: .whitespaces)
-                let v = String(parts[1]).trimmingCharacters(in: .whitespaces)
-                if !k.isEmpty { req.setValue(v, forHTTPHeaderField: k) }
-            }
+        for header in parsedHeaders() {
+            req.setValue(header.value, forHTTPHeaderField: header.key)
         }
-        if httpMethod != "GET" && httpMethod != "DELETE" && !requestBodyText.isEmpty {
+        if methodAllowsBody && !requestBodyText.isEmpty {
             req.httpBody = Data(requestBodyText.utf8)
         }
 
@@ -403,31 +428,89 @@ public struct DeveloperPowerToolsSheet: View {
         }
     }
 
-    private func generateCurlCode() -> String {
-        var cmd = "curl -X \(httpMethod) \"\(requestURL)\""
-        for line in requestHeadersText.components(separatedBy: .newlines) where !line.trimmingCharacters(in: .whitespaces).isEmpty {
-            cmd += " -H \"\(line.trimmingCharacters(in: .whitespaces))\""
+    private func parsedHeaders() -> [(key: String, value: String)] {
+        requestHeadersText.components(separatedBy: .newlines).compactMap { line in
+            let parts = line.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2 else { return nil }
+            let k = String(parts[0]).trimmingCharacters(in: .whitespaces)
+            let v = String(parts[1]).trimmingCharacters(in: .whitespaces)
+            return k.isEmpty ? nil : (key: k, value: v)
         }
-        if httpMethod != "GET" && httpMethod != "DELETE" && !requestBodyText.isEmpty {
-            cmd += " -d '\(requestBodyText.replacingOccurrences(of: "\n", with: " "))'"
+    }
+
+    private func shellSingleQuoteEscape(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "'", with: "'\\''")
+    }
+
+    private func jsonStringLiteral(_ raw: String) -> String {
+        if let data = try? JSONSerialization.data(withJSONObject: [raw], options: []),
+           let encoded = String(data: data, encoding: .utf8),
+           encoded.count >= 2 {
+            return String(encoded.dropFirst().dropLast())
+        }
+        let escaped = raw
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\n", with: "\\n")
+        return "\"\(escaped)\""
+    }
+
+    private func generateCurlCode() -> String {
+        let cleanURL = requestURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        var cmd = "curl -X \(httpMethod) '\(shellSingleQuoteEscape(cleanURL))'"
+        for h in parsedHeaders() {
+            cmd += " -H '\(shellSingleQuoteEscape("\(h.key): \(h.value)"))'"
+        }
+        if methodAllowsBody && !requestBodyText.isEmpty {
+            cmd += " --data-raw '\(shellSingleQuoteEscape(requestBodyText))'"
         }
         return cmd
     }
 
     private func generateJSFetchCode() -> String {
-        """
-        const res = await fetch("\(requestURL)", {
-          method: "\(httpMethod)",
-          headers: { "Content-Type": "application/json" }\(httpMethod == "GET" ? "" : ",\n  body: JSON.stringify(\(requestBodyText))")
+        let cleanURL = requestURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let headersList = parsedHeaders()
+        let headersObjectLines: String
+        if headersList.isEmpty {
+            headersObjectLines = "    \"Content-Type\": \"application/json\""
+        } else {
+            headersObjectLines = headersList.map {
+                "    \(jsonStringLiteral($0.key)): \(jsonStringLiteral($0.value))"
+            }.joined(separator: ",\n")
+        }
+        let bodyLine = (methodAllowsBody && !requestBodyText.isEmpty)
+            ? ",\n  body: \(jsonStringLiteral(requestBodyText))"
+            : ""
+        return """
+        const res = await fetch(\(jsonStringLiteral(cleanURL)), {
+          method: \(jsonStringLiteral(httpMethod)),
+          headers: {
+        \(headersObjectLines)
+          }\(bodyLine)
         });
-        console.log(await res.json());
+        console.log(res.status, await res.text());
         """
     }
 
     private func generatePythonRequestsCode() -> String {
-        """
+        let cleanURL = requestURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let headersList = parsedHeaders()
+        let headersArg: String
+        if headersList.isEmpty {
+            headersArg = ""
+        } else {
+            let entries = headersList.map {
+                "\(jsonStringLiteral($0.key)): \(jsonStringLiteral($0.value))"
+            }.joined(separator: ", ")
+            headersArg = ", headers={\(entries)}"
+        }
+        let dataArg = (methodAllowsBody && !requestBodyText.isEmpty)
+            ? ", data=\(jsonStringLiteral(requestBodyText))"
+            : ""
+        return """
         import requests
-        r = requests.\(httpMethod.lowercased())("\(requestURL)"\(httpMethod == "GET" ? "" : ", data='''\(requestBodyText)'''"))
+        r = requests.request(\(jsonStringLiteral(httpMethod)), \(jsonStringLiteral(cleanURL))\(headersArg)\(dataArg))
         print(r.status_code, r.text)
         """
     }
@@ -464,41 +547,37 @@ public struct DeveloperPowerToolsSheet: View {
                     Text(preferences.tr("Chưa có biến nào trong .env", "No variables yet in .env"))
                         .foregroundColor(.secondary)
                 } else {
-                    ForEach(Array(envPairs.enumerated()), id: \.element.id) { idx, pair in
+                    ForEach(envPairs, id: \.id) { pair in
                         HStack(spacing: 8) {
                             Text(pair.key)
                                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                                 .frame(minWidth: 90, alignment: .leading)
                             if pair.hidden {
-                                SecureField("value", text: Binding(
-                                    get: { envPairs[idx].value },
-                                    set: { envPairs[idx].value = $0 }
-                                ))
-                                .font(.system(size: 12, design: .monospaced))
+                                SecureField("value", text: bindingForEnvValue(id: pair.id))
+                                    .font(.system(size: 12, design: .monospaced))
                             } else {
-                                TextField("value", text: Binding(
-                                    get: { envPairs[idx].value },
-                                    set: { envPairs[idx].value = $0 }
-                                ))
-                                .font(.system(size: 12, design: .monospaced))
-                                .autocorrectionDisabled()
-                                .textInputAutocapitalization(.never)
+                                TextField("value", text: bindingForEnvValue(id: pair.id))
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .autocorrectionDisabled()
+                                    .textInputAutocapitalization(.never)
                             }
                             Button {
-                                envPairs[idx].hidden.toggle()
+                                if let curIdx = envPairs.firstIndex(where: { $0.id == pair.id }) {
+                                    envPairs[curIdx].hidden.toggle()
+                                }
                             } label: {
                                 Image(systemName: pair.hidden ? "eye" : "eye.slash")
                                     .foregroundColor(.secondary)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.borderless)
                             Button(role: .destructive) {
-                                envPairs.remove(at: idx)
+                                envPairs.removeAll { $0.id == pair.id }
                                 saveEnvPairs()
                             } label: {
                                 Image(systemName: "trash")
                                     .foregroundColor(.red)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.borderless)
                         }
                     }
                 }
@@ -518,6 +597,34 @@ public struct DeveloperPowerToolsSheet: View {
         }
     }
 
+    private func bindingForEnvValue(id: UUID) -> Binding<String> {
+        Binding(
+            get: { envPairs.first(where: { $0.id == id })?.value ?? "" },
+            set: { newValue in
+                if let idx = envPairs.firstIndex(where: { $0.id == id }) {
+                    envPairs[idx].value = newValue
+                }
+            }
+        )
+    }
+
+    private func parseEnvKeyValueLine(_ rawLine: String) -> (key: String, value: String)? {
+        var trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { return nil }
+        if trimmed.hasPrefix("export ") {
+            trimmed = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespaces)
+        }
+        guard let eqIdx = trimmed.firstIndex(of: "=") else { return nil }
+        let key = String(trimmed[..<eqIdx]).trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else { return nil }
+        var value = String(trimmed[trimmed.index(after: eqIdx)...]).trimmingCharacters(in: .whitespaces)
+        if value.count >= 2,
+           ((value.hasPrefix("\"") && value.hasSuffix("\"")) || (value.hasPrefix("'") && value.hasSuffix("'"))) {
+            value = String(value.dropFirst().dropLast())
+        }
+        return (key, value)
+    }
+
     private func loadEnvPairs() {
         let envURL = workspace.rootURL.appendingPathComponent(".env")
         guard let text = try? String(contentsOf: envURL, encoding: .utf8) else {
@@ -525,33 +632,88 @@ public struct DeveloperPowerToolsSheet: View {
             return
         }
         var loaded: [(id: UUID, key: String, value: String, hidden: Bool)] = []
-        for rawLine in text.components(separatedBy: .newlines) {
-            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
-            let parts = trimmed.split(separator: "=", maxSplits: 1)
-            guard parts.count == 2 else { continue }
-            loaded.append((
-                id: UUID(),
-                key: String(parts[0]).trimmingCharacters(in: .whitespaces),
-                value: String(parts[1]).trimmingCharacters(in: .whitespaces),
-                hidden: true
-            ))
+        for rawLine in text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+            guard let parsed = parseEnvKeyValueLine(rawLine) else { continue }
+            loaded.append((id: UUID(), key: parsed.key, value: parsed.value, hidden: true))
         }
         envPairs = loaded
     }
 
+    private func sanitizeEnvField(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "\r", with: "").replacingOccurrences(of: "\n", with: "")
+    }
+
+    private func formatEnvLine(key: String, value: String) -> String {
+        let k = sanitizeEnvField(key).trimmingCharacters(in: .whitespacesAndNewlines)
+        let v = sanitizeEnvField(value)
+        let needsQuotes = v.contains("#") || v.hasPrefix(" ") || v.hasSuffix(" ")
+        if needsQuotes {
+            let escaped = v.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+            return "\(k)=\"\(escaped)\""
+        }
+        return "\(k)=\(v)"
+    }
+
     private func saveEnvPairs() {
-        let text = envPairs.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\n"
+        let envURL = workspace.rootURL.appendingPathComponent(".env")
+        var sanitizedPairs = envPairs.compactMap { item -> (key: String, value: String)? in
+            let k = sanitizeEnvField(item.key).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !k.isEmpty else { return nil }
+            return (key: k, value: sanitizeEnvField(item.value))
+        }
+
+        var outputLines: [String] = []
+        var consumedIndices = Set<Int>()
+
+        if let existingText = try? String(contentsOf: envURL, encoding: .utf8) {
+            let existingLines = existingText.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+            for (lineIndex, rawLine) in existingLines.enumerated() {
+                if lineIndex == existingLines.count - 1 && rawLine.isEmpty {
+                    continue
+                }
+                let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty || trimmed.hasPrefix("#") {
+                    outputLines.append(rawLine)
+                } else if let parsed = parseEnvKeyValueLine(rawLine) {
+                    if let matchIdx = sanitizedPairs.indices.first(where: { !consumedIndices.contains($0) && sanitizedPairs[$0].key == parsed.key }) {
+                        consumedIndices.insert(matchIdx)
+                        let pair = sanitizedPairs[matchIdx]
+                        outputLines.append(formatEnvLine(key: pair.key, value: pair.value))
+                    }
+                    // Deleted keys are omitted
+                } else {
+                    outputLines.append(rawLine)
+                }
+            }
+        }
+
+        for (idx, pair) in sanitizedPairs.enumerated() where !consumedIndices.contains(idx) {
+            outputLines.append(formatEnvLine(key: pair.key, value: pair.value))
+        }
+
+        let text = outputLines.isEmpty ? "" : outputLines.joined(separator: "\n") + "\n"
         workspace.applyAgentFileEdit(relativePath: ".env", newContent: text)
-        envSaveNotice = preferences.tr("Đã lưu .env (\(envPairs.count) biến).", "Saved .env (\(envPairs.count) keys).")
+        envSaveNotice = preferences.tr("Đã lưu .env (\(sanitizedPairs.count) biến).", "Saved .env (\(sanitizedPairs.count) keys).")
     }
 
     // MARK: - 4. Color Picker & Clipboard Snippet History
     private var colorClipboardView: some View {
-        let components = UIColor(pickedColor).cgColor.components ?? [0, 0, 1, 1]
-        let r = Int(round((components.count > 0 ? components[0] : 0) * 255))
-        let g = Int(round((components.count > 1 ? components[1] : 0) * 255))
-        let b = Int(round((components.count > 2 ? components[2] : 0) * 255))
+        let uiColor = UIColor(pickedColor)
+        var rf: CGFloat = 0
+        var gf: CGFloat = 0
+        var bf: CGFloat = 0
+        var af: CGFloat = 1
+        if !uiColor.getRed(&rf, green: &gf, blue: &bf, alpha: &af),
+           let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+           let converted = uiColor.cgColor.converted(to: srgb, intent: .defaultIntent, options: nil),
+           let comps = converted.components, comps.count >= 3 {
+            rf = comps[0]
+            gf = comps[1]
+            bf = comps[2]
+        }
+        let r = max(0, min(255, Int(round(rf * 255))))
+        let g = max(0, min(255, Int(round(gf * 255))))
+        let b = max(0, min(255, Int(round(bf * 255))))
         let hexStr = String(format: "#%02X%02X%02X", r, g, b)
         let rgbStr = "rgb(\(r), \(g), \(b))"
         let swiftUIStr = String(format: "Color(red: %.2f, green: %.2f, blue: %.2f)", Double(r) / 255.0, Double(g) / 255.0, Double(b) / 255.0)
@@ -598,13 +760,15 @@ public struct DeveloperPowerToolsSheet: View {
                         }
                         .buttonStyle(.bordered)
                         Button(role: .destructive) {
-                            clipNotes.remove(at: idx)
-                            persistClipboardHistory()
+                            if clipNotes.indices.contains(idx) {
+                                clipNotes.remove(at: idx)
+                                persistClipboardHistory()
+                            }
                         } label: {
                             Image(systemName: "trash")
                                 .foregroundColor(.red)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.borderless)
                     }
                 }
             }

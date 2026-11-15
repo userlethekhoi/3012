@@ -152,6 +152,7 @@ public final class TheosBuildService: ObservableObject {
     @Published public private(set) var serverHealthSummary: String? = nil
 
     private var activeTask: Task<Void, Never>?
+    private var buildGeneration: Int = 0
     private var activeJobID: String?
     private let deviceID: String
 
@@ -237,12 +238,17 @@ public final class TheosBuildService: ObservableObject {
         in workspace: WorkspaceManager
     ) -> URL? {
         let cleanName = Self.sanitizeSymbolName(rawName, fallback: kind == .modMenuDylib ? "ModMenu3012" : "MyTweak3012")
-        let cleanPkgID = rawBundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "com.dev.\(cleanName.lowercased())"
-            : rawBundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rawPkg = rawBundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let validPkgScalars = rawPkg.unicodeScalars.filter {
+            ($0.value >= 97 && $0.value <= 122) || ($0.value >= 48 && $0.value <= 57) || $0 == "." || $0 == "-"
+        }
+        let trimmedPkg = String(String.UnicodeScalarView(validPkgScalars)).trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
+        let fallbackPkgSlug = cleanName.lowercased().replacingOccurrences(of: "_", with: "-")
+        let cleanPkgID = trimmedPkg.isEmpty ? "com.dev.\(fallbackPkgSlug)" : trimmedPkg
         let cleanFilter = rawFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "com.apple.springboard"
             : rawFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        let escapedFilter = Self.escapeXML(cleanFilter)
 
         let root = workspace.rootURL
         let files: [(relPath: String, content: String)]
@@ -256,7 +262,7 @@ public final class TheosBuildService: ObservableObject {
         \t<dict>
         \t\t<key>Bundles</key>
         \t\t<array>
-        \t\t\t<string>\(cleanFilter)</string>
+        \t\t\t<string>\(escapedFilter)</string>
         \t\t</array>
         \t</dict>
         </dict>
@@ -317,6 +323,7 @@ public final class TheosBuildService: ObservableObject {
 
         case .modMenuDylib:
             let makefile = """
+            export _LOGOS_DEFAULT_GENERATOR = internal
             TARGET := iphone:clang:latest:14.0
             ARCHS = arm64 arm64e
 
@@ -528,9 +535,22 @@ public final class TheosBuildService: ObservableObject {
         for entry in files {
             let dest = root.appendingPathComponent(entry.relPath)
             try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? entry.content.write(to: dest, atomically: true, encoding: .utf8)
+            do {
+                try entry.content.write(to: dest, atomically: true, encoding: .utf8)
+                let stdDest = dest.standardizedFileURL
+                if let tabIdx = workspace.openTabs.firstIndex(where: { $0.fileURL.standardizedFileURL == stdDest }) {
+                    workspace.openTabs[tabIdx].content = entry.content
+                    workspace.openTabs[tabIdx].savedContent = entry.content
+                }
+                if !workspace.suppressOutboundSyncEvents {
+                    workspace.onWorkspaceMutation?(.upsertFile(relativePath: entry.relPath, content: entry.content))
+                }
+            } catch {
+                buildStatusText = "Không ghi được \(entry.relPath): \(error.localizedDescription)"
+            }
         }
         workspace.reloadTree()
+        workspace.onFileSavedOrChanged?()
 
         let primaryName = kind == .modMenuDylib ? "Tweak.xm" : "Tweak.x"
         let primaryURL = root.appendingPathComponent(primaryName)
@@ -577,6 +597,8 @@ public final class TheosBuildService: ObservableObject {
     ) {
         guard !isBuilding else { return }
         activeTask?.cancel()
+        buildGeneration &+= 1
+        let gen = buildGeneration
 
         isBuilding = true
         buildLog = "[3012 Theos] Chuẩn bị đóng gói dự án từ \(workspaceRoot.lastPathComponent)...\n"
@@ -586,10 +608,12 @@ public final class TheosBuildService: ObservableObject {
         activeTask = Task { [weak self] () -> Void in
             guard let self else { return }
             defer {
-                self.isBuilding = false
-                self.activeJobID = nil
-                self.refreshLocalPackages(in: workspaceRoot)
-                onWorkspaceChanged()
+                if self.buildGeneration == gen {
+                    self.isBuilding = false
+                    self.activeJobID = nil
+                    self.refreshLocalPackages(in: workspaceRoot)
+                    onWorkspaceChanged()
+                }
             }
 
             switch self.buildMode {
@@ -654,7 +678,9 @@ public final class TheosBuildService: ObservableObject {
             return
         }
 
-        guard let zipData = createCleanTheosZipData(workspaceRoot: workspaceRoot) else {
+        guard let zipData = await Task.detached(priority: .userInitiated) { () -> Data? in
+            Self.createCleanTheosZipData(workspaceRoot: workspaceRoot)
+        }.value else {
             appendLog("[3012] Không thể nén dự án thành file .zip.\n", runner: runner)
             buildStatusText = "Lỗi nén .zip"
             return
@@ -713,10 +739,18 @@ public final class TheosBuildService: ObservableObject {
 
                 var pollReq = URLRequest(url: pollURL)
                 pollReq.timeoutInterval = 20
+                pollReq.setValue(deviceID, forHTTPHeaderField: "X-Device-ID")
                 let (pollData, pollResp) = try await URLSession.shared.data(for: pollReq)
-                if let pHttp = pollResp as? HTTPURLResponse, pHttp.statusCode == 404 {
-                    appendLog("\n[3012] Phiên build đã hết hạn trên máy chủ.\n", runner: runner)
-                    buildStatusText = "Build hết hạn"
+                if let pHttp = pollResp as? HTTPURLResponse, !(200...299).contains(pHttp.statusCode) {
+                    if pHttp.statusCode == 404 {
+                        appendLog("\n[3012] Phiên build đã hết hạn trên máy chủ.\n", runner: runner)
+                        buildStatusText = "Build hết hạn"
+                    } else {
+                        let apiErr = try? JSONDecoder().decode(TheosServerErrorResponse.self, from: pollData)
+                        let msg = apiErr?.message ?? "HTTP \(pHttp.statusCode)"
+                        appendLog("\n[3012] Lỗi máy chủ khi theo dõi build: \(msg)\n", runner: runner)
+                        buildStatusText = msg
+                    }
                     return
                 }
                 job = try JSONDecoder().decode(TheosBuildJobResponse.self, from: pollData)
@@ -782,34 +816,50 @@ public final class TheosBuildService: ObservableObject {
             buildStatusText = "Chưa kết nối SSH VPS"
             return
         }
-        guard let zipData = createCleanTheosZipData(workspaceRoot: workspaceRoot) else {
+        guard let zipData = await Task.detached(priority: .userInitiated) { () -> Data? in
+            Self.createCleanTheosZipData(workspaceRoot: workspaceRoot)
+        }.value else {
             appendLog("[3012] Không thể nén dự án Theos.\n", runner: runner)
             buildStatusText = "Lỗi nén .zip"
             return
         }
 
         let remoteDir = "/tmp/3012_theos_\(String(UUID().uuidString.prefix(8)))"
-        let b64Zip = zipData.base64EncodedString()
         let schemeArg = packageScheme == .rootful ? "" : "THEOS_PACKAGE_SCHEME=\(packageScheme.rawValue)"
 
-        buildStatusText = "Đang đẩy mã nguồn & biên dịch trên VPS..."
-        appendLog("[3012] Đang biên dịch qua SSH trên VPS (\(sshService.connectedProfile?.host ?? "VPS"))...\n", runner: runner)
+        buildStatusText = "Đang tải mã nguồn qua SFTP lên VPS..."
+        appendLog("[3012] Đang tải dự án qua SFTP & biên dịch trên VPS (\(sshService.connectedProfile?.host ?? "VPS"))...\n", runner: runner)
 
+        let prepOut = await sshService.executeCommandOnVPS("rm -rf '\(remoteDir)' && mkdir -p '\(remoteDir)/src'")
+        if prepOut.contains("[Process exited with code") || prepOut.hasPrefix("[SSH Error]") {
+            appendLog(prepOut + "\n", runner: runner)
+            buildStatusText = "Không tạo được thư mục tạm trên VPS"
+            return
+        }
+
+        do {
+            try await sshService.uploadDataViaSFTP(data: zipData, remotePath: "\(remoteDir)/proj.zip")
+        } catch {
+            _ = await sshService.executeCommandOnVPS("rm -rf '\(remoteDir)'")
+            appendLog("[3012] Lỗi upload SFTP: \(error.localizedDescription)\n", runner: runner)
+            buildStatusText = "Lỗi upload SFTP"
+            return
+        }
+
+        buildStatusText = "Đang biên dịch Theos trên VPS..."
         let buildScript = """
-        rm -rf '\(remoteDir)' && mkdir -p '\(remoteDir)/src' && cd '\(remoteDir)' && \
-        cat <<'EOF_ZIP' | base64 -d > proj.zip
-        \(b64Zip)
-        EOF_ZIP
+        cd '\(remoteDir)' && \
         unzip -qq -o proj.zip -d src && \
-        PROJ=$(find src -maxdepth 4 -type f -name Makefile | head -n 1 | xargs -r dirname) && \
+        PROJ_MF=$(find src -maxdepth 4 -type f -name Makefile | head -n 1) && \
+        [ -n "$PROJ_MF" ] && PROJ=$(dirname "$PROJ_MF") && \
         cd "$PROJ" && \
-        make -j2 package FINALPACKAGE=1 \(schemeArg) 2>&1; echo "__3012_EXIT=$?"
+        make -j2 package FINALPACKAGE=1 \(schemeArg) 2>&1
         """
         let vpsOutput = await sshService.executeCommandOnVPS(buildScript)
         appendLog(vpsOutput + "\n", runner: runner)
 
         let listOut = await sshService.executeCommandOnVPS(
-            "find '\(remoteDir)/src' -type f \\( -name '*.deb' -o -name '*.dylib' \\) -print"
+            "find '\(remoteDir)/src' -type f \\( -name '*.deb' -o -name '*.dylib' \\) ! -path '*/.theos/obj/arm64*' ! -path '*/.theos/obj/armv7*' -print"
         )
         let remoteArtifacts = listOut
             .components(separatedBy: .newlines)
@@ -827,11 +877,7 @@ public final class TheosBuildService: ObservableObject {
         var fetched: [String] = []
         for path in remoteArtifacts {
             let fileName = (path as NSString).lastPathComponent
-            let b64Bin = await sshService.executeCommandOnVPS("base64 -w0 '\(path)' 2>/dev/null || base64 '\(path)'")
-                .replacingOccurrences(of: "\n", with: "")
-                .replacingOccurrences(of: "\r", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if let decoded = Data(base64Encoded: b64Bin) {
+            if let decoded = try? await sshService.downloadDataViaSFTP(remotePath: path) {
                 try? decoded.write(to: packagesDir.appendingPathComponent(fileName), options: .atomic)
                 fetched.append(fileName)
             }
@@ -1021,6 +1067,14 @@ public final class TheosBuildService: ObservableObject {
                 newLines.append(replacementFilesLine)
             }
         }
+        if !missingIncludeFlags.isEmpty && !didUpdateCflags {
+            let extraFlagsLine = "\(cflagsKey) += \(missingIncludeFlags.joined(separator: " "))"
+            if let includeIdx = newLines.lastIndex(where: { $0.contains("tweak.mk") || $0.contains("application.mk") || $0.contains("tool.mk") }) {
+                newLines.insert(extraFlagsLine, at: includeIdx)
+            } else {
+                newLines.append(extraFlagsLine)
+            }
+        }
 
         let updatedContent = newLines.joined(separator: "\n")
         do {
@@ -1060,7 +1114,7 @@ public final class TheosBuildService: ObservableObject {
         return URL(string: raw)
     }
 
-    private func createCleanTheosZipData(workspaceRoot: URL) -> Data? {
+    nonisolated private static func createCleanTheosZipData(workspaceRoot: URL) -> Data? {
         let fm = FileManager.default
         let stageID = UUID().uuidString
         let stageParent = fm.temporaryDirectory.appendingPathComponent("3012_stage_\(stageID)", isDirectory: true)
@@ -1075,9 +1129,10 @@ public final class TheosBuildService: ObservableObject {
         do {
             try fm.createDirectory(at: projectStage, withIntermediateDirectories: true)
             let excludedDirs: Set<String> = [".git", ".theos", "packages", ".build", "node_modules", "__MACOSX"]
+            let canonicalRoot = WorkspaceManager.canonicalPath(workspaceRoot)
             if let enumerator = fm.enumerator(
                 at: workspaceRoot,
-                includingPropertiesForKeys: [.isDirectoryKey],
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                 options: []
             ) {
                 let rootPath = workspaceRoot.standardizedFileURL.path
@@ -1087,7 +1142,17 @@ public final class TheosBuildService: ObservableObject {
                         enumerator.skipDescendants()
                         continue
                     }
-                    let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                    let rv = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                    let isDir = rv?.isDirectory ?? false
+                    if rv?.isSymbolicLink == true {
+                        if isDir { enumerator.skipDescendants() }
+                        continue
+                    }
+                    let canonicalItem = WorkspaceManager.canonicalPath(url)
+                    guard canonicalItem.hasPrefix(canonicalRoot + "/") else {
+                        if isDir { enumerator.skipDescendants() }
+                        continue
+                    }
                     var rel = url.standardizedFileURL.path
                     if rel.hasPrefix(rootPath) {
                         rel = String(rel.dropFirst(rootPath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -1108,6 +1173,15 @@ public final class TheosBuildService: ObservableObject {
         } catch {
             return nil
         }
+    }
+
+    nonisolated private static func escapeXML(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
     }
 
     private static func sanitizeSymbolName(_ raw: String, fallback: String) -> String {

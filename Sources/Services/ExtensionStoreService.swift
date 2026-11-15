@@ -114,12 +114,16 @@ public final class ExtensionStoreService: ObservableObject {
             var importedSnippetsCount = 0
 
             // 1. Import VS Code Color Themes
+            let extRootCanon = WorkspaceManager.canonicalPath(extRoot)
+            let extRootPrefix = extRootCanon == "/" ? "/" : extRootCanon + "/"
             if let themesArr = contributes["themes"] as? [[String: Any]] {
                 for th in themesArr {
                     guard let relPath = th["path"] as? String else { continue }
                     let label = (th["label"] as? String) ?? item.displayName
                     let cleanRel = relPath.hasPrefix("./") ? String(relPath.dropFirst(2)) : relPath
+                    guard !relPath.hasPrefix("/"), WorkspaceManager.isSafeRelativeSyncPath(cleanRel) else { continue }
                     let themeURL = extRoot.appendingPathComponent(cleanRel)
+                    guard WorkspaceManager.canonicalPath(themeURL).hasPrefix(extRootPrefix) else { continue }
                     if let rawThemeData = try? Data(contentsOf: themeURL),
                        let cleanedData = Self.stripJSONComments(from: rawThemeData),
                        var parsedPalette = VSCodeThemeImporter.parse(jsonData: cleanedData, fallbackName: label) {
@@ -139,7 +143,9 @@ public final class ExtensionStoreService: ObservableObject {
                     guard let relPath = sn["path"] as? String else { continue }
                     let lang = (sn["language"] as? String) ?? "all"
                     let cleanRel = relPath.hasPrefix("./") ? String(relPath.dropFirst(2)) : relPath
+                    guard !relPath.hasPrefix("/"), WorkspaceManager.isSafeRelativeSyncPath(cleanRel) else { continue }
                     let snipURL = extRoot.appendingPathComponent(cleanRel)
+                    guard WorkspaceManager.canonicalPath(snipURL).hasPrefix(extRootPrefix) else { continue }
                     if let rawData = try? Data(contentsOf: snipURL),
                        let cleaned = Self.stripJSONComments(from: rawData),
                        let dict = try? JSONSerialization.jsonObject(with: cleaned) as? [String: Any] {
@@ -165,10 +171,22 @@ public final class ExtensionStoreService: ObservableObject {
                     }
                 }
                 if !newSnippets.isEmpty {
-                    let customExisting = snippets.filter { item in !Self.builtInSnippets.contains(item) }
-                    let mergedCustom = customExisting + newSnippets
-                    snippets = Self.builtInSnippets + mergedCustom
-                    if let encoded = try? JSONEncoder().encode(mergedCustom) {
+                    let customExisting = snippets.filter { existing in
+                        !Self.builtInSnippets.contains(where: { $0.id == existing.id })
+                    }
+                    var dedupByID: [String: CodeSnippetItem] = [:]
+                    var orderedIDs: [String] = []
+                    for snip in (customExisting + newSnippets) {
+                        if dedupByID[snip.id] == nil {
+                            orderedIDs.append(snip.id)
+                        }
+                        dedupByID[snip.id] = snip
+                    }
+                    let mergedCustom = orderedIDs.compactMap { dedupByID[$0] }
+                    let builtInIDs = Set(Self.builtInSnippets.map(\.id))
+                    let filteredCustom = mergedCustom.filter { !builtInIDs.contains($0.id) }
+                    snippets = Self.builtInSnippets + filteredCustom
+                    if let encoded = try? JSONEncoder().encode(filteredCustom) {
                         UserDefaults.standard.set(encoded, forKey: "3012.customSnippets")
                     }
                 }
@@ -193,7 +211,8 @@ public final class ExtensionStoreService: ObservableObject {
             return data
         }
         guard let text = String(data: data, encoding: .utf8) else { return data }
-        var out = ""
+        var uncommented: [Character] = []
+        uncommented.reserveCapacity(text.count)
         var inString = false
         var escaped = false
         let chars = Array(text)
@@ -201,7 +220,7 @@ public final class ExtensionStoreService: ObservableObject {
         while i < chars.count {
             let c = chars[i]
             if inString {
-                out.append(c)
+                uncommented.append(c)
                 if escaped { escaped = false }
                 else if c == "\\" { escaped = true }
                 else if c == "\"" { inString = false }
@@ -209,7 +228,7 @@ public final class ExtensionStoreService: ObservableObject {
             } else {
                 if c == "\"" {
                     inString = true
-                    out.append(c)
+                    uncommented.append(c)
                     i += 1
                 } else if c == "/" && i + 1 < chars.count && chars[i + 1] == "/" {
                     while i < chars.count && chars[i] != "\n" { i += 1 }
@@ -218,13 +237,43 @@ public final class ExtensionStoreService: ObservableObject {
                     while i + 1 < chars.count && !(chars[i] == "*" && chars[i + 1] == "/") { i += 1 }
                     i += 2
                 } else {
-                    out.append(c)
+                    uncommented.append(c)
                     i += 1
                 }
             }
         }
-        // Remove trailing commas before } or ]
-        let cleaned = out.replacingOccurrences(of: #",\s*([}\]])"#, with: "$1", options: .regularExpression)
+
+        // Remove trailing commas before } or ] ONLY outside string literals
+        var cleaned = ""
+        cleaned.reserveCapacity(uncommented.count)
+        inString = false
+        escaped = false
+        var j = 0
+        while j < uncommented.count {
+            let c = uncommented[j]
+            if inString {
+                cleaned.append(c)
+                if escaped { escaped = false }
+                else if c == "\\" { escaped = true }
+                else if c == "\"" { inString = false }
+            } else if c == "\"" {
+                inString = true
+                cleaned.append(c)
+            } else if c == "," {
+                var k = j + 1
+                while k < uncommented.count && (uncommented[k] == " " || uncommented[k] == "\t" || uncommented[k] == "\n" || uncommented[k] == "\r") {
+                    k += 1
+                }
+                if k < uncommented.count && (uncommented[k] == "}" || uncommented[k] == "]") {
+                    // Omit trailing comma outside string
+                } else {
+                    cleaned.append(c)
+                }
+            } else {
+                cleaned.append(c)
+            }
+            j += 1
+        }
         return Data(cleaned.utf8)
     }
 
@@ -245,29 +294,79 @@ public final class ExtensionStoreService: ObservableObject {
 
         if let ssh = sshService, ssh.isConnected {
             let b64 = Data(code.utf8).base64EncodedString()
+            let uniqueID = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)
             let cmd: String
             switch language {
             case .cpp:
-                cmd = "echo '\(b64)' | base64 -d | g++ -std=c++20 -fsyntax-only -x c++ - 2>&1"
+                cmd = "echo '\(b64)' | base64 -d | g++ -std=c++20 -fsyntax-only -x c++ - 2>&1; echo \"__3012_EXIT__:$?\""
             case .c:
-                cmd = "echo '\(b64)' | base64 -d | gcc -std=c17 -fsyntax-only -x c - 2>&1"
+                cmd = "echo '\(b64)' | base64 -d | gcc -std=c17 -fsyntax-only -x c - 2>&1; echo \"__3012_EXIT__:$?\""
             case .python:
-                cmd = "mkdir -p /tmp/3012_diag && echo '\(b64)' | base64 -d > /tmp/3012_diag/check.py && python3 -m py_compile /tmp/3012_diag/check.py 2>&1"
+                cmd = "tmp=\"/tmp/3012_diag_\(uniqueID).py\"; echo '\(b64)' | base64 -d > \"$tmp\" && python3 -m py_compile \"$tmp\" 2>&1; ec=$?; rm -f \"$tmp\"; echo \"__3012_EXIT__:$ec\""
             default:
                 cmd = ""
             }
             if !cmd.isEmpty {
                 let res = await ssh.executeCommandOnVPS(cmd)
-                let trimmed = res.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? "[OK] LSP / Compiler Check trên VPS: 0 lỗi, 0 cảnh báo." : "[Diagnostics]\n\(trimmed)"
+                let lines = res.components(separatedBy: .newlines)
+                var exitCode = 0
+                var outputLines: [String] = []
+                for line in lines {
+                    if let range = line.range(of: "__3012_EXIT__:") {
+                        let codeStr = line[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+                        exitCode = Int(codeStr) ?? 0
+                    } else {
+                        outputLines.append(line)
+                    }
+                }
+                let trimmed = outputLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                if exitCode == 0 && trimmed.isEmpty {
+                    return "[OK] LSP / Compiler Check trên VPS: 0 lỗi, 0 cảnh báo."
+                }
+                return trimmed.isEmpty ? "[Diagnostics] Compiler exit code \(exitCode)." : "[Diagnostics]\n\(trimmed)"
             }
         }
 
-        // Offline bracket balance check
+        // Offline string/comment-aware bracket balance check
         var stack: [Character] = []
         let pairs: [Character: Character] = [")": "(", "}": "{", "]": "["]
+        let hashCommentLangs: Set<CodeLanguage> = [.python, .ruby, .perl, .r, .julia, .elixir, .yaml, .toml, .shell, .fish, .powershell, .dockerfile, .makefile, .cmake, .hcl, .nix]
+        var inBlockComment = false
         for (lineIdx, line) in code.components(separatedBy: "\n").enumerated() {
-            for ch in line {
+            let chars = Array(line)
+            var idx = 0
+            var inQuote: Character? = nil
+            while idx < chars.count {
+                let ch = chars[idx]
+                if inBlockComment {
+                    if ch == "*" && idx + 1 < chars.count && chars[idx + 1] == "/" {
+                        inBlockComment = false
+                        idx += 2
+                        continue
+                    }
+                    idx += 1
+                    continue
+                }
+                if let q = inQuote {
+                    if ch == "\\" { idx += 2; continue }
+                    if ch == q { inQuote = nil }
+                    idx += 1
+                    continue
+                }
+                if hashCommentLangs.contains(language) && ch == "#" { break }
+                if (language == .lua || language == .sql || language == .haskell) && ch == "-" && idx + 1 < chars.count && chars[idx + 1] == "-" { break }
+                if ch == "/" && idx + 1 < chars.count {
+                    if chars[idx + 1] == "/" { break }
+                    if chars[idx + 1] == "*" { inBlockComment = true; idx += 2; continue }
+                }
+                if ch == "\"" || ch == "'" || ch == "`" {
+                    if !(language == .cpp && ch == "'" && idx > 0 && idx + 1 < chars.count && chars[idx - 1].isHexDigit && chars[idx + 1].isHexDigit)
+                        && !(language == .rust && ch == "'") {
+                        inQuote = ch
+                        idx += 1
+                        continue
+                    }
+                }
                 if ch == "(" || ch == "{" || ch == "[" {
                     stack.append(ch)
                 } else if let expected = pairs[ch] {
@@ -277,6 +376,7 @@ public final class ExtensionStoreService: ObservableObject {
                         return "[Syntax Warning] Lệch dấu ngoặc '\(ch)' tại dòng \(lineIdx + 1)."
                     }
                 }
+                idx += 1
             }
         }
         return stack.isEmpty

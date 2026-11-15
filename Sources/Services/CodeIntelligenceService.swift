@@ -67,7 +67,7 @@ public struct CompletionCandidate: Identifiable, Equatable {
 }
 
 // MARK: - 2. Inline Diagnostics Models
-public enum DiagnosticSeverity: String, Equatable {
+public enum DiagnosticSeverity: String, Equatable, Sendable {
     case error
     case warning
 
@@ -79,7 +79,7 @@ public enum DiagnosticSeverity: String, Equatable {
     }
 }
 
-public struct EditorDiagnostic: Identifiable, Equatable {
+public struct EditorDiagnostic: Identifiable, Equatable, Sendable {
     public let id: String
     public let line: Int        // 1-based line number
     public let column: Int      // 1-based column number
@@ -98,7 +98,7 @@ public struct EditorDiagnostic: Identifiable, Equatable {
 }
 
 // MARK: - 3. Symbol Outline & Cross-File Signature Models
-public struct DocumentSymbolItem: Identifiable, Equatable {
+public struct DocumentSymbolItem: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
     public let signature: String
@@ -135,8 +135,38 @@ public final class CodeIntelligenceService: ObservableObject {
     @Published public var activeBreadcrumbSymbol: String? = nil
 
     private var diagnosticsTask: Task<Void, Never>?
+    private var symbolTask: Task<Void, Never>?
+    private var analysisGeneration: Int = 0
     private var workspaceSymbols: [WorkspaceIndexedSymbol] = []
     private var recentAcceptedLabels: [String] = []
+
+    private final class RegexBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var symbolCache: [CodeLanguage: [(NSRegularExpression, Int, String, String)]] = [:]
+        let htmlTag = try? NSRegularExpression(pattern: #"<\s*(/?)\s*([a-zA-Z0-9!-]+)([^>]*?)(/?)>"#)
+        let gccDiag = try? NSRegularExpression(pattern: #":(\d+):(\d+):\s*(fatal error|error|warning):\s*(.+)$"#)
+        let genericLine = try? NSRegularExpression(pattern: #"line\s+(\d+)"#, options: [.caseInsensitive])
+        let pyBlock = try? NSRegularExpression(pattern: #"^(def\s+\w+\(.*\)|class\s+\w+.*|if\s+.+|elif\s+.+|else|for\s+.+|while\s+.+|try|except.*|finally|with\s+.+)$"#)
+
+        func cachedSymbols(
+            for language: CodeLanguage,
+            build: () -> [(NSRegularExpression, Int, String, String)]
+        ) -> [(NSRegularExpression, Int, String, String)] {
+            lock.lock()
+            if let existing = symbolCache[language] {
+                lock.unlock()
+                return existing
+            }
+            lock.unlock()
+            let compiled = build()
+            lock.lock()
+            symbolCache[language] = compiled
+            lock.unlock()
+            return compiled
+        }
+    }
+
+    private static let regexCache = RegexBox()
 
     public init() {}
 
@@ -237,12 +267,29 @@ public final class CodeIntelligenceService: ObservableObject {
     }
 
     // MARK: - Embedded Web Block Detector (<style> -> CSS, <script> -> JS inside HTML/Vue/Svelte)
+    private static func safeUTF16Substring(in nsText: NSString, from start: Int, to end: Int) -> String {
+        let len = nsText.length
+        guard len > 0 else { return "" }
+        let clampedStart = min(max(0, start), len)
+        let clampedEnd = min(max(clampedStart, end), len)
+        guard clampedEnd > clampedStart else { return "" }
+        let rawRange = NSRange(location: clampedStart, length: clampedEnd - clampedStart)
+        let safeRange = nsText.rangeOfComposedCharacterSequences(for: rawRange)
+        guard safeRange.location != NSNotFound,
+              safeRange.location >= 0,
+              safeRange.location + safeRange.length <= len else {
+            return ""
+        }
+        return nsText.substring(with: safeRange)
+    }
+
     private static func detectEmbeddedWebLanguage(nsText: NSString, cursor: Int, baseLanguage: CodeLanguage) -> CodeLanguage {
-        guard [.html, .vue, .svelte, .astro].contains(baseLanguage), cursor > 0 else {
+        let clampedCursor = min(max(0, cursor), nsText.length)
+        guard [.html, .vue, .svelte, .astro].contains(baseLanguage), clampedCursor > 0 else {
             return baseLanguage
         }
-        let lookbackStart = max(0, cursor - 8000)
-        let slice = nsText.substring(with: NSRange(location: lookbackStart, length: cursor - lookbackStart)).lowercased()
+        let lookbackStart = max(0, clampedCursor - 8000)
+        let slice = safeUTF16Substring(in: nsText, from: lookbackStart, to: clampedCursor).lowercased()
 
         func isInside(tag: String) -> Bool {
             guard let openMatch = slice.range(of: "<\(tag)(?=\\s|>)", options: [.regularExpression, .backwards]) else {
@@ -472,8 +519,9 @@ public final class CodeIntelligenceService: ObservableObject {
 
     // MARK: - Live Parameter Signature Hint (VS Code Parameter Callout)
     private func updateSignatureHelp(nsText: NSString, cursor: Int) {
-        let lookbackStart = max(0, cursor - 160)
-        let slice = nsText.substring(with: NSRange(location: lookbackStart, length: cursor - lookbackStart))
+        let clampedCursor = min(max(0, cursor), nsText.length)
+        let lookbackStart = max(0, clampedCursor - 160)
+        let slice = Self.safeUTF16Substring(in: nsText, from: lookbackStart, to: clampedCursor)
         // Walk backwards to find an unclosed '('
         var parenDepth = 0
         let chars = Array(slice)
@@ -1245,20 +1293,34 @@ public final class CodeIntelligenceService: ObservableObject {
         diagnosticsEnabled: Bool,
         sshService: SSHWorkspaceService?
     ) {
-        self.symbols = Self.extractSymbols(from: code, language: language)
-        updateActiveBreadcrumb(cursorLocation: cursorLocation, in: code)
-
+        symbolTask?.cancel()
         diagnosticsTask?.cancel()
+        analysisGeneration &+= 1
+        let gen = analysisGeneration
+
+        symbolTask = Task { [weak self] () -> Void in
+            let extracted = await Task.detached(priority: .utility) { () -> [DocumentSymbolItem] in
+                Self.extractSymbols(from: code, language: language)
+            }.value
+            guard let self, !Task.isCancelled, self.analysisGeneration == gen else { return }
+            self.symbols = extracted
+            self.updateActiveBreadcrumb(cursorLocation: cursorLocation, in: code)
+        }
+
         guard diagnosticsEnabled else {
             if !diagnostics.isEmpty { diagnostics = [] }
             return
         }
 
-        diagnosticsTask = Task { [weak self] in
+        diagnosticsTask = Task { [weak self] () -> Void in
             try? await Task.sleep(nanoseconds: 420_000_000)
             guard !Task.isCancelled else { return }
 
-            var found = Self.runFastOfflineDiagnostics(code: code, language: language)
+            var found = await Task.detached(priority: .utility) { () -> [EditorDiagnostic] in
+                Self.runFastOfflineDiagnostics(code: code, language: language)
+            }.value
+
+            guard let self, !Task.isCancelled, self.analysisGeneration == gen else { return }
 
             if let ssh = sshService, ssh.isConnected,
                [.c, .cpp, .python, .rust, .php, .ruby, .shell].contains(language) {
@@ -1267,13 +1329,13 @@ public final class CodeIntelligenceService: ObservableObject {
                     language: language,
                     sshService: ssh
                 )
-                if !Task.isCancelled, !remoteDiags.isEmpty {
+                if !Task.isCancelled, self.analysisGeneration == gen, !remoteDiags.isEmpty {
                     found = remoteDiags
                 }
             }
 
-            guard !Task.isCancelled else { return }
-            self?.diagnostics = found
+            guard !Task.isCancelled, self.analysisGeneration == gen else { return }
+            self.diagnostics = found
         }
     }
 
@@ -1295,16 +1357,21 @@ public final class CodeIntelligenceService: ObservableObject {
     }
 
     // MARK: - Offline Real-Time Syntax & Lint Analyzer Across Languages
-    public static func runFastOfflineDiagnostics(code: String, language: CodeLanguage) -> [EditorDiagnostic] {
+    nonisolated public static func runFastOfflineDiagnostics(code: String, language: CodeLanguage) -> [EditorDiagnostic] {
         let lines = code.components(separatedBy: "\n")
         let lineOffsets = computeLineUTF16Offsets(lines: lines)
+        let totalUTF16Len = (code as NSString).length
         var issues: [EditorDiagnostic] = []
 
         func lineNSRange(_ oneBasedLine: Int) -> NSRange {
+            guard totalUTF16Len > 0, !lineOffsets.isEmpty else { return NSRange(location: 0, length: 0) }
             let idx = min(max(0, oneBasedLine - 1), max(0, lines.count - 1))
             guard idx < lineOffsets.count else { return NSRange(location: 0, length: 0) }
-            let len = (lines[idx] as NSString).length
-            return NSRange(location: lineOffsets[idx], length: max(len, 1))
+            let start = min(max(0, lineOffsets[idx]), totalUTF16Len)
+            let maxAvail = max(0, totalUTF16Len - start)
+            let lineLen = (lines[idx] as NSString).length
+            let safeLen = min(max(lineLen, min(1, maxAvail)), maxAvail)
+            return NSRange(location: start, length: safeLen)
         }
 
         if language == .json {
@@ -1358,10 +1425,10 @@ public final class CodeIntelligenceService: ObservableObject {
 
         if language == .html || language == .xml || language == .vue {
             let voidTags: Set<String> = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr", "!doctype"]
-            let tagRegex = try? NSRegularExpression(pattern: #"<\s*(/?)\s*([a-zA-Z0-9!-]+)([^>]*?)(/?)>"#)
+            let maskedLines = maskHTMLIgnoredBlocks(in: code)
             var tagStack: [(name: String, line: Int)] = []
-            if let tagRegex {
-                for (i, line) in lines.enumerated() {
+            if let tagRegex = Self.regexCache.htmlTag {
+                for (i, line) in maskedLines.enumerated() {
                     let nsLine = line as NSString
                     for m in tagRegex.matches(in: line, range: NSRange(location: 0, length: nsLine.length)) {
                         let isClosing = nsLine.substring(with: m.range(at: 1)) == "/"
@@ -1410,6 +1477,7 @@ public final class CodeIntelligenceService: ObservableObject {
             let matchingOpen: [Character: Character] = [")": "(", "}": "{", "]": "["]
             let matchingClose: [Character: Character] = ["(": ")", "{": "}", "[": "]"]
             var inBlockComment = false
+            var tripleQuote: Character? = nil
             let hashCommentLangs: Set<CodeLanguage> = [.python, .ruby, .perl, .r, .julia, .elixir, .yaml, .toml, .shell, .fish, .powershell, .dockerfile, .makefile, .cmake, .hcl, .nix]
 
             for (idx, line) in lines.enumerated() {
@@ -1424,6 +1492,20 @@ public final class CodeIntelligenceService: ObservableObject {
                         if c == "*" && cIdx + 1 < chars.count && chars[cIdx + 1] == "/" {
                             inBlockComment = false
                             cIdx += 2
+                            continue
+                        }
+                        cIdx += 1
+                        continue
+                    }
+
+                    if let tq = tripleQuote {
+                        if c == "\\" {
+                            cIdx += 2
+                            continue
+                        }
+                        if c == tq && cIdx + 2 < chars.count && chars[cIdx + 1] == tq && chars[cIdx + 2] == tq {
+                            tripleQuote = nil
+                            cIdx += 3
                             continue
                         }
                         cIdx += 1
@@ -1454,8 +1536,21 @@ public final class CodeIntelligenceService: ObservableObject {
                     }
 
                     if c == "\"" || c == "'" || c == "`" {
-                        if cIdx + 2 < chars.count && chars[cIdx + 1] == c && chars[cIdx + 2] == c {
-                            break
+                        if c != "`" && cIdx + 2 < chars.count && chars[cIdx + 1] == c && chars[cIdx + 2] == c {
+                            tripleQuote = c
+                            cIdx += 3
+                            continue
+                        }
+                        if language == .cpp && c == "'" && cIdx > 0 && cIdx + 1 < chars.count && chars[cIdx - 1].isNumber && chars[cIdx + 1].isNumber {
+                            cIdx += 1
+                            continue
+                        }
+                        if language == .rust && c == "'" {
+                            let isCharLiteral = (cIdx + 1 < chars.count && chars[cIdx + 1] == "\\") || (cIdx + 2 < chars.count && chars[cIdx + 2] == "'")
+                            if !isCharLiteral {
+                                cIdx += 1
+                                continue
+                            }
                         }
                         inStringQuote = c
                         cIdx += 1
@@ -1489,15 +1584,16 @@ public final class CodeIntelligenceService: ObservableObject {
                     ))
                 }
 
-                if language == .python {
-                    let stripped = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
-                    let pyBlockRegex = #"^(def\s+\w+\(.*\)|class\s+\w+.*|if\s+.+|elif\s+.+|else|for\s+.+|while\s+.+|try|except.*|finally|with\s+.+)$"#
+                if language == .python && tripleQuote == nil {
+                    let stripped = stripPythonTrailingComment(chars).trimmingCharacters(in: .whitespaces)
+                    let nsStripped = stripped as NSString
                     if !stripped.isEmpty,
                        !stripped.hasSuffix(":"),
                        !stripped.hasSuffix("\\"),
                        !stripped.hasSuffix(","),
                        !stripped.hasSuffix("("),
-                       stripped.range(of: pyBlockRegex, options: .regularExpression) != nil {
+                       let pyRegex = Self.regexCache.pyBlock,
+                       pyRegex.firstMatch(in: stripped, range: NSRange(location: 0, length: nsStripped.length)) != nil {
                         issues.append(EditorDiagnostic(
                             line: lineNo,
                             severity: .error,
@@ -1522,7 +1618,8 @@ public final class CodeIntelligenceService: ObservableObject {
 
         if language == .yaml {
             for (index, rawLine) in lines.enumerated() {
-                if rawLine.hasPrefix("\t") || rawLine.contains(":\t") {
+                let leadingIndent = rawLine.prefix { $0 == " " || $0 == "\t" }
+                if leadingIndent.contains("\t") {
                     let lineNum = index + 1
                     issues.append(EditorDiagnostic(
                         line: lineNum,
@@ -1540,28 +1637,29 @@ public final class CodeIntelligenceService: ObservableObject {
     }
 
     // MARK: - Remote VPS Compiler Diagnostics Parser
-    private static func runRemoteCompilerDiagnostics(
+    nonisolated private static func runRemoteCompilerDiagnostics(
         code: String,
         language: CodeLanguage,
         sshService: SSHWorkspaceService
     ) async -> [EditorDiagnostic] {
         let b64 = Data(code.utf8).base64EncodedString()
+        let tmpDir = "/tmp/3012_diag_\(UUID().uuidString.prefix(8))"
         let cmd: String
         switch language {
         case .cpp:
-            cmd = "echo '\(b64)' | base64 -d | g++ -std=c++20 -fsyntax-only -Wall -x c++ - 2>&1"
+            cmd = "echo '\(b64)' | base64 -d | g++ -std=c++20 -fsyntax-only -Wall -x c++ - 2>&1; true"
         case .c:
-            cmd = "echo '\(b64)' | base64 -d | gcc -std=c17 -fsyntax-only -Wall -x c - 2>&1"
+            cmd = "echo '\(b64)' | base64 -d | gcc -std=c17 -fsyntax-only -Wall -x c - 2>&1; true"
         case .python:
-            cmd = "mkdir -p /tmp/3012_diag && echo '\(b64)' | base64 -d > /tmp/3012_diag/live.py && python3 -m py_compile /tmp/3012_diag/live.py 2>&1"
+            cmd = "mkdir -p '\(tmpDir)' && trap 'rm -rf \"\(tmpDir)\"' EXIT && echo '\(b64)' | base64 -d > '\(tmpDir)/live.py' && python3 -m py_compile '\(tmpDir)/live.py' 2>&1; true"
         case .php:
-            cmd = "echo '\(b64)' | base64 -d | php -l 2>&1"
+            cmd = "echo '\(b64)' | base64 -d | php -l 2>&1; true"
         case .ruby:
-            cmd = "echo '\(b64)' | base64 -d | ruby -c 2>&1"
+            cmd = "echo '\(b64)' | base64 -d | ruby -c 2>&1; true"
         case .rust:
-            cmd = "mkdir -p /tmp/3012_diag && echo '\(b64)' | base64 -d > /tmp/3012_diag/live.rs && rustc --emit=metadata -o /tmp/3012_diag/live.rmeta /tmp/3012_diag/live.rs 2>&1"
+            cmd = "mkdir -p '\(tmpDir)' && trap 'rm -rf \"\(tmpDir)\"' EXIT && echo '\(b64)' | base64 -d > '\(tmpDir)/live.rs' && rustc --emit=metadata -o '\(tmpDir)/live.rmeta' '\(tmpDir)/live.rs' 2>&1; true"
         case .shell:
-            cmd = "echo '\(b64)' | base64 -d | bash -n 2>&1"
+            cmd = "echo '\(b64)' | base64 -d | bash -n 2>&1; true"
         default:
             return []
         }
@@ -1572,15 +1670,21 @@ public final class CodeIntelligenceService: ObservableObject {
 
         let lines = code.components(separatedBy: "\n")
         let offsets = computeLineUTF16Offsets(lines: lines)
+        let totalUTF16Len = (code as NSString).length
         func rangeForLine(_ l: Int) -> NSRange {
+            guard totalUTF16Len > 0, !offsets.isEmpty else { return NSRange(location: 0, length: 0) }
             let idx = min(max(0, l - 1), max(0, lines.count - 1))
             guard idx < offsets.count else { return NSRange(location: 0, length: 0) }
-            return NSRange(location: offsets[idx], length: max((lines[idx] as NSString).length, 1))
+            let start = min(max(0, offsets[idx]), totalUTF16Len)
+            let maxAvail = max(0, totalUTF16Len - start)
+            let lineLen = (lines[idx] as NSString).length
+            let safeLen = min(max(lineLen, min(1, maxAvail)), maxAvail)
+            return NSRange(location: start, length: safeLen)
         }
 
         var parsed: [EditorDiagnostic] = []
-        let gccRegex = try? NSRegularExpression(pattern: #":(\d+):(\d+):\s*(fatal error|error|warning):\s*(.+)$"#)
-        let genericLineRegex = try? NSRegularExpression(pattern: #"line\s+(\d+)"#, options: [.caseInsensitive])
+        let gccRegex = Self.regexCache.gccDiag
+        let genericLineRegex = Self.regexCache.genericLine
 
         for outLine in trimmed.components(separatedBy: "\n") {
             let ns = outLine as NSString
@@ -1677,14 +1781,16 @@ public final class CodeIntelligenceService: ObservableObject {
         case .markdown:
             patterns = [(#"^(#{1,4}\s+.+)$"#, 1, "Heading", "list.bullet.indent")]
         case .shell, .fish:
-            patterns = [(#"^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)"#, 1, "Function", "apple.terminal")]
+            patterns = [(#"^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)"#, 1, "Function", "terminal.fill")]
         default:
             patterns = []
         }
 
-        let compiled = patterns.compactMap { pat -> (NSRegularExpression, Int, String, String)? in
-            guard let rx = try? NSRegularExpression(pattern: pat.regex) else { return nil }
-            return (rx, pat.group, pat.kind, pat.icon)
+        let compiled = Self.regexCache.cachedSymbols(for: language) {
+            patterns.compactMap { pat -> (NSRegularExpression, Int, String, String)? in
+                guard let rx = try? NSRegularExpression(pattern: pat.regex) else { return nil }
+                return (rx, pat.group, pat.kind, pat.icon)
+            }
         }
         guard !compiled.isEmpty else { return [] }
 
@@ -1728,7 +1834,124 @@ public final class CodeIntelligenceService: ObservableObject {
         return offsets
     }
 
-    private static func extractFirstInt(in text: String, after marker: String) -> Int? {
+    nonisolated private static func maskHTMLIgnoredBlocks(in code: String) -> [String] {
+        let chars = Array(code)
+        let n = chars.count
+        var out = [Character]()
+        out.reserveCapacity(n)
+
+        func matchesCI(_ idx: Int, _ target: [UInt8]) -> Bool {
+            guard idx + target.count <= n else { return false }
+            for k in 0..<target.count {
+                let raw = chars[idx + k].asciiValue ?? 0
+                let low = (raw >= 65 && raw <= 90) ? (raw + 32) : raw
+                if low != target[k] { return false }
+            }
+            return true
+        }
+
+        func isBoundaryChar(_ ch: Character) -> Bool {
+            ch == " " || ch == "\t" || ch == "\r" || ch == "\n" || ch == ">" || ch == "/"
+        }
+
+        let patCommentOpen: [UInt8] = Array("<!--".utf8)
+        let patCommentClose: [UInt8] = Array("-->".utf8)
+        let patScriptOpen: [UInt8] = Array("<script".utf8)
+        let patScriptClose: [UInt8] = Array("</script".utf8)
+        let patStyleOpen: [UInt8] = Array("<style".utf8)
+        let patStyleClose: [UInt8] = Array("</style".utf8)
+
+        enum HTMLMaskMode { case none, comment, script, style }
+        var mode: HTMLMaskMode = .none
+        var i = 0
+
+        while i < n {
+            let c = chars[i]
+            switch mode {
+            case .comment:
+                if matchesCI(i, patCommentClose) {
+                    out.append(contentsOf: [" ", " ", " "])
+                    i += 3
+                    mode = .none
+                } else {
+                    out.append(c == "\n" ? "\n" : " ")
+                    i += 1
+                }
+            case .script:
+                if matchesCI(i, patScriptClose), (i + 8 >= n || isBoundaryChar(chars[i + 8])) {
+                    mode = .none
+                    continue
+                }
+                out.append(c == "\n" ? "\n" : " ")
+                i += 1
+            case .style:
+                if matchesCI(i, patStyleClose), (i + 7 >= n || isBoundaryChar(chars[i + 7])) {
+                    mode = .none
+                    continue
+                }
+                out.append(c == "\n" ? "\n" : " ")
+                i += 1
+            case .none:
+                if matchesCI(i, patCommentOpen) {
+                    out.append(contentsOf: [" ", " ", " ", " "])
+                    i += 4
+                    mode = .comment
+                } else if matchesCI(i, patScriptOpen), (i + 7 >= n || isBoundaryChar(chars[i + 7])) {
+                    while i < n && chars[i] != ">" {
+                        out.append(chars[i])
+                        i += 1
+                    }
+                    let selfClosing = i > 0 && chars[i - 1] == "/"
+                    if i < n {
+                        out.append(chars[i])
+                        i += 1
+                    }
+                    if !selfClosing { mode = .script }
+                } else if matchesCI(i, patStyleOpen), (i + 6 >= n || isBoundaryChar(chars[i + 6])) {
+                    while i < n && chars[i] != ">" {
+                        out.append(chars[i])
+                        i += 1
+                    }
+                    let selfClosing = i > 0 && chars[i - 1] == "/"
+                    if i < n {
+                        out.append(chars[i])
+                        i += 1
+                    }
+                    if !selfClosing { mode = .style }
+                } else {
+                    out.append(c)
+                    i += 1
+                }
+            }
+        }
+        return String(out).components(separatedBy: "\n")
+    }
+
+    nonisolated private static func stripPythonTrailingComment(_ chars: [Character]) -> String {
+        var inQuote: Character? = nil
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if let q = inQuote {
+                if c == "\\" {
+                    i += 2
+                    continue
+                } else if c == q {
+                    inQuote = nil
+                }
+            } else {
+                if c == "#" {
+                    return String(chars[0..<i])
+                } else if c == "\"" || c == "'" {
+                    inQuote = c
+                }
+            }
+            i += 1
+        }
+        return String(chars)
+    }
+
+    nonisolated private static func extractFirstInt(in text: String, after marker: String) -> Int? {
         guard let r = text.range(of: marker, options: .caseInsensitive) else { return nil }
         let tail = text[r.upperBound...]
         let digits = tail.prefix { $0.isNumber }

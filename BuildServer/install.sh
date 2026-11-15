@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# 3012 Theos Build Server — one-command installer for Ubuntu 22.04 / 24.04 (x86_64).
+# 3012 Theos Build & Sync Relay Server — one-command installer / fast updater for Ubuntu 22.04 / 24.04 (x86_64).
 #
 #   curl -fsSL https://raw.githubusercontent.com/userlethekhoi/3012/main/BuildServer/install.sh | sudo bash
 #
-# What it does (and nothing else):
-#   * installs git/python3 (and Docker only if missing) — existing containers/configs are untouched
-#   * creates an unprivileged system user `b3012`
-#   * builds the isolated Theos builder image
-#   * runs the API on 127.0.0.1:8787 via systemd (no public port is opened)
-#   * optionally installs cloudflared and connects your Cloudflare Tunnel (asks for the token)
+# Flags / Env:
+#   --rebuild-image / FORCE_REBUILD=1 : rebuild 3012-theos-builder Docker image from scratch
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
+
+REBUILD_IMAGE="${FORCE_REBUILD:-0}"
+for arg in "$@"; do
+    case "$arg" in
+        --rebuild-image) REBUILD_IMAGE=1 ;;
+    esac
+done
 
 REPO_URL="${REPO_URL:-https://github.com/userlethekhoi/3012.git}"
 BRANCH="${BRANCH:-main}"
@@ -43,7 +46,7 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 systemctl is-active --quiet docker || systemctl start docker
 
-say "2/6 Tải mã nguồn build server vào $INSTALL_DIR ..."
+say "2/6 Tải mã nguồn build & sync server vào $INSTALL_DIR ..."
 mkdir -p "$INSTALL_DIR"
 if [ -d "$INSTALL_DIR/src/.git" ]; then
     git -C "$INSTALL_DIR/src" fetch -q --depth 1 origin "$BRANCH"
@@ -55,42 +58,58 @@ else
 fi
 chmod -R a+rX "$INSTALL_DIR"
 
-say "3/6 Tạo user hệ thống '$SVC_USER' (không có shell, không có quyền root)..."
+say "3/6 Kiểm tra user hệ thống '$SVC_USER'..."
 if ! id "$SVC_USER" >/dev/null 2>&1; then
     useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin "$SVC_USER"
 fi
 usermod -aG docker "$SVC_USER"
-mkdir -p "$DATA_DIR/artifacts" "$DATA_DIR/.docker"
+mkdir -p "$DATA_DIR/artifacts" "$DATA_DIR/queue" "$DATA_DIR/.docker"
 chown -R "$SVC_USER:$SVC_USER" "$DATA_DIR"
 chmod 700 "$DATA_DIR"
 
-say "4/6 Build Docker image Theos (lần đầu khoảng 5-10 phút)..."
-docker build --pull -t "$IMAGE" "$INSTALL_DIR/src/BuildServer/image"
-docker image prune -f >/dev/null 2>&1 || true
+if [ "$REBUILD_IMAGE" = "1" ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    say "4/6 Build Docker image Theos (lần đầu khoảng 5-10 phút)..."
+    docker build --pull -t "$IMAGE" "$INSTALL_DIR/src/BuildServer/image"
+    docker image prune -f >/dev/null 2>&1 || true
+else
+    say "4/6 Docker image $IMAGE đã có sẵn — cập nhật nhanh entrypoint.sh (<2 giây)..."
+    docker build -q -t "$IMAGE" -f - "$INSTALL_DIR/src/BuildServer/image" <<EOF >/dev/null
+FROM $IMAGE
+USER root
+COPY entrypoint.sh /usr/local/bin/3012-build
+RUN chmod 755 /usr/local/bin/3012-build
+USER 1000:1000
+EOF
+fi
 
-say "5/6 Cấu hình dịch vụ systemd..."
+say "5/6 Cấu hình và khởi động lại dịch vụ systemd..."
 if [ ! -f "$ENV_FILE" ]; then
     install -m 644 "$INSTALL_DIR/src/BuildServer/config/3012-build.env.example" "$ENV_FILE"
 fi
+BUILD_PORT=$(grep -E '^BUILD_PORT=' "$ENV_FILE" | tail -n 1 | cut -d= -f2 | tr -dc '0-9' || true)
+BUILD_PORT="${BUILD_PORT:-8787}"
+
 install -m 644 "$INSTALL_DIR/src/BuildServer/systemd/3012-build.service" "/etc/systemd/system/$SERVICE.service"
 systemctl daemon-reload
 systemctl enable -q "$SERVICE"
 systemctl restart "$SERVICE"
 
 for _ in $(seq 1 15); do
-    if curl -fsS http://127.0.0.1:8787/v1/health >/dev/null 2>&1; then break; fi
+    if curl -fsS "http://127.0.0.1:${BUILD_PORT}/v1/health" >/dev/null 2>&1; then break; fi
     sleep 1
 done
-curl -fsS http://127.0.0.1:8787/v1/health >/dev/null 2>&1 \
-    || die "Build server chưa chạy. Xem log: journalctl -u $SERVICE -n 50"
-say "Build server đang chạy tại 127.0.0.1:8787 (chỉ nội bộ, không mở port ra Internet)."
+curl -fsS "http://127.0.0.1:${BUILD_PORT}/v1/health" >/dev/null 2>&1 \
+    || die "Build server chưa chạy trên cổng ${BUILD_PORT}. Xem log: journalctl -u $SERVICE -n 50"
+say "Build & Sync Relay Server đang chạy tại 127.0.0.1:${BUILD_PORT} (chỉ nội bộ)."
 
 say "6/6 Cloudflare Tunnel..."
 if ! command -v cloudflared >/dev/null 2>&1; then
-    curl -fsSL -o /tmp/cloudflared.deb \
+    TMP_DEB_DIR="$(mktemp -d)"
+    chmod 700 "$TMP_DEB_DIR"
+    curl -fsSL -o "$TMP_DEB_DIR/cloudflared.deb" \
         https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-    dpkg -i /tmp/cloudflared.deb >/dev/null
-    rm -f /tmp/cloudflared.deb
+    dpkg -i "$TMP_DEB_DIR/cloudflared.deb" >/dev/null
+    rm -rf "$TMP_DEB_DIR"
 fi
 
 if systemctl is-active --quiet cloudflared 2>/dev/null; then
@@ -102,9 +121,8 @@ else
         read -rs TOKEN < /dev/tty || true
         printf '\n' > /dev/tty
     fi
-    # Extract eyJ... token automatically if the user pasted the full "sudo cloudflared service install ..." line
-    if printf '%s' "$TOKEN" | grep -qE 'eyJ[A-Za-z0-9_=-]+'; then
-        TOKEN="$(printf '%s' "$TOKEN" | grep -oE 'eyJ[A-Za-z0-9_=-]+' | head -n 1)"
+    if printf '%s' "$TOKEN" | grep -qE 'eyJ[A-Za-z0-9_.=-]+'; then
+        TOKEN="$(printf '%s' "$TOKEN" | grep -oE 'eyJ[A-Za-z0-9_.=-]+' | head -n 1)"
     fi
     if [ -n "$TOKEN" ]; then
         cloudflared service uninstall >/dev/null 2>&1 || true
@@ -119,20 +137,20 @@ fi
 cat <<EOF
 
 ────────────────────────────────────────────────────────────
- 3012 Build Server đã cài xong.
+ 3012 Build & Sync Relay Server đã sẵn sàng!
 
- Việc cuối cùng trên Cloudflare (Zero Trust > Networks > Tunnels
- > 3012-build > Public Hostname > Add):
-     Subdomain/Domain : build.<tên-miền-của-bạn>
-     Service          : HTTP   localhost:8787
+ Cloudflare Public Hostname -> Service: HTTP localhost:${BUILD_PORT}
 
- Kiểm tra từ máy bất kỳ:
-     curl https://build.<tên-miền-của-bạn>/v1/health
+ Các Endpoint đang hoạt động:
+   - Health check   : https://build.<domain>/v1/health
+   - Theos Compiler : POST https://build.<domain>/v1/builds
+   - PC Sync Relay  : wss://build.<domain>/v1/sync  (Zero-Knowledge AES-256-GCM)
+   - PC Script 1-line: https://build.<domain>/sync.mjs
 
- Quản lý:
-     Trạng thái : systemctl status $SERVICE
-     Log        : journalctl -u $SERVICE -f
-     Cấu hình   : $ENV_FILE  (sửa xong: systemctl restart $SERVICE)
-     Cập nhật   : chạy lại lệnh cài đặt
+ Quản lý nhanh:
+   - Trạng thái : systemctl status $SERVICE
+   - Log        : journalctl -u $SERVICE -f
+   - Rebuild Docker (khi cần cập nhật SDK mới):
+       curl -fsSL https://raw.githubusercontent.com/userlethekhoi/3012/main/BuildServer/install.sh | sudo bash -s -- --rebuild-image
 ────────────────────────────────────────────────────────────
 EOF

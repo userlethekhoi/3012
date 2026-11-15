@@ -85,6 +85,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
     public var onToggleAI: () -> Void
     public var onTriggerGoToLine: () -> Void
     public var onTriggerFindBar: (() -> Void)?
+    public var onEditingChanged: ((Bool) -> Void)?
 
     public init(
         fileURL: URL,
@@ -104,7 +105,8 @@ public struct RunestoneEditorView: UIViewRepresentable {
         onSelectionChange: @escaping (NSRange) -> Void,
         onToggleAI: @escaping () -> Void,
         onTriggerGoToLine: @escaping () -> Void = {},
-        onTriggerFindBar: (() -> Void)? = nil
+        onTriggerFindBar: (() -> Void)? = nil,
+        onEditingChanged: ((Bool) -> Void)? = nil
     ) {
         self.fileURL = fileURL
         self.text = text
@@ -124,6 +126,7 @@ public struct RunestoneEditorView: UIViewRepresentable {
         self.onToggleAI = onToggleAI
         self.onTriggerGoToLine = onTriggerGoToLine
         self.onTriggerFindBar = onTriggerFindBar
+        self.onEditingChanged = onEditingChanged
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -146,7 +149,9 @@ public struct RunestoneEditorView: UIViewRepresentable {
         textView.characterPairs = BasicPair.defaultPairs
         textView.characterPairTrailingComponentDeletionMode = .immediatelyFollowingLeadingComponent
         textView.verticalOverscrollFactor = 0.35
-        textView.textContainerInset = UIEdgeInsets(top: 10, left: 6, bottom: 52, right: 10)
+        textView.contentInsetAdjustmentBehavior = .never
+        textView.alwaysBounceVertical = true
+        textView.textContainerInset = UIEdgeInsets(top: 10, left: 6, bottom: 42, right: 10)
 
         let coord = context.coordinator
         let prefs = preferences
@@ -235,7 +240,6 @@ public struct RunestoneEditorView: UIViewRepresentable {
             DispatchQueue.main.async {
                 context.coordinator.isInternalEdit = false
             }
-            return
         }
 
         // 2. Toggle Line Comment (Cmd+/ or Command Palette)
@@ -250,7 +254,6 @@ public struct RunestoneEditorView: UIViewRepresentable {
                     context.coordinator.isInternalEdit = false
                 }
             }
-            return
         }
 
         // 2.5 Quick Action (Undo / Redo / Copy / Paste / Cut / Line / Comment / Move Line / Arrows)
@@ -265,13 +268,12 @@ public struct RunestoneEditorView: UIViewRepresentable {
                 DispatchQueue.main.async {
                     context.coordinator.isInternalEdit = false
                 }
-                return
             }
         }
 
         let externalTextChanged = (!context.coordinator.isInternalEdit && text != context.coordinator.lastKnownText && textView.text != text)
 
-        if fileChanged || languageChanged || themeChanged || externalTextChanged {
+        if fileChanged || languageChanged || externalTextChanged {
             let preservedRange = textView.selectedRange
             context.coordinator.loadState(
                 into: textView,
@@ -281,6 +283,9 @@ public struct RunestoneEditorView: UIViewRepresentable {
                 theme: preferences.makeRunestoneTheme(),
                 restoreSelection: fileChanged ? nil : preservedRange
             )
+            context.coordinator.loadedAppearanceSignature = signature
+        } else if themeChanged {
+            textView.theme = preferences.makeRunestoneTheme()
             context.coordinator.loadedAppearanceSignature = signature
         }
 
@@ -568,6 +573,14 @@ public struct RunestoneEditorView: UIViewRepresentable {
             }
 
             return true
+        }
+
+        public func textViewDidBeginEditing(_ textView: TextView) {
+            parent.onEditingChanged?(true)
+        }
+
+        public func textViewDidEndEditing(_ textView: TextView) {
+            parent.onEditingChanged?(false)
         }
 
         public func textViewDidChange(_ textView: TextView) {

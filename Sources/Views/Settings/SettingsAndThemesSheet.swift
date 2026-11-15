@@ -14,6 +14,7 @@ public struct SettingsAndThemesSheet: View {
     @State private var copiedBanner: Bool = false
     @State private var copiedTelegram: Bool = false
     @State private var themeImportMessage: String? = nil
+    @State private var pendingDismissAction: (() -> Void)? = nil
 
     public init(
         preferences: EditorPreferences,
@@ -308,7 +309,7 @@ public struct SettingsAndThemesSheet: View {
                     Button {
                         showThemeStudio = true
                     } label: {
-                        Label(preferences.tr("Mở Theme Studio (Tự chỉnh màu Code & Nền App)", "Open Theme Studio (Customize Code & App Colors)", zh: "打开 Theme Studio（自定义配色）", ja: "Theme Studio を開く（カスタム配色）", ko: "Theme Studio 열기 (색상 맞춤 설정)", ru: "Открыть Theme Studio (Настройка цветов)", es: "Abrir Theme Studio (Personalizar colores)"), systemImage: "slider.horizontal.below.square.filled.and.square")
+                        Label(preferences.tr("Mở Theme Studio (Tự chỉnh màu Code & Nền App)", "Open Theme Studio (Customize Code & App Colors)", zh: "打开 Theme Studio（自定义配色）", ja: "Theme Studio を開く（カスタム配色）", ko: "Theme Studio 열기 (색상 맞춤 설정)", ru: "Открыть Theme Studio (Настройка цветов)", es: "Abrir Theme Studio (Personalizar colores)"), systemImage: "paintpalette")
                             .font(.body.weight(.semibold))
                     }
 
@@ -445,10 +446,8 @@ public struct SettingsAndThemesSheet: View {
                     )
 
                     Button {
+                        pendingDismissAction = onOpenDaemonManager
                         dismiss()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                            onOpenDaemonManager()
-                        }
                     } label: {
                         HStack {
                             Label(
@@ -533,6 +532,13 @@ public struct SettingsAndThemesSheet: View {
             }
             .sheet(isPresented: $showThemeStudio) {
                 ThemeStudioEditorSheet(preferences: preferences)
+            }
+            .onDisappear {
+                guard let action = pendingDismissAction else { return }
+                pendingDismissAction = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    action()
+                }
             }
         }
     }

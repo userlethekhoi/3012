@@ -1,0 +1,67 @@
+{
+  "name": "vscode-3012-sync",
+  "displayName": "3012 Mobile IDE Sync",
+  "description": "Dong bo code 2 chieu theo thoi gian thuc giua VS Code (PC) va 3012 iOS Mobile IDE qua 4G/5G (E2EE AES-256-GCM Relay) va Wi-Fi LAN.",
+  "version": "5.1.0",
+  "publisher": "app3012",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "3012sync.menu",
+        "title": "3012 Sync: Bảng điều khiển & Trạng thái"
+      },
+      {
+        "command": "3012sync.quickPairPin",
+        "title": "3012 Sync: Hiện mã PIN 6 số ghép nối nhanh"
+      },
+      {
+        "command": "3012sync.setPermanentKey",
+        "title": "3012 Sync: Nhập / Tạo Khóa Đồng Bộ Vĩnh Viễn"
+      },
+      {
+        "command": "3012sync.pushSnapshot",
+        "title": "3012 Sync: Đẩy toàn bộ Workspace sang Điện thoại"
+      },
+      {
+        "command": "3012sync.disconnect",
+        "title": "3012 Sync: Ngắt kết nối"
+      }
+    ],
+    "configuration": {
+      "title": "3012 Mobile Sync",
+      "properties": {
+        "3012sync.relayUrl": {
+          "type": "string",
+          "default": "wss://build.kaydus.xyz/v1/sync",
+          "description": "WebSocket Relay E2EE URL (4G/5G & Internet)"
+        },
+        "3012sync.lanPort": {
+          "type": "number",
+          "default": 30120,
+          "description": "Local Wi-Fi LAN WebSocket port"
+        },
+        "3012sync.autoConnectOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tu dong ket noi khi mo VS Code neu da luu Khoa Vinh Vien"
+        },
+        "3012sync.autoSaveIncomingEdits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tu dong luu ra o cung khi nhan thay doi tu 3012 iOS"
+        }
+      }
+    }
+  }
+}

@@ -143,11 +143,24 @@ jobs:
           zip -qry 3012-Unsigned.ipa Payload
           ls -lh 3012-Unsigned.ipa
 
+      - name: Build 3012 VS Code Sync Extension (.vsix)
+        run: |
+          python3 Tools/vscode-3012-sync/build_vsix.py 3012-vscode-sync.vsix
+          ls -lh 3012-vscode-sync.vsix
+
       - name: Upload 3012-Unsigned.ipa Artifact
         uses: actions/upload-artifact@v4
         with:
           name: 3012-Unsigned-IPA
           path: 3012-Unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload 3012-VSCode-Sync-VSIX Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3012-VSCode-Sync-VSIX
+          path: 3012-vscode-sync.vsix
           if-no-files-found: error
           retention-days: 30
 
@@ -161,8 +174,8 @@ jobs:
           SHORT_SHA=$(git rev-parse --short HEAD)
           COMMIT_MSG=$(git log -1 --pretty=%s)
           IPA_SIZE=$(du -h 3012-Unsigned.ipa | cut -f1 | tr -d ' ')
-          shasum -a 256 3012-Unsigned.ipa > SHA256SUMS.txt
-          SHA256_VAL=$(cut -d ' ' -f1 SHA256SUMS.txt)
+          shasum -a 256 3012-Unsigned.ipa 3012-vscode-sync.vsix > SHA256SUMS.txt
+          SHA256_VAL=$(grep '3012-Unsigned.ipa' SHA256SUMS.txt | cut -d ' ' -f1)
 
           cat <<EOF > RELEASE_NOTES.md
           ## 3012 Mobile IDE — v${APP_VERSION} (Build #${{ github.run_number }})
@@ -176,16 +189,17 @@ jobs:
           | **Target Platform** | \`iOS 15.0+\` / \`iPadOS 15.0+\` (arm64 — TrollStore & Sideload Ready) |
           | **Package Size** | \`${IPA_SIZE}\` |
           | **Commit** | \`${SHORT_SHA}\` — ${COMMIT_MSG} |
-          | **SHA-256** | \`${SHA256_VAL}\` |
+          | **SHA-256 (IPA)** | \`${SHA256_VAL}\` |
 
           ### Direct Download
           - **[Download 3012-Unsigned.ipa](https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/3012-Unsigned.ipa)**
+          - **[Download 3012-vscode-sync.vsix](https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/3012-vscode-sync.vsix)** *(VS Code 2-Way E2EE Sync Extension)*
           EOF
 
           if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release upload "${TAG_NAME}" 3012-Unsigned.ipa SHA256SUMS.txt --clobber --repo "${{ github.repository }}"
+            gh release upload "${TAG_NAME}" 3012-Unsigned.ipa 3012-vscode-sync.vsix SHA256SUMS.txt --clobber --repo "${{ github.repository }}"
           else
-            gh release create "${TAG_NAME}" 3012-Unsigned.ipa SHA256SUMS.txt \
+            gh release create "${TAG_NAME}" 3012-Unsigned.ipa 3012-vscode-sync.vsix SHA256SUMS.txt \
               --repo "${{ github.repository }}" \
               --title "3012 v${APP_VERSION} (Build #${{ github.run_number }})" \
               --notes-file RELEASE_NOTES.md \

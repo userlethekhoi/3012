@@ -86,6 +86,29 @@ public final class LocalDaemonService: ObservableObject {
     private let monitorQueue = DispatchQueue(label: "com.dev.app3012.daemon.network")
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
+    private final class ObserverBag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var tokens: [NSObjectProtocol] = []
+
+        func add(_ token: NSObjectProtocol) {
+            lock.lock()
+            tokens.append(token)
+            lock.unlock()
+        }
+
+        func removeAll() {
+            lock.lock()
+            let current = tokens
+            tokens.removeAll()
+            lock.unlock()
+            for token in current {
+                NotificationCenter.default.removeObserver(token)
+            }
+        }
+    }
+
+    private let observerBag = ObserverBag()
+
     private final class JobRuntimeHandle {
         let pid: Int
         let fileURL: URL?
@@ -95,6 +118,7 @@ public final class LocalDaemonService: ObservableObject {
         var timerTasks: [Int: Task<Void, Never>] = [:]
         var fetchTasks: [Int: Task<Void, Never>] = [:]
         var cancelled: Bool = false
+        var restartScheduled: Bool = false
 
         init(pid: Int, fileURL: URL?, inlineCode: String?, workspaceRoot: URL) {
             self.pid = pid
@@ -115,6 +139,7 @@ public final class LocalDaemonService: ObservableObject {
     }
 
     private var runtimes: [Int: JobRuntimeHandle] = [:]
+    private var jobSources: [Int: (fileURL: URL?, inlineCode: String?)] = [:]
 
     private static let logDateFormatter: DateFormatter = {
         let df = DateFormatter()
@@ -134,6 +159,11 @@ public final class LocalDaemonService: ObservableObject {
         startDeviceMonitors()
         registerLifecycleObservers()
         syncKeepAliveState()
+    }
+
+    deinit {
+        observerBag.removeAll()
+        pathMonitor.cancel()
     }
 
     // MARK: - 24/7 Screen-Off Background Keep-Alive (Lazy audio session only when bots/jobs are active)
@@ -203,43 +233,42 @@ public final class LocalDaemonService: ObservableObject {
     private func registerLifecycleObservers() {
         let nc = NotificationCenter.default
 
-        nc.addObserver(forName: UIDevice.batteryLevelDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+        observerBag.add(nc.addObserver(forName: UIDevice.batteryLevelDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refreshBatteryState() }
-        }
-        nc.addObserver(forName: UIDevice.batteryStateDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+        })
+        observerBag.add(nc.addObserver(forName: UIDevice.batteryStateDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refreshBatteryState() }
-        }
+        })
 
-        nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+        observerBag.add(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if self.keepTerminalAliveInBackground || self.runningJobsCount > 0 {
+                if self.runningJobsCount > 0 && self.keepTerminalAliveInBackground {
                     self.beginTransientBackgroundAssertion()
-                    if self.keepTerminalAliveInBackground {
-                        self.startSilentAudioLoopIfNeeded()
-                    }
+                    self.startSilentAudioLoopIfNeeded()
                 }
             }
-        }
+        })
 
-        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+        observerBag.add(nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.endTransientBackgroundAssertion()
                 self.refreshBatteryState()
                 self.syncKeepAliveState()
             }
-        }
+        })
 
-        nc.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+        observerBag.add(nc.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             let rawType = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if rawType == AVAudioSession.InterruptionType.ended.rawValue, self.keepTerminalAliveInBackground {
+                if rawType == AVAudioSession.InterruptionType.ended.rawValue,
+                   self.runningJobsCount > 0 && self.keepTerminalAliveInBackground {
                     self.startSilentAudioLoopIfNeeded()
                 }
             }
-        }
+        })
     }
 
     private func beginTransientBackgroundAssertion() {
@@ -290,6 +319,7 @@ public final class LocalDaemonService: ObservableObject {
 
         let handle = JobRuntimeHandle(pid: pid, fileURL: fileURL, inlineCode: nil, workspaceRoot: workspaceRoot)
         runtimes[pid] = handle
+        jobSources[pid] = (fileURL: fileURL, inlineCode: nil)
         syncKeepAliveState()
 
         appendLog(pid: pid, line: "[PID \(pid)] Started on-device daemon: \(relPath)")
@@ -316,6 +346,7 @@ public final class LocalDaemonService: ObservableObject {
 
         let handle = JobRuntimeHandle(pid: pid, fileURL: nil, inlineCode: jsCode, workspaceRoot: workspaceRoot)
         runtimes[pid] = handle
+        jobSources[pid] = (fileURL: nil, inlineCode: jsCode)
         syncKeepAliveState()
 
         appendLog(pid: pid, line: "[PID \(pid)] Started on-device task: \(name)")
@@ -346,8 +377,9 @@ public final class LocalDaemonService: ObservableObject {
     public func restartJob(pid: Int, workspaceRoot: URL) {
         guard let existing = jobs.first(where: { $0.pid == pid }) else { return }
         let existingHandle = runtimes[pid]
-        let fileURL = existingHandle?.fileURL ?? workspaceRoot.appendingPathComponent(existing.scriptPath)
-        let inlineCode = existingHandle?.inlineCode
+        let savedSource = jobSources[pid]
+        let inlineCode = existingHandle?.inlineCode ?? savedSource?.inlineCode
+        let fileURL = existingHandle?.fileURL ?? savedSource?.fileURL ?? workspaceRoot.appendingPathComponent(existing.scriptPath)
 
         if let existingHandle {
             existingHandle.teardown()
@@ -367,6 +399,7 @@ public final class LocalDaemonService: ObservableObject {
             workspaceRoot: workspaceRoot
         )
         runtimes[pid] = newHandle
+        jobSources[pid] = (fileURL: inlineCode == nil ? fileURL : nil, inlineCode: inlineCode)
         syncKeepAliveState()
 
         appendLog(pid: pid, line: "[PID \(pid)] Restarting on-device daemon...")
@@ -388,6 +421,10 @@ public final class LocalDaemonService: ObservableObject {
     }
 
     public func removeStoppedJobs() {
+        let stoppedPIDs = jobs.filter { !$0.isRunning }.map(\.pid)
+        for pid in stoppedPIDs {
+            jobSources.removeValue(forKey: pid)
+        }
         jobs.removeAll { !$0.isRunning }
     }
 
@@ -509,14 +546,19 @@ public final class LocalDaemonService: ObservableObject {
                 if self.autoRestartOnError,
                    let handle,
                    !handle.cancelled,
+                   !handle.restartScheduled,
                    currentRestartCount < 5 {
+                    handle.restartScheduled = true
                     self.appendLog(pid: pid, line: "[Auto-Restart] Bot encountered an error; restarting in 3s...")
-                    Task { @MainActor [weak self] in
+                    Task { @MainActor [weak self, weak handle] in
                         try? await Task.sleep(nanoseconds: 3_000_000_000)
                         guard let self,
+                              let handle,
+                              !Task.isCancelled,
                               self.autoRestartOnError,
                               self.jobs.first(where: { $0.pid == pid })?.isRunning == true,
                               let activeHandle = self.runtimes[pid],
+                              activeHandle === handle,
                               !activeHandle.cancelled else { return }
                         self.restartJob(pid: pid, workspaceRoot: root)
                     }
@@ -547,10 +589,11 @@ public final class LocalDaemonService: ObservableObject {
         let scheduleTimer: @convention(block) (Int, Double, Bool) -> Void = { [weak self, weak handle] timerID, delayMs, repeats in
             Task { @MainActor [weak self, weak handle] in
                 guard let self, let handle, !handle.cancelled else { return }
-                let clampedMs = max(1, UInt64(delayMs))
+                let safeMs = delayMs.isFinite ? min(max(delayMs, 1.0), 86_400_000.0) : 1000.0
+                let clampedNs = UInt64(safeMs * 1_000_000)
                 let task = Task { @MainActor [weak self, weak handle] in
                     while !Task.isCancelled {
-                        try? await Task.sleep(nanoseconds: clampedMs * 1_000_000)
+                        try? await Task.sleep(nanoseconds: clampedNs)
                         guard !Task.isCancelled, let handle, !handle.cancelled, let ctx = handle.context else { break }
                         _ = ctx.evaluateScript("__fireTimer(\(timerID), \(repeats ? "true" : "false"));")
                         if !repeats {
@@ -591,9 +634,9 @@ public final class LocalDaemonService: ObservableObject {
                     req.httpMethod = method.uppercased()
                     req.timeoutInterval = 35
                     if let hData = headersJSON.data(using: .utf8),
-                       let headers = try? JSONSerialization.jsonObject(with: hData) as? [String: String] {
-                        for (k, v) in headers {
-                            req.setValue(v, forHTTPHeaderField: k)
+                       let headers = try? JSONSerialization.jsonObject(with: hData) as? [String: Any] {
+                        for (k, v) in headers where !(v is NSNull) {
+                            req.setValue("\(v)", forHTTPHeaderField: k)
                         }
                     }
                     if !bodyStr.isEmpty && req.httpMethod != "GET" && req.httpMethod != "HEAD" {
@@ -630,10 +673,14 @@ public final class LocalDaemonService: ObservableObject {
         ctx.setObject(nativeFetch, forKeyedSubscript: "_nativeFetch" as NSString)
 
         // 4. Scoped Local Filesystem (`fs`) Bridge
+        let rootCanon = WorkspaceManager.canonicalPath(root)
+        let rootPrefix = rootCanon == "/" ? "/" : rootCanon + "/"
         let resolveScopedURL: (String) -> URL? = { rel in
             let clean = rel.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let target = root.appendingPathComponent(clean).standardizedFileURL
-            return target.path.hasPrefix(root.standardizedFileURL.path) ? target : nil
+            let rawTarget = clean.isEmpty ? root : root.appendingPathComponent(clean)
+            let targetCanon = WorkspaceManager.canonicalPath(rawTarget)
+            guard targetCanon == rootCanon || targetCanon.hasPrefix(rootPrefix) else { return nil }
+            return URL(fileURLWithPath: targetCanon)
         }
         if let fsObj = JSValue(newObjectIn: ctx) {
             let readFile: @convention(block) (String) -> String? = { rel in
@@ -753,8 +800,9 @@ public final class LocalDaemonService: ObservableObject {
         }
 
         // Generic Python print/heartbeat runner on device
+        let folderLiteral = Self.jsStringLiteral(workspaceRoot.lastPathComponent)
         return """
-        console.log('[Python Daemon] On-device script active in \(workspaceRoot.lastPathComponent)');
+        console.log('[Python Daemon] On-device script active in ' + \(folderLiteral));
         const __timer = setInterval(() => {
           const st = process.deviceStatus();
           console.log('[Heartbeat] Battery ' + st.battery + '% | Net ' + (st.networkOnline ? 'ON' : 'OFF') + ' | Uptime ' + st.uptimeSeconds + 's');

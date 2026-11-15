@@ -5,11 +5,16 @@ import Citadel
 
 public enum KeychainVault {
     private static let serviceName = "com.dev.app3012.vault"
+    private static let lock = NSLock()
+    private static let encryptedMagic = Data("3012V2".utf8)
 
     private static var fallbackDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = base.appendingPathComponent(".3012vault", isDirectory: true)
+        var dir = base.appendingPathComponent(".3012vault", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var rv = URLResourceValues()
+        rv.isExcludedFromBackup = true
+        try? dir.setResourceValues(rv)
         return dir
     }
 
@@ -20,7 +25,34 @@ public enum KeychainVault {
         return fallbackDirectory.appendingPathComponent(safe)
     }
 
+    private static func writeProtectedData(_ data: Data, to url: URL) {
+        var targetURL = url
+        do {
+            try data.write(to: targetURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            // TrollStore / custom entitlement builds may fail completeFileProtectionUntilFirstUserAuthentication
+            try? data.write(to: targetURL, options: [.atomic])
+        }
+        var rv = URLResourceValues()
+        rv.isExcludedFromBackup = true
+        try? targetURL.setResourceValues(rv)
+    }
+
+    private static func fallbackSymmetricKey() -> SymmetricKey {
+        let keyURL = fallbackDirectory.appendingPathComponent(".vault_key")
+        if let existing = try? Data(contentsOf: keyURL), existing.count == 32 {
+            return SymmetricKey(data: existing)
+        }
+        let generated = SymmetricKey(size: .bits256)
+        let raw = generated.withUnsafeBytes { Data($0) }
+        writeProtectedData(raw, to: keyURL)
+        return generated
+    }
+
     public static func saveData(_ data: Data, forKey key: String) {
+        lock.lock()
+        defer { lock.unlock() }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -36,11 +68,21 @@ public enum KeychainVault {
         if status == errSecSuccess {
             try? FileManager.default.removeItem(at: fallbackURL)
         } else {
-            try? data.write(to: fallbackURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            let keyObj = fallbackSymmetricKey()
+            if let sealed = try? AES.GCM.seal(data, using: keyObj).combined {
+                var payload = encryptedMagic
+                payload.append(sealed)
+                writeProtectedData(payload, to: fallbackURL)
+            } else {
+                writeProtectedData(data, to: fallbackURL)
+            }
         }
     }
 
     public static func loadData(forKey key: String) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -53,7 +95,18 @@ public enum KeychainVault {
         if status == errSecSuccess, let data = result as? Data {
             return data
         }
-        return try? Data(contentsOf: fallbackFileURL(forKey: key))
+        guard let raw = try? Data(contentsOf: fallbackFileURL(forKey: key)) else {
+            return nil
+        }
+        if raw.starts(with: encryptedMagic) {
+            let cipherData = Data(raw.dropFirst(encryptedMagic.count))
+            guard let box = try? AES.GCM.SealedBox(combined: cipherData),
+                  let opened = try? AES.GCM.open(box, using: fallbackSymmetricKey()) else {
+                return nil
+            }
+            return opened
+        }
+        return raw
     }
 
     public static func saveString(_ value: String, forKey key: String) {
@@ -66,6 +119,9 @@ public enum KeychainVault {
     }
 
     public static func delete(forKey key: String) {
+        lock.lock()
+        defer { lock.unlock() }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,

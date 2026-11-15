@@ -179,12 +179,18 @@ public struct CompatibleFileShareButton<LabelContent: View>: View {
 
     @MainActor
     private static func presentActivitySheet(for url: URL) {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let rootVC = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController ?? scene.windows.first?.rootViewController else {
+        let scenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+        let activeScene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+        let normalWindows = activeScene?.windows.filter { $0.windowLevel == .normal && !$0.isHidden } ?? []
+        guard let rootVC = normalWindows.first(where: { $0.isKeyWindow })?.rootViewController
+                ?? normalWindows.first?.rootViewController
+                ?? activeScene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
+                ?? activeScene?.windows.first?.rootViewController else {
             return
         }
         var topVC = rootVC
-        while let presented = topVC.presentedViewController {
+        while let presented = topVC.presentedViewController, !presented.isBeingDismissed {
             topVC = presented
         }
         let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
@@ -194,5 +200,97 @@ public struct CompatibleFileShareButton<LabelContent: View>: View {
             pop.permittedArrowDirections = []
         }
         topVC.present(activity, animated: true)
+    }
+}
+
+private struct CompatibleTextInputAlertModifier: ViewModifier {
+    let title: String
+    @Binding var isPresented: Bool
+    @Binding var text: String
+    let placeholder: String
+    let message: String?
+    let confirmTitle: String
+    let cancelTitle: String
+    let confirmRole: ButtonRole?
+    let keyboardType: UIKeyboardType
+    let onConfirm: () -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.alert(title, isPresented: $isPresented) {
+                TextField(placeholder, text: $text)
+                    .keyboardType(keyboardType)
+                if let confirmRole {
+                    Button(confirmTitle, role: confirmRole) {
+                        onConfirm()
+                    }
+                } else {
+                    Button(confirmTitle) {
+                        onConfirm()
+                    }
+                }
+                Button(cancelTitle, role: .cancel) {}
+            } message: {
+                if let message, !message.isEmpty {
+                    Text(message)
+                }
+            }
+        } else {
+            content.onChange(of: isPresented) { presented in
+                guard presented else { return }
+                let initialValue = text
+                let isDestructive = (confirmRole == .destructive)
+                Task { @MainActor () -> Void in
+                    NativeDocumentPickerPresenter.shared.presentTextInputAlert(
+                        title: title,
+                        message: message,
+                        initialText: initialValue,
+                        placeholder: placeholder,
+                        confirmTitle: confirmTitle,
+                        cancelTitle: cancelTitle,
+                        isDestructive: isDestructive,
+                        keyboardType: keyboardType,
+                        onConfirm: { finalValue in
+                            text = finalValue
+                            onConfirm()
+                            isPresented = false
+                        },
+                        onCancel: {
+                            isPresented = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+public extension View {
+    func compatibleTextInputAlert(
+        _ title: String,
+        isPresented: Binding<Bool>,
+        text: Binding<String>,
+        placeholder: String = "",
+        message: String? = nil,
+        confirmTitle: String? = nil,
+        cancelTitle: String? = nil,
+        confirmRole: ButtonRole? = nil,
+        keyboardType: UIKeyboardType = .default,
+        onConfirm: @escaping () -> Void
+    ) -> some View {
+        modifier(
+            CompatibleTextInputAlertModifier(
+                title: title,
+                isPresented: isPresented,
+                text: text,
+                placeholder: placeholder,
+                message: message,
+                confirmTitle: confirmTitle ?? L10n.tr("Xác nhận", "Confirm"),
+                cancelTitle: cancelTitle ?? L10n.tr("Huỷ", "Cancel"),
+                confirmRole: confirmRole,
+                keyboardType: keyboardType,
+                onConfirm: onConfirm
+            )
+        )
     }
 }

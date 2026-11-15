@@ -409,6 +409,17 @@ public extension UIColor {
         var rgbValue: UInt64 = 0
         Scanner(string: cleaned).scanHexInt64(&rgbValue)
         switch cleaned.count {
+        case 3:
+            let r = CGFloat((rgbValue & 0xF00) >> 8) / 15.0
+            let g = CGFloat((rgbValue & 0x0F0) >> 4) / 15.0
+            let b = CGFloat(rgbValue & 0x00F) / 15.0
+            self.init(red: r, green: g, blue: b, alpha: 1.0)
+        case 4:
+            let r = CGFloat((rgbValue & 0xF000) >> 12) / 15.0
+            let g = CGFloat((rgbValue & 0x0F00) >> 8) / 15.0
+            let b = CGFloat((rgbValue & 0x00F0) >> 4) / 15.0
+            let a = CGFloat(rgbValue & 0x000F) / 15.0
+            self.init(red: r, green: g, blue: b, alpha: a)
         case 8:
             let r = CGFloat((rgbValue & 0xFF000000) >> 24) / 255.0
             let g = CGFloat((rgbValue & 0x00FF0000) >> 16) / 255.0
@@ -453,15 +464,24 @@ public final class IDERunestoneTheme: Runestone.Theme {
     public let font: UIFont
     public let lineNumberFont: UIFont
 
+    private func opaqueOrFallback(_ hex: String, fallback: String) -> UIColor {
+        let color = UIColor(hexString: hex)
+        var alpha: CGFloat = 1.0
+        if color.getRed(nil, green: nil, blue: nil, alpha: &alpha), alpha < 0.02 {
+            return UIColor(hexString: fallback)
+        }
+        return color
+    }
+
     public var textColor: UIColor { UIColor(hexString: palette.foreground) }
     public var gutterBackgroundColor: UIColor { UIColor(hexString: palette.editorBackground) }
-    public var gutterHairlineColor: UIColor { UIColor(hexString: palette.currentLineBackground) }
+    public var gutterHairlineColor: UIColor { opaqueOrFallback(palette.currentLineBackground, fallback: palette.sidebarBackground) }
     public var lineNumberColor: UIColor { UIColor(hexString: palette.gutterForeground) }
-    public var selectedLineBackgroundColor: UIColor { UIColor(hexString: palette.currentLineBackground) }
+    public var selectedLineBackgroundColor: UIColor { opaqueOrFallback(palette.currentLineBackground, fallback: palette.sidebarBackground) }
     public var selectedLinesLineNumberColor: UIColor { UIColor(hexString: palette.foreground) }
-    public var selectedLinesGutterBackgroundColor: UIColor { UIColor(hexString: palette.currentLineBackground) }
+    public var selectedLinesGutterBackgroundColor: UIColor { opaqueOrFallback(palette.currentLineBackground, fallback: palette.sidebarBackground) }
     public var invisibleCharactersColor: UIColor { UIColor(hexString: palette.gutterForeground).withAlphaComponent(0.45) }
-    public var pageGuideHairlineColor: UIColor { UIColor(hexString: palette.currentLineBackground) }
+    public var pageGuideHairlineColor: UIColor { opaqueOrFallback(palette.currentLineBackground, fallback: palette.sidebarBackground) }
     public var pageGuideBackgroundColor: UIColor { UIColor(hexString: palette.sidebarBackground) }
     public var markedTextBackgroundColor: UIColor { UIColor(hexString: palette.selectionBackground) }
 
@@ -530,7 +550,18 @@ public enum VSCodeThemeImporter {
         let headerBg = colors["titleBar.activeBackground"] ?? sidebarBg
         let fg = colors["editor.foreground"] ?? base.foreground
         let gutterFg = colors["editorLineNumber.foreground"] ?? base.gutterForeground
-        let lineBg = colors["editor.lineHighlightBackground"] ?? base.currentLineBackground
+        let rawLineBg = colors["editor.lineHighlightBackground"]
+        let lineBg: String = {
+            guard let candidate = rawLineBg, !candidate.isEmpty else {
+                return base.currentLineBackground
+            }
+            var alpha: CGFloat = 1.0
+            let color = UIColor(hexString: candidate)
+            if color.getRed(nil, green: nil, blue: nil, alpha: &alpha), alpha < 0.02 {
+                return base.currentLineBackground
+            }
+            return candidate
+        }()
         let selBg = colors["editor.selectionBackground"] ?? base.selectionBackground
         let accent = colors["button.background"] ?? colors["focusBorder"] ?? base.accent
 
@@ -693,7 +724,12 @@ public final class EditorPreferences: ObservableObject {
     /// Returns a checksum string covering custom theme colors so Runestone refreshes immediately on live color edits.
     public var themeSignature: String {
         let p = activePalette
-        return "\(p.id)|\(p.editorBackground)|\(p.foreground)|\(p.accent)|\(p.keyword)|\(p.string)|\(p.function)|\(p.typeName)|\(p.number)|\(p.comment)|\(p.variable)|\(p.tag)"
+        return [
+            p.id, p.editorBackground, p.sidebarBackground, p.headerBackground,
+            p.foreground, p.gutterForeground, p.currentLineBackground, p.selectionBackground,
+            p.accent, p.comment, p.keyword, p.string, p.number,
+            p.function, p.typeName, p.variable, p.property, p.operatorToken, p.tag
+        ].joined(separator: "|")
     }
 
     public init() {

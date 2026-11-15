@@ -77,6 +77,16 @@ public final class GitService: ObservableObject {
         return req
     }
 
+    private func githubAPIURL(pathSegments: [String], queryItems: [URLQueryItem] = []) -> URL? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "api.github.com"
+        let cleaned = pathSegments.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }.filter { !$0.isEmpty }
+        components.path = "/" + cleaned.joined(separator: "/")
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
+        return components.url
+    }
+
     private func metaFileURL(for workspaceRoot: URL) -> URL {
         workspaceMetaDirectory(for: workspaceRoot).appendingPathComponent("git.json")
     }
@@ -89,8 +99,8 @@ public final class GitService: ObservableObject {
 
     public func refreshStatus(workspaceRoot: URL, sshService: SSHWorkspaceService?) async {
         if let ssh = sshService, ssh.isConnected {
-            let dir = ssh.currentRemoteDirectory
-            let raw = await ssh.executeCommandOnVPS("cd '\(dir)' && git rev-parse --abbrev-ref HEAD 2>/dev/null && echo '---SPLIT---' && git status --porcelain 2>/dev/null")
+            let safeDir = ssh.currentRemoteDirectory.replacingOccurrences(of: "'", with: "'\\''")
+            let raw = await ssh.executeCommandOnVPS("cd '\(safeDir)' && git rev-parse --abbrev-ref HEAD 2>/dev/null && echo '---SPLIT---' && git status --porcelain 2>/dev/null")
             if raw.contains("---SPLIT---") {
                 let parts = raw.components(separatedBy: "---SPLIT---")
                 let branch = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -183,8 +193,8 @@ public final class GitService: ObservableObject {
 
         if let ssh = sshService, ssh.isConnected {
             let safeMsg = msg.replacingOccurrences(of: "'", with: "'\\''")
-            let dir = ssh.currentRemoteDirectory
-            let out = await ssh.executeCommandOnVPS("cd '\(dir)' && git add -A && git commit -m '\(safeMsg)' 2>&1")
+            let safeDir = ssh.currentRemoteDirectory.replacingOccurrences(of: "'", with: "'\\''")
+            let out = await ssh.executeCommandOnVPS("cd '\(safeDir)' && git add -A && git commit -m '\(safeMsg)' 2>&1")
             statusBanner = out.trimmingCharacters(in: .whitespacesAndNewlines)
             await refreshStatus(workspaceRoot: workspaceRoot, sshService: sshService)
             return
@@ -210,6 +220,7 @@ public final class GitService: ObservableObject {
     }
 
     public func discardChanges(for filePath: String, workspaceRoot: URL) async {
+        loadLocalRepoMeta(workspaceRoot: workspaceRoot)
         let metaDir = workspaceMetaDirectory(for: workspaceRoot)
         let fallbackBaseline: [String: String] = {
             if let data = (try? Data(contentsOf: metaDir.appendingPathComponent("baseline.json")))
@@ -245,6 +256,7 @@ public final class GitService: ObservableObject {
     }
 
     public func diffLines(for filePath: String, workspaceRoot: URL) -> [UnifiedDiffLine] {
+        loadLocalRepoMeta(workspaceRoot: workspaceRoot)
         let metaDir = workspaceMetaDirectory(for: workspaceRoot)
         let fallbackBaseline: [String: String] = {
             if let data = (try? Data(contentsOf: metaDir.appendingPathComponent("baseline.json")))
@@ -350,13 +362,17 @@ public final class GitService: ObservableObject {
             statusBanner = "Nhập dạng owner/repo hoặc https://github.com/owner/repo"
             return nil
         }
+        guard let metaURL = githubAPIURL(pathSegments: ["repos", owner, repo]) else {
+            statusBanner = "Tên repository không hợp lệ."
+            return nil
+        }
         isBusy = true
         statusBanner = "Đang tải repository \(owner)/\(repo) từ GitHub..."
         defer { isBusy = false }
 
         do {
             let pat = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            let metaReq = makeGitHubRequest(url: URL(string: "https://api.github.com/repos/\(owner)/\(repo)")!, pat: pat)
+            let metaReq = makeGitHubRequest(url: metaURL, pat: pat)
             let (metaData, _) = try await URLSession.shared.data(for: metaReq)
             var defaultBranch = "main"
             if let json = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any],
@@ -364,7 +380,11 @@ public final class GitService: ObservableObject {
                 defaultBranch = br
             }
 
-            let zipEndpoint = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/zipball/\(defaultBranch)")!
+            let branchSegments = defaultBranch.split(separator: "/").map(String.init)
+            guard let zipEndpoint = githubAPIURL(pathSegments: ["repos", owner, repo, "zipball"] + branchSegments) else {
+                statusBanner = "Nhánh mặc định không hợp lệ."
+                return nil
+            }
             let zipReq = makeGitHubRequest(url: zipEndpoint, pat: pat)
             let (tempZipURL, response) = try await URLSession.shared.download(for: zipReq)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -375,17 +395,26 @@ public final class GitService: ObservableObject {
             let fm = FileManager.default
             let extractTemp = fm.temporaryDirectory.appendingPathComponent("gh_clone_\(UUID().uuidString)", isDirectory: true)
             try fm.createDirectory(at: extractTemp, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: extractTemp) }
             try fm.unzipItem(at: tempZipURL, to: extractTemp)
 
             let innerItems = (try? fm.contentsOfDirectory(at: extractTemp, includingPropertiesForKeys: nil)) ?? []
             let extractedRoot = innerItems.first ?? extractTemp
 
-            let destination = parentDocumentsURL.appendingPathComponent(repo, isDirectory: true)
+            var destination = parentDocumentsURL.appendingPathComponent(repo, isDirectory: true)
             if fm.fileExists(atPath: destination.path) {
-                try fm.removeItem(at: destination)
+                let existing = (try? fm.contentsOfDirectory(atPath: destination.path)) ?? []
+                if existing.isEmpty {
+                    try? fm.removeItem(at: destination)
+                } else {
+                    var suffix = 2
+                    while fm.fileExists(atPath: parentDocumentsURL.appendingPathComponent("\(repo)-\(suffix)", isDirectory: true).path) {
+                        suffix += 1
+                    }
+                    destination = parentDocumentsURL.appendingPathComponent("\(repo)-\(suffix)", isDirectory: true)
+                }
             }
             try fm.moveItem(at: extractedRoot, to: destination)
-            try? fm.removeItem(at: extractTemp)
 
             self.currentBranch = defaultBranch
             self.remoteOriginURL = "https://github.com/\(owner)/\(repo).git"
@@ -401,7 +430,7 @@ public final class GitService: ObservableObject {
             ]
             saveLocalRepoMeta(workspaceRoot: destination)
             await refreshStatus(workspaceRoot: destination, sshService: nil)
-            statusBanner = "Đã clone \(owner)/\(repo) thành công."
+            statusBanner = "Đã clone \(owner)/\(repo) thành công vào \(destination.lastPathComponent)."
             return destination
         } catch {
             statusBanner = "Lỗi clone GitHub: \(error.localizedDescription)"
@@ -411,6 +440,7 @@ public final class GitService: ObservableObject {
 
     // MARK: - Push Modified Files Directly to GitHub via REST API (Works Offline-First on iOS!)
     public func pushToGitHubREST(workspaceRoot: URL, commitMessage: String) async {
+        loadLocalRepoMeta(workspaceRoot: workspaceRoot)
         let pat = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !pat.isEmpty else {
             statusBanner = "Nhập GitHub Personal Access Token (PAT) để Push trực tiếp lên GitHub."
@@ -433,14 +463,21 @@ public final class GitService: ObservableObject {
         }
 
         var pushedCount = 0
+        var failedPaths: [String] = []
+        let refQuery = [URLQueryItem(name: "ref", value: currentBranch)]
+
         for item in filesToUpsert {
             let fileURL = workspaceRoot.appendingPathComponent(item.relativePath)
-            guard let fileData = try? Data(contentsOf: fileURL) else { continue }
-            let encodedPath = item.relativePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? item.relativePath
-            guard let apiURL = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/contents/\(encodedPath)") else { continue }
+            let relSegments = item.relativePath.split(separator: "/").map(String.init)
+            guard let fileData = try? Data(contentsOf: fileURL),
+                  let apiURL = githubAPIURL(pathSegments: ["repos", owner, repo, "contents"] + relSegments),
+                  let getURL = githubAPIURL(pathSegments: ["repos", owner, repo, "contents"] + relSegments, queryItems: refQuery) else {
+                failedPaths.append(item.relativePath)
+                continue
+            }
 
             var existingSHA: String?
-            let getReq = makeGitHubRequest(url: URL(string: "\(apiURL.absoluteString)?ref=\(currentBranch)")!, pat: pat)
+            let getReq = makeGitHubRequest(url: getURL, pat: pat)
             if let (getData, getResp) = try? await URLSession.shared.data(for: getReq),
                let http = getResp as? HTTPURLResponse, http.statusCode == 200,
                let json = try? JSONSerialization.jsonObject(with: getData) as? [String: Any] {
@@ -463,18 +500,35 @@ public final class GitService: ObservableObject {
             if let (_, putResp) = try? await URLSession.shared.data(for: putReq),
                let http = putResp as? HTTPURLResponse, (200...201).contains(http.statusCode) {
                 pushedCount += 1
+            } else {
+                failedPaths.append(item.relativePath)
             }
         }
 
         var deletedCount = 0
         for item in filesToDelete {
-            let encodedPath = item.relativePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? item.relativePath
-            guard let apiURL = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/contents/\(encodedPath)") else { continue }
-            let getReq = makeGitHubRequest(url: URL(string: "\(apiURL.absoluteString)?ref=\(currentBranch)")!, pat: pat)
+            let relSegments = item.relativePath.split(separator: "/").map(String.init)
+            guard let apiURL = githubAPIURL(pathSegments: ["repos", owner, repo, "contents"] + relSegments),
+                  let getURL = githubAPIURL(pathSegments: ["repos", owner, repo, "contents"] + relSegments, queryItems: refQuery) else {
+                failedPaths.append(item.relativePath)
+                continue
+            }
+            let getReq = makeGitHubRequest(url: getURL, pat: pat)
             guard let (getData, getResp) = try? await URLSession.shared.data(for: getReq),
-                  let http = getResp as? HTTPURLResponse, http.statusCode == 200,
+                  let http = getResp as? HTTPURLResponse else {
+                failedPaths.append(item.relativePath)
+                continue
+            }
+            if http.statusCode == 404 {
+                deletedCount += 1
+                continue
+            }
+            guard http.statusCode == 200,
                   let json = try? JSONSerialization.jsonObject(with: getData) as? [String: Any],
-                  let sha = json["sha"] as? String else { continue }
+                  let sha = json["sha"] as? String else {
+                failedPaths.append(item.relativePath)
+                continue
+            }
 
             let delBody: [String: Any] = [
                 "message": commitMessage.isEmpty ? "Delete \(item.relativePath) from 3012 Mobile IDE" : commitMessage,
@@ -487,7 +541,14 @@ public final class GitService: ObservableObject {
             if let (_, delResp) = try? await URLSession.shared.data(for: delReq),
                let dHttp = delResp as? HTTPURLResponse, (200...204).contains(dHttp.statusCode) {
                 deletedCount += 1
+            } else {
+                failedPaths.append(item.relativePath)
             }
+        }
+
+        guard failedPaths.isEmpty else {
+            statusBanner = "Push chưa hoàn tất (\(failedPaths.count) file lỗi: \(failedPaths.prefix(3).joined(separator: ", "))) — chưa commit cục bộ."
+            return
         }
 
         await commitAll(message: commitMessage.isEmpty ? "Sync to GitHub" : commitMessage, workspaceRoot: workspaceRoot, sshService: nil)
@@ -498,7 +559,7 @@ public final class GitService: ObservableObject {
     public func fetchRemoteBranches() async -> [String] {
         guard let (owner, repo) = parseGitHubOwnerRepo(remoteOriginURL) else { return [currentBranch] }
         let pat = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/branches?per_page=50") else { return [currentBranch] }
+        guard let url = githubAPIURL(pathSegments: ["repos", owner, repo, "branches"], queryItems: [URLQueryItem(name: "per_page", value: "50")]) else { return [currentBranch] }
         let req = makeGitHubRequest(url: url, pat: pat)
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
@@ -511,6 +572,7 @@ public final class GitService: ObservableObject {
 
     @discardableResult
     public func pullFromGitHub(into workspaceRoot: URL, branchOverride: String? = nil) async -> Bool {
+        loadLocalRepoMeta(workspaceRoot: workspaceRoot)
         guard let (owner, repo) = parseGitHubOwnerRepo(remoteOriginURL) else {
             statusBanner = "Chưa có Remote GitHub URL (owner/repo)."
             return false
@@ -525,8 +587,8 @@ public final class GitService: ObservableObject {
 
         do {
             let pat = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            let safeBranch = targetBranch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? targetBranch
-            guard let zipEndpoint = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/zipball/\(safeBranch)") else {
+            let branchSegments = targetBranch.split(separator: "/").map(String.init)
+            guard let zipEndpoint = githubAPIURL(pathSegments: ["repos", owner, repo, "zipball"] + branchSegments) else {
                 statusBanner = "URL nhánh không hợp lệ."
                 return false
             }
@@ -545,18 +607,7 @@ public final class GitService: ObservableObject {
             let innerItems = (try? fm.contentsOfDirectory(at: extractTemp, includingPropertiesForKeys: nil)) ?? []
             let extractedRoot = innerItems.first ?? extractTemp
 
-            let remoteTextFiles = collectWorkspaceTextFiles(at: extractedRoot)
-            var updatedCount = 0
-            for (rel, newContent) in remoteTextFiles {
-                let dstURL = workspaceRoot.appendingPathComponent(rel)
-                if let existing = try? String(contentsOf: dstURL, encoding: .utf8) {
-                    if existing == newContent { continue }
-                    FileTimelineAndArchiveService.shared.recordSnapshot(for: dstURL, content: existing, label: "Before Git Pull")
-                }
-                try fm.createDirectory(at: dstURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try newContent.write(to: dstURL, atomically: true, encoding: .utf8)
-                updatedCount += 1
-            }
+            let updatedCount = try copyAllPulledFiles(from: extractedRoot, into: workspaceRoot)
 
             self.currentBranch = targetBranch
             let latestCommit = GitCommitRecord(
@@ -576,6 +627,53 @@ public final class GitService: ObservableObject {
             statusBanner = "Lỗi Git Pull: \(error.localizedDescription)"
             return false
         }
+    }
+
+    private func copyAllPulledFiles(from extractedRoot: URL, into workspaceRoot: URL) throws -> Int {
+        let fm = FileManager.default
+        let rootPath = WorkspaceManager.canonicalPath(extractedRoot)
+        let rootPrefix = rootPath == "/" ? "/" : rootPath + "/"
+        let destCanon = WorkspaceManager.canonicalPath(workspaceRoot)
+        let destPrefix = destCanon == "/" ? "/" : destCanon + "/"
+        guard let enumerator = fm.enumerator(
+            at: extractedRoot,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: []
+        ) else {
+            return 0
+        }
+        var updatedCount = 0
+        for case let srcURL as URL in enumerator {
+            let values = try? srcURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true { continue }
+            let name = srcURL.lastPathComponent
+            if name == ".git" || name == ".3012" || name == "__MACOSX" || name == ".DS_Store" {
+                if values?.isDirectory == true { enumerator.skipDescendants() }
+                continue
+            }
+            if values?.isDirectory == true { continue }
+
+            let srcCanon = WorkspaceManager.canonicalPath(srcURL)
+            guard srcCanon.hasPrefix(rootPrefix) else { continue }
+            let rel = String(srcCanon.dropFirst(rootPrefix.count))
+            guard WorkspaceManager.isSafeRelativeSyncPath(rel) else { continue }
+            let candidateDst = workspaceRoot.appendingPathComponent(rel)
+            let dstCanon = WorkspaceManager.canonicalPath(candidateDst)
+            guard dstCanon.hasPrefix(destPrefix) else { continue }
+            let dstURL = URL(fileURLWithPath: dstCanon)
+
+            let newData = try Data(contentsOf: srcURL)
+            if let existingData = try? Data(contentsOf: dstURL) {
+                if existingData == newData { continue }
+                if let existingText = String(data: existingData, encoding: .utf8) {
+                    FileTimelineAndArchiveService.shared.recordSnapshot(for: dstURL, content: existingText, label: "Before Git Pull")
+                }
+            }
+            try fm.createDirectory(at: dstURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try newData.write(to: dstURL, options: .atomic)
+            updatedCount += 1
+        }
+        return updatedCount
     }
 
     private func parseGitHubOwnerRepo(_ raw: String) -> (String, String)? {
@@ -623,6 +721,10 @@ public final class GitService: ObservableObject {
             self.currentBranch = decoded.branch
             self.remoteOriginURL = decoded.remoteURL
             self.commits = decoded.commits
+        } else {
+            self.currentBranch = "main"
+            self.remoteOriginURL = ""
+            self.commits = []
         }
     }
 

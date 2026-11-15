@@ -48,10 +48,16 @@ if [ -d packages ]; then
     find packages -maxdepth 1 -type f -name '*.deb' -exec cp {} /work/out/ \;
 fi
 if [ -d .theos/obj ]; then
-    find .theos/obj -maxdepth 1 -type f -name '*.dylib' -exec cp {} /work/out/ \;
-    if [ -d .theos/obj/debug ]; then
-        find .theos/obj/debug -maxdepth 1 -type f -name '*.dylib' -exec cp -n {} /work/out/ \;
-    fi
+    for objdir in .theos/obj .theos/obj/rootless .theos/obj/roothide; do
+        if [ -d "$objdir" ]; then
+            find "$objdir" -maxdepth 1 -type f -name '*.dylib' -exec cp -f {} /work/out/ \;
+        fi
+    done
+    for dbgdir in .theos/obj/debug .theos/obj/rootless/debug .theos/obj/roothide/debug; do
+        if [ -d "$dbgdir" ]; then
+            find "$dbgdir" -maxdepth 1 -type f -name '*.dylib' -exec cp -n {} /work/out/ \;
+        fi
+    done
 fi
 
 tar -C /work/out -cf - . >&3

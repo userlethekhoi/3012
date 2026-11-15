@@ -25,6 +25,7 @@ public struct MarkdownMermaidPreviewView: UIViewRepresentable {
         webView.scrollView.backgroundColor = UIColor(hexString: palette.editorBackground)
         let html = Self.buildHTML(markdown: markdown, palette: palette)
         context.coordinator.lastHTML = html
+        context.coordinator.lastBaseURL = baseDirectoryURL
         webView.loadHTMLString(html, baseURL: baseDirectoryURL)
         return webView
     }
@@ -33,14 +34,16 @@ public struct MarkdownMermaidPreviewView: UIViewRepresentable {
         webView.backgroundColor = UIColor(hexString: palette.editorBackground)
         webView.scrollView.backgroundColor = UIColor(hexString: palette.editorBackground)
         let html = Self.buildHTML(markdown: markdown, palette: palette)
-        if context.coordinator.lastHTML != html {
+        if context.coordinator.lastHTML != html || context.coordinator.lastBaseURL != baseDirectoryURL {
             context.coordinator.lastHTML = html
+            context.coordinator.lastBaseURL = baseDirectoryURL
             webView.loadHTMLString(html, baseURL: baseDirectoryURL)
         }
     }
 
     public final class Coordinator {
         var lastHTML: String = ""
+        var lastBaseURL: URL? = nil
     }
 
     // MARK: - Lightweight Native Markdown + Mermaid HTML Compiler
@@ -156,7 +159,7 @@ public struct MarkdownMermaidPreviewView: UIViewRepresentable {
           <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
           <script>
             if (window.mermaid) {
-              mermaid.initialize({ startOnLoad: true, theme: "\(mermaidTheme)", securityLevel: "loose" });
+              mermaid.initialize({ startOnLoad: true, theme: "\(mermaidTheme)", securityLevel: "strict" });
             }
           </script>
         </body>
@@ -169,14 +172,66 @@ public struct MarkdownMermaidPreviewView: UIViewRepresentable {
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private static func sanitizeMarkdownURL(_ rawURL: String, isImage: Bool) -> String? {
+        let unescaped = rawURL
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !unescaped.isEmpty else { return nil }
+
+        let compact = String(unescaped.unicodeScalars.filter { $0.value > 0x20 && $0.value != 0x7f }.map { Character($0) }).lowercased()
+        if let colonIdx = compact.firstIndex(of: ":"),
+           !compact[..<colonIdx].contains("/"),
+           !compact[..<colonIdx].contains("?"),
+           !compact[..<colonIdx].contains("#") {
+            let scheme = String(compact[..<colonIdx])
+            if isImage {
+                if scheme == "https" || scheme == "http" {
+                    return rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                if scheme == "data" && (
+                    compact.hasPrefix("data:image/png;base64,")
+                    || compact.hasPrefix("data:image/jpeg;base64,")
+                    || compact.hasPrefix("data:image/jpg;base64,")
+                    || compact.hasPrefix("data:image/gif;base64,")
+                    || compact.hasPrefix("data:image/webp;base64,")
+                ) {
+                    return rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                return nil
+            } else {
+                if scheme == "https" || scheme == "http" || scheme == "mailto" || scheme == "tel" {
+                    return rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                return nil
+            }
+        }
+        if compact.hasPrefix("//") {
+            return "https:" + rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func formatInline(_ raw: String) -> String {
-        var out = escapeHTML(raw)
-        // Inline code `...`
+        // Extract inline `code` spans before HTML escaping / emphasis / links so markdown syntax inside code is untouched.
+        var codePlaceholders: [String] = []
+        var working = raw
         if let codeRx = try? NSRegularExpression(pattern: #"`([^`]+)`"#) {
-            out = codeRx.stringByReplacingMatches(in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "<code>$1</code>")
+            let matches = codeRx.matches(in: working, range: NSRange(location: 0, length: (working as NSString).length))
+            let mutable = NSMutableString(string: working)
+            for match in matches.reversed() {
+                let codeContent = (working as NSString).substring(with: match.range(at: 1))
+                let tokenIdx = codePlaceholders.count
+                codePlaceholders.append(codeContent)
+                mutable.replaceCharacters(in: match.range, with: "\u{0001}CODE\(tokenIdx)\u{0002}")
+            }
+            working = mutable as String
         }
+
+        var out = escapeHTML(working)
         // Bold **...**
         if let boldRx = try? NSRegularExpression(pattern: #"\*\*([^*]+)\*\*"#) {
             out = boldRx.stringByReplacingMatches(in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "<strong>$1</strong>")
@@ -185,13 +240,45 @@ public struct MarkdownMermaidPreviewView: UIViewRepresentable {
         if let italicRx = try? NSRegularExpression(pattern: #"(?<!\*)\*([^*]+)\*(?!\*)"#) {
             out = italicRx.stringByReplacingMatches(in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "<em>$1</em>")
         }
-        // Images ![alt](src) before links [label](url)
+        // Images ![alt](src) before links [label](url), validating URL scheme
         if let imgRx = try? NSRegularExpression(pattern: #"!\[([^\]]*)\]\(([^)]+)\)"#) {
-            out = imgRx.stringByReplacingMatches(in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "<img src=\"$2\" alt=\"$1\" style=\"max-width:100%;border-radius:8px;margin:6px 0;\" />")
+            let matches = imgRx.matches(in: out, range: NSRange(location: 0, length: (out as NSString).length))
+            let mutable = NSMutableString(string: out)
+            for match in matches.reversed() {
+                let nsOut = out as NSString
+                let alt = nsOut.substring(with: match.range(at: 1))
+                let src = nsOut.substring(with: match.range(at: 2))
+                let replacement: String
+                if let safeSrc = sanitizeMarkdownURL(src, isImage: true) {
+                    replacement = "<img src=\"\(safeSrc)\" alt=\"\(alt)\" style=\"max-width:100%;border-radius:8px;margin:6px 0;\" />"
+                } else {
+                    replacement = alt
+                }
+                mutable.replaceCharacters(in: match.range, with: replacement)
+            }
+            out = mutable as String
         }
-        // Links [label](url)
+        // Links [label](url), validating URL scheme
         if let linkRx = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\(([^)]+)\)"#) {
-            out = linkRx.stringByReplacingMatches(in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "<a href=\"$2\">$1</a>")
+            let matches = linkRx.matches(in: out, range: NSRange(location: 0, length: (out as NSString).length))
+            let mutable = NSMutableString(string: out)
+            for match in matches.reversed() {
+                let nsOut = out as NSString
+                let label = nsOut.substring(with: match.range(at: 1))
+                let url = nsOut.substring(with: match.range(at: 2))
+                let replacement: String
+                if let safeURL = sanitizeMarkdownURL(url, isImage: false) {
+                    replacement = "<a href=\"\(safeURL)\">\(label)</a>"
+                } else {
+                    replacement = label
+                }
+                mutable.replaceCharacters(in: match.range, with: replacement)
+            }
+            out = mutable as String
+        }
+
+        for (idx, codeText) in codePlaceholders.enumerated() {
+            out = out.replacingOccurrences(of: "\u{0001}CODE\(idx)\u{0002}", with: "<code>\(escapeHTML(codeText))</code>")
         }
         return out
     }

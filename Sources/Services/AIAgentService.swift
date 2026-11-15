@@ -108,12 +108,14 @@ public struct AgentProposedEdit: Identifiable, Codable, Equatable {
     public let addedCount: Int
     public let removedCount: Int
     public var state: DecisionState
+    public let existedBeforeEdit: Bool
 
     public init(relativePath: String, oldContent: String?, newContent: String) {
         self.id = UUID()
         self.relativePath = relativePath
         self.previousContent = oldContent
         self.newContent = newContent
+        self.existedBeforeEdit = (oldContent != nil)
         let (lines, added, removed) = Self.computeOrderedDiff(oldText: oldContent ?? "", newText: newContent)
         self.diffPreviewLines = lines
         self.addedCount = added
@@ -121,13 +123,31 @@ public struct AgentProposedEdit: Identifiable, Codable, Equatable {
         self.state = .pending
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.relativePath = try container.decode(String.self, forKey: .relativePath)
+        let prev = try container.decodeIfPresent(String.self, forKey: .previousContent)
+        self.previousContent = prev
+        self.newContent = try container.decode(String.self, forKey: .newContent)
+        self.diffPreviewLines = try container.decode([String].self, forKey: .diffPreviewLines)
+        self.addedCount = try container.decode(Int.self, forKey: .addedCount)
+        self.removedCount = try container.decode(Int.self, forKey: .removedCount)
+        self.state = try container.decode(DecisionState.self, forKey: .state)
+        self.existedBeforeEdit = try container.decodeIfPresent(Bool.self, forKey: .existedBeforeEdit) ?? (prev != nil)
+    }
+
     private static func computeOrderedDiff(oldText: String, newText: String) -> ([String], Int, Int) {
         let oldLines = oldText.isEmpty ? [] : oldText.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
-        let newLines = newText.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        let newLines = newText.isEmpty ? [] : newText.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
 
         if oldLines.isEmpty {
             let addLines = newLines.prefix(40).map { "+ " + $0 }
             return (addLines, newLines.count, 0)
+        }
+        if newLines.isEmpty {
+            let remLines = oldLines.prefix(40).map { "- " + $0 }
+            return (remLines, 0, oldLines.count)
         }
 
         if oldLines.count * newLines.count > 800_000 {
@@ -271,6 +291,8 @@ public final class AIAgentService: ObservableObject {
     @Published public private(set) var streamRevision: Int = 0
 
     private var generationTask: Task<Void, Never>?
+    private var activeGenerationID = UUID()
+    private var isLoadingSession = false
 
     public var allSkills: [AgentSkill] {
         AgentSkill.builtInSkills + customSkills
@@ -327,6 +349,8 @@ public final class AIAgentService: ObservableObject {
     }
 
     private func loadSessions() {
+        isLoadingSession = true
+        defer { isLoadingSession = false }
         if let data = try? Data(contentsOf: sessionsFileURL),
            let decoded = try? JSONDecoder().decode([AIChatSession].self, from: data),
            !decoded.isEmpty {
@@ -342,7 +366,7 @@ public final class AIAgentService: ObservableObject {
     }
 
     private func syncMessagesToActiveSession() {
-        guard !sessions.isEmpty else { return }
+        guard !isLoadingSession, !sessions.isEmpty else { return }
         if let activeSessionID, let idx = sessions.firstIndex(where: { $0.id == activeSessionID }) {
             sessions[idx].messages = messages
             sessions[idx].updatedAt = Date()
@@ -357,6 +381,7 @@ public final class AIAgentService: ObservableObject {
     }
 
     private func persistSessions() {
+        guard !isLoadingSession else { return }
         let trimmed = Array(sessions.prefix(15)).map { session -> AIChatSession in
             var copy = session
             copy.messages = session.messages.map { msg in
@@ -538,7 +563,16 @@ public final class AIAgentService: ObservableObject {
     }
 
     public func stopGenerating() {
+        activeGenerationID = UUID()
         generationTask?.cancel()
+        generationTask = nil
+        isThinking = false
+        for idx in messages.indices where messages[idx].isStreaming {
+            let existing = messages[idx].text
+            messages[idx].text = (existing.isEmpty ? "" : existing + "\n\n") + "_(Đã dừng)_"
+            messages[idx].isStreaming = false
+        }
+        streamRevision &+= 1
     }
 
     public func markEditState(messageID: UUID, editID: UUID, newState: AgentProposedEdit.DecisionState) {
@@ -549,25 +583,46 @@ public final class AIAgentService: ObservableObject {
 
     public func acceptAllEdits(in messageID: UUID, applyHandler: (String, String) -> Void) {
         guard let mIdx = messages.firstIndex(where: { $0.id == messageID }) else { return }
-        for eIdx in messages[mIdx].proposedEdits.indices where messages[mIdx].proposedEdits[eIdx].state == .pending {
-            let edit = messages[mIdx].proposedEdits[eIdx]
+        var editsCopy = messages[mIdx].proposedEdits
+        var changed = false
+        for eIdx in editsCopy.indices where editsCopy[eIdx].state == .pending {
+            let edit = editsCopy[eIdx]
             applyHandler(edit.relativePath, edit.newContent)
-            messages[mIdx].proposedEdits[eIdx].state = .applied
+            editsCopy[eIdx].state = .applied
+            changed = true
+        }
+        if changed {
+            messages[mIdx].proposedEdits = editsCopy
         }
     }
 
     public func rejectAllEdits(in messageID: UUID) {
         guard let mIdx = messages.firstIndex(where: { $0.id == messageID }) else { return }
-        for eIdx in messages[mIdx].proposedEdits.indices where messages[mIdx].proposedEdits[eIdx].state == .pending {
-            messages[mIdx].proposedEdits[eIdx].state = .rejected
+        var editsCopy = messages[mIdx].proposedEdits
+        var changed = false
+        for eIdx in editsCopy.indices where editsCopy[eIdx].state == .pending {
+            editsCopy[eIdx].state = .rejected
+            changed = true
+        }
+        if changed {
+            messages[mIdx].proposedEdits = editsCopy
         }
     }
 
-    public func revertAppliedEdit(messageID: UUID, editID: UUID, restoreHandler: (String, String) -> Void) {
+    public func revertAppliedEdit(
+        messageID: UUID,
+        editID: UUID,
+        restoreHandler: (String, String) -> Void,
+        deleteHandler: ((String) -> Void)? = nil
+    ) {
         guard let mIdx = messages.firstIndex(where: { $0.id == messageID }),
               let eIdx = messages[mIdx].proposedEdits.firstIndex(where: { $0.id == editID }) else { return }
-        if let prev = messages[mIdx].proposedEdits[eIdx].previousContent {
-            restoreHandler(messages[mIdx].proposedEdits[eIdx].relativePath, prev)
+        let edit = messages[mIdx].proposedEdits[eIdx]
+        if edit.existedBeforeEdit, let prev = edit.previousContent {
+            restoreHandler(edit.relativePath, prev)
+            messages[mIdx].proposedEdits[eIdx].state = .pending
+        } else if !edit.existedBeforeEdit, let deleteHandler {
+            deleteHandler(edit.relativePath)
             messages[mIdx].proposedEdits[eIdx].state = .pending
         }
     }
@@ -611,6 +666,8 @@ public final class AIAgentService: ObservableObject {
         let mentionedFilesBlock = resolveMentionedFiles(in: userText, activeFilePath: activeFilePath, existingFileReader: existingFileReader)
 
         isThinking = true
+        let generationID = UUID()
+        activeGenerationID = generationID
         let context = PromptContext(
             workspaceTree: workspaceTree,
             activeFilePath: activeFilePath,
@@ -624,17 +681,31 @@ public final class AIAgentService: ObservableObject {
         )
         let task = Task { [weak self] () -> Void in
             guard let self else { return }
-            await self.runGeneration(profileID: profile.id, apiKey: key, context: context, existingFileReader: existingFileReader)
+            await self.runGeneration(
+                generationID: generationID,
+                profileID: profile.id,
+                apiKey: key,
+                context: context,
+                existingFileReader: existingFileReader
+            )
         }
         generationTask = task
         await task.value
-        generationTask = nil
-        isThinking = false
+        if activeGenerationID == generationID {
+            generationTask = nil
+            isThinking = false
+        }
     }
 
     private func resolveActiveSkills(in prompt: String) -> String {
         let lower = prompt.lowercased()
-        let matched = allSkills.filter { lower.contains($0.slashCommand) }
+        let ns = lower as NSString
+        let matched = allSkills.filter { skill in
+            let escaped = NSRegularExpression.escapedPattern(for: skill.slashCommand.lowercased())
+            let pattern = "(?:^|\\s)\(escaped)(?=$|[\\s.,!?;:)])"
+            guard let rx = try? NSRegularExpression(pattern: pattern, options: []) else { return false }
+            return rx.firstMatch(in: lower, range: NSRange(location: 0, length: ns.length)) != nil
+        }
         guard !matched.isEmpty else { return "" }
         return matched.map { "Skill \($0.slashCommand) (\($0.title)): \($0.instruction)" }.joined(separator: "\n")
     }
@@ -652,9 +723,11 @@ public final class AIAgentService: ObservableObject {
         let reserved: Set<String> = ["active", "selection", "problems", "terminal", "git"]
 
         for m in matches where sections.count < 5 {
-            let token = ns.substring(with: m.range(at: 1))
+            let rawToken = ns.substring(with: m.range(at: 1))
+            let token = rawToken.hasPrefix("./") ? String(rawToken.dropFirst(2)) : rawToken
             let low = token.lowercased()
             if reserved.contains(low) || seen.contains(token) { continue }
+            guard !rawToken.hasPrefix("/"), WorkspaceManager.isSafeRelativeSyncPath(token) else { continue }
             if token == activeFilePath { continue }
             seen.insert(token)
             if let body = existingFileReader(token) {
@@ -830,15 +903,27 @@ public final class AIAgentService: ObservableObject {
                 onPrint(chunk)
             }
             let (cleaned, edits) = Self.extractFileEdits(from: accumulated) { rel in
+                guard WorkspaceManager.isSafeRelativeSyncPath(rel) else { return nil }
                 let targetURL = workspace.rootURL.appendingPathComponent(rel)
+                let rootCanon = WorkspaceManager.canonicalPath(workspace.rootURL)
+                let rootPrefix = rootCanon == "/" ? "/" : rootCanon + "/"
+                guard WorkspaceManager.canonicalPath(targetURL).hasPrefix(rootPrefix) else { return nil }
                 return try? String(contentsOf: targetURL, encoding: .utf8)
             }
             messages.append(AIChatMessage(role: .assistant, text: cleaned.isEmpty ? accumulated : cleaned, proposedEdits: edits, modelLabel: model))
 
             if !edits.isEmpty {
                 onPrint("\n")
+                let rootCanon = WorkspaceManager.canonicalPath(workspace.rootURL)
+                let rootPrefix = rootCanon == "/" ? "/" : rootCanon + "/"
                 for edit in edits {
                     let finalRel = resolveWorkspaceRelativePath(edit.relativePath, cwd: cwd, workspace: workspace)
+                    let targetURL = workspace.rootURL.appendingPathComponent(finalRel)
+                    guard WorkspaceManager.isSafeRelativeSyncPath(finalRel),
+                          WorkspaceManager.canonicalPath(targetURL).hasPrefix(rootPrefix) else {
+                        onPrint("\u{001B}[31m[SKIP]\u{001B}[0m Unsafe path rejected: \(edit.relativePath)\n")
+                        continue
+                    }
                     workspace.applyAgentFileEdit(relativePath: finalRel, newContent: edit.newContent)
                     let lines = edit.newContent.components(separatedBy: "\n").count
                     onPrint("\u{001B}[1;32m[WRITE]\u{001B}[0m \(finalRel) (\(lines) lines) -> opened in Editor.\n")
@@ -969,21 +1054,24 @@ public final class AIAgentService: ObservableObject {
     }
 
     private func runGeneration(
+        generationID: UUID,
         profileID: UUID,
         apiKey: String,
         context: PromptContext,
         existingFileReader: @escaping (String) -> String?
     ) async {
-        guard var profile = self.profile(id: profileID) else { return }
+        guard var profile = self.profile(id: profileID), self.activeGenerationID == generationID else { return }
 
         var model = profile.resolvedModelID
         if model.isEmpty {
             await refreshModels(for: profileID, announceChanges: false)
+            guard self.activeGenerationID == generationID else { return }
             if let refreshed = self.profile(id: profileID) {
                 profile = refreshed
                 model = refreshed.resolvedModelID
             }
         }
+        guard self.activeGenerationID == generationID else { return }
         guard !model.isEmpty else {
             let detail = lastRefreshMessage[profileID].map { "\n\n\($0)" } ?? ""
             messages.append(AIChatMessage(
@@ -1017,6 +1105,7 @@ public final class AIAgentService: ObservableObject {
         var lastFlush = Date.distantPast
         do {
             for try await chunk in stream {
+                guard self.activeGenerationID == generationID else { return }
                 accumulated += chunk
                 let now = Date()
                 if now.timeIntervalSince(lastFlush) > 0.05 {
@@ -1025,6 +1114,7 @@ public final class AIAgentService: ObservableObject {
                     lastFlush = now
                 }
             }
+            guard self.activeGenerationID == generationID else { return }
             if Task.isCancelled {
                 finishStopped(messageID, accumulated: accumulated)
             } else {
@@ -1036,6 +1126,7 @@ public final class AIAgentService: ObservableObject {
                 }
             }
         } catch {
+            guard self.activeGenerationID == generationID else { return }
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
                 finishStopped(messageID, accumulated: accumulated)
             } else {
@@ -1046,7 +1137,9 @@ public final class AIAgentService: ObservableObject {
                 }
             }
         }
-        streamRevision &+= 1
+        if self.activeGenerationID == generationID {
+            streamRevision &+= 1
+        }
     }
 
     private func finishStopped(_ id: UUID, accumulated: String) {
@@ -1086,9 +1179,13 @@ public final class AIAgentService: ObservableObject {
     }
 
     private func buildHistory() -> [AIChatTurn] {
+        let nonStreaming = messages.filter { $0.role != .system && !$0.isStreaming }
         var turns: [AIChatTurn] = []
-        for msg in messages where msg.role != .system && !msg.isStreaming {
-            let text = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for (idx, msg) in nonStreaming.enumerated() {
+            var text = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if idx < nonStreaming.count - 1 {
+                text = Self.compactFileEditBlocks(in: text)
+            }
             guard !text.isEmpty || !msg.attachedImages.isEmpty else { continue }
             let role: AIChatTurn.Role = msg.role == .user ? .user : .assistant
             if let last = turns.last, last.role == role {
@@ -1106,6 +1203,24 @@ public final class AIAgentService: ObservableObject {
             recent.removeFirst()
         }
         return recent
+    }
+
+    private static func compactFileEditBlocks(in text: String) -> String {
+        guard text.contains("<file_edit"),
+              let regex = try? NSRegularExpression(pattern: #"<file_edit\b[^>]*path\s*=\s*["']([^"']+)["'][^>]*>[\s\S]*?</file_edit>"#, options: []) else {
+            return text
+        }
+        let ns = text as NSString
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return text }
+        var output = text
+        for match in matches.reversed() {
+            let path = ns.substring(with: match.range(at: 1))
+            if let swiftRange = Range(match.range, in: output) {
+                output.replaceSubrange(swiftRange, with: "[file_edit: \(path)]")
+            }
+        }
+        return output
     }
 
     private func buildSystemPrompt(_ ctx: PromptContext) -> String {
@@ -1234,7 +1349,7 @@ public final class AIAgentService: ObservableObject {
         from rawText: String,
         existingFileReader: (String) -> String?
     ) -> (String, [AgentProposedEdit]) {
-        let pattern = #"<file_edit\b[^>]*path\s*=\s*["']([^"']+)["'][^>]*>\s*([\s\S]*?)\s*</file_edit>"#
+        let pattern = #"<file_edit\b[^>]*path\s*=\s*["']([^"']+)["'][^>]*>[ \t]*(?:\r?\n)?([\s\S]*?)(?:\r?\n[ \t]*)?</file_edit>"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
             return (rawText, [])
         }
@@ -1248,7 +1363,11 @@ public final class AIAgentService: ObservableObject {
         var stripped = rawText
 
         for match in matches.reversed() {
-            let path = nsText.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawPath = nsText.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedPath = rawPath.hasPrefix("./") ? String(rawPath.dropFirst(2)) : rawPath
+            guard !rawPath.hasPrefix("/"), WorkspaceManager.isSafeRelativeSyncPath(normalizedPath) else {
+                continue
+            }
             var code = nsText.substring(with: match.range(at: 2))
             // Unwrap accidental outer markdown code fence inside <file_edit>
             if code.hasPrefix("```") {
@@ -1257,10 +1376,10 @@ public final class AIAgentService: ObservableObject {
                 if lines.last?.trimmingCharacters(in: .whitespaces) == "```" { lines.removeLast() }
                 code = lines.joined(separator: "\n")
             }
-            let existing = existingFileReader(path)
-            edits.insert(AgentProposedEdit(relativePath: path, oldContent: existing, newContent: code), at: 0)
+            let existing = existingFileReader(normalizedPath)
+            edits.insert(AgentProposedEdit(relativePath: normalizedPath, oldContent: existing, newContent: code), at: 0)
             if let swiftRange = Range(match.range, in: stripped) {
-                stripped.replaceSubrange(swiftRange, with: "\n*Đề xuất cập nhật file `\(path)` (xem bảng Diff bên dưới)*\n")
+                stripped.replaceSubrange(swiftRange, with: "\n*Đề xuất cập nhật file `\(normalizedPath)` (xem bảng Diff bên dưới)*\n")
             }
         }
 

@@ -215,7 +215,7 @@ public enum AIModelRanker {
     private static let excludedSubstrings: [String] = [
         "embed", "whisper", "tts", "transcribe", "dall-e", "moderation", "image", "imagen",
         "veo", "sora", "audio", "realtime", "davinci", "babbage", "rerank", "aqa",
-        "deep-research", "computer-use", "codex", "native-audio", "lyria"
+        "deep-research", "computer-use", "native-audio", "lyria"
     ]
     private static let excludedTokens: Set<String> = ["live", "search", "guard", "ocr", "speech", "vl-embedding"]
     private static let fastTokens: Set<String> = [
@@ -233,9 +233,12 @@ public enum AIModelRanker {
         if excludedSubstrings.contains(where: { lower.contains($0) }) { return false }
         let toks = tokens(id)
         if toks.contains(where: { excludedTokens.contains($0) }) { return false }
-        if presetID == "openai" {
-            // Responses-API-only or legacy completion models.
-            if toks.last == "pro" || lower.contains("instruct") { return false }
+        // Responses-API-only or legacy completion models across all presets (including OpenRouter).
+        if lower == "o1-pro" || lower.hasSuffix("/o1-pro") || lower.contains("-instruct") || toks.contains("instruct") {
+            return false
+        }
+        if presetID == "openai" || lower.hasPrefix("openai/") {
+            if toks.last == "pro" { return false }
             if lower.hasPrefix("text-") || lower.hasPrefix("ada") || lower.hasPrefix("curie") { return false }
         }
         return true
@@ -252,10 +255,10 @@ public enum AIModelRanker {
         return lower.range(of: #"-\d{3,4}$"#, options: .regularExpression) != nil
     }
 
-    /// Extracts the model generation number: `gpt-5.1` -> 5.1, `claude-sonnet-4-5` -> 4.5, `gemini-2.5-pro` -> 2.5.
+    /// Extracts the weighted model generation score: `4.10` (41000) > `4.5` (40500) > `4.1` (40100).
     public static func versionScore(_ id: String) -> Double {
         let lower = id.lowercased()
-        guard let regex = try? NSRegularExpression(pattern: #"(\d+)(?:\.(\d+))?"#) else { return 0 }
+        guard let regex = try? NSRegularExpression(pattern: #"(\d+)(?:\.(\d+)(?:\.(\d+))?)?"#) else { return 0 }
         let ns = lower as NSString
         let matches = regex.matches(in: lower, range: NSRange(location: 0, length: ns.length))
         var idx = 0
@@ -268,22 +271,26 @@ public enum AIModelRanker {
                 let next = ns.substring(with: NSRange(location: end, length: 1))
                 if next == "b" || next == "k" || next == "x" || next == "m" { idx += 1; continue } // param sizes
             }
-            var value = Double(major) ?? 0
+            let majorInt = Int(major) ?? 0
+            var minorInt = 0
+            var patchInt = 0
             if m.range(at: 2).location != NSNotFound {
-                let minor = ns.substring(with: m.range(at: 2))
-                value += (Double(minor) ?? 0) / pow(10, Double(minor.count))
+                minorInt = Int(ns.substring(with: m.range(at: 2))) ?? 0
+                if m.range(at: 3).location != NSNotFound {
+                    patchInt = Int(ns.substring(with: m.range(at: 3))) ?? 0
+                }
             } else if idx + 1 < matches.count, end < ns.length {
                 let n = matches[idx + 1]
                 let minorStr = ns.substring(with: n.range(at: 1))
                 let separator = ns.substring(with: NSRange(location: end, length: 1))
                 let nEnd = n.range.location + n.range.length
                 let followedBySize = nEnd < ns.length && ["b", "k", "x", "m"].contains(ns.substring(with: NSRange(location: nEnd, length: 1)))
-                if separator == "-", n.range.location == end + 1, minorStr.count == 1,
+                if separator == "-", n.range.location == end + 1, minorStr.count <= 2,
                    n.range(at: 2).location == NSNotFound, !followedBySize {
-                    value += (Double(minorStr) ?? 0) / 10
+                    minorInt = Int(minorStr) ?? 0
                 }
             }
-            return value
+            return Double(majorInt * 10_000 + minorInt * 100 + patchInt)
         }
         return 0
     }

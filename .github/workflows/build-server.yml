@@ -44,7 +44,7 @@ jobs:
           ID=$(echo "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
           OFFSET=0
           for i in $(seq 1 300); do
-            S=$(curl -fsS "http://127.0.0.1:8787/v1/builds/$ID?since=$OFFSET")
+            S=$(curl -fsS -H "X-Device-ID: $DEVICE" "http://127.0.0.1:8787/v1/builds/$ID?since=$OFFSET")
             echo "$S" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["log"],end="")'
             OFFSET=$(echo "$S" | python3 -c 'import sys,json;print(json.load(sys.stdin)["logOffset"])')
             STATE=$(echo "$S" | python3 -c 'import sys,json;print(json.load(sys.stdin)["state"])')
@@ -55,12 +55,121 @@ jobs:
           echo "$S" | python3 -c 'import sys,json;d=json.load(sys.stdin);print("files:",d["files"])'
           [ "$STATE" = "succeeded" ]
           DEB=$(echo "$S" | python3 -c 'import sys,json;print([f["name"] for f in json.load(sys.stdin)["files"] if f["name"].endswith(".deb")][0])')
+          DYLIB=$(echo "$S" | python3 -c 'import sys,json;print([f["name"] for f in json.load(sys.stdin)["files"] if f["name"].endswith(".dylib")][0])')
           curl -fsS -H "X-Device-ID: $DEVICE" -o "$RUNNER_TEMP/$DEB" "http://127.0.0.1:8787/v1/builds/$ID/files/$DEB"
+          curl -fsS -H "X-Device-ID: $DEVICE" -o "$RUNNER_TEMP/$DYLIB" "http://127.0.0.1:8787/v1/builds/$ID/files/$DYLIB"
+          test -s "$RUNNER_TEMP/$DYLIB"
           dpkg-deb -I "$RUNNER_TEMP/$DEB"
           dpkg-deb -c "$RUNNER_TEMP/$DEB"
           # Download must be refused for other devices
           CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Device-ID: someone-else-1234" "http://127.0.0.1:8787/v1/builds/$ID/files/$DEB")
           [ "$CODE" = "403" ]
+
+      - name: Verify /sync.mjs & Zero-Knowledge WebSocket Relay (/v1/sync)
+        run: |
+          set -euo pipefail
+          curl -fsS "http://127.0.0.1:8787/sync.mjs" -o "$RUNNER_TEMP/sync.mjs"
+          node --check "$RUNNER_TEMP/sync.mjs"
+          python3 - <<'PY'
+          import base64, hashlib, json, os, socket, struct
+
+          def ws_connect(role: str, cid: str):
+              s = socket.create_connection(("127.0.0.1", 8787), timeout=10)
+              ws_key = base64.b64encode(os.urandom(16)).decode("ascii")
+              req = (
+                  "GET /v1/sync HTTP/1.1\r\n"
+                  "Host: 127.0.0.1:8787\r\n"
+                  "Upgrade: websocket\r\n"
+                  "Connection: Upgrade\r\n"
+                  f"Sec-WebSocket-Key: {ws_key}\r\n"
+                  "Sec-WebSocket-Version: 13\r\n\r\n"
+              ).encode("ascii")
+              s.sendall(req)
+              buf = b""
+              while b"\r\n\r\n" not in buf:
+                  buf += s.recv(4096)
+              header, rest = buf.split(b"\r\n\r\n", 1)
+              assert b"101 Switching Protocols" in header, header
+              expected = base64.b64encode(
+                  hashlib.sha1((ws_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
+              ).decode("ascii")
+              assert expected.encode("ascii") in header
+              state = {"buf": bytearray(rest)}
+
+              def recv_exact(n: int) -> bytes:
+                  while len(state["buf"]) < n:
+                      chunk = s.recv(4096)
+                      assert chunk, "EOF"
+                      state["buf"].extend(chunk)
+                  out = bytes(state["buf"][:n])
+                  del state["buf"][:n]
+                  return out
+
+              def send_json(obj: dict) -> None:
+                  payload = json.dumps(obj).encode("utf-8")
+                  mask = os.urandom(4)
+                  header_bytes = bytearray([0x81])
+                  length = len(payload)
+                  if length < 126:
+                      header_bytes.append(0x80 | length)
+                  elif length < 65536:
+                      header_bytes.append(0x80 | 126)
+                      header_bytes.extend(struct.pack("!H", length))
+                  else:
+                      header_bytes.append(0x80 | 127)
+                      header_bytes.extend(struct.pack("!Q", length))
+                  header_bytes.extend(mask)
+                  masked = bytes(payload[i] ^ mask[i % 4] for i in range(length))
+                  s.sendall(bytes(header_bytes) + masked)
+
+              def recv_json() -> dict:
+                  while True:
+                      b1, b2 = recv_exact(2)
+                      opcode = b1 & 0x0F
+                      length = b2 & 0x7F
+                      if length == 126:
+                          length = struct.unpack("!H", recv_exact(2))[0]
+                      elif length == 127:
+                          length = struct.unpack("!Q", recv_exact(8))[0]
+                      if b2 & 0x80:
+                          m = recv_exact(4)
+                          raw = recv_exact(length)
+                          data = bytes(raw[i] ^ m[i % 4] for i in range(length))
+                      else:
+                          data = recv_exact(length)
+                      if opcode == 0x9:
+                          continue
+                      if opcode == 0x8:
+                          raise EOFError("closed")
+                      return json.loads(data.decode("utf-8"))
+
+              send_json({"type": "relay_join", "role": role, "clientId": cid, "key": "482910"})
+              joined = recv_json()
+              assert joined["type"] == "relay_joined", joined
+              return s, send_json, recv_json, joined
+
+          pc_s, pc_send, pc_recv, pc_joined = ws_connect("pc", "pc-test-1")
+          mob_s, mob_send, mob_recv, mob_joined = ws_connect("mobile", "mob-test-1")
+          assert len(mob_joined["peers"]) == 1 and mob_joined["peers"][0]["clientId"] == "pc-test-1"
+          peer_evt = pc_recv()
+          assert peer_evt["type"] == "relay_peer_joined" and peer_evt["role"] == "mobile", peer_evt
+
+          pc_send({"type": "relay_ping", "ts": 12345})
+          pong = pc_recv()
+          assert pong["type"] == "relay_pong" and pong["ts"] == 12345, pong
+
+          pc_send({"type": "relay_packet", "p": "dGVzdC1lMmVlLWJsb2I="})
+          relayed_to_mob = mob_recv()
+          assert relayed_to_mob["type"] == "relay_packet" and relayed_to_mob["p"] == "dGVzdC1lMmVlLWJsb2I=", relayed_to_mob
+
+          mob_send({"type": "relay_packet", "p": "cmVwbHktZnJvbS1tb2JpbGU="})
+          relayed_to_pc = pc_recv()
+          assert relayed_to_pc["type"] == "relay_packet" and relayed_to_pc["p"] == "cmVwbHktZnJvbS1tb2JpbGU=", relayed_to_pc
+
+          pc_s.close()
+          mob_s.close()
+          print("WebSocket relay E2E OK")
+          PY
 
       - name: Sandbox checks (no network, read-only, unprivileged)
         run: |

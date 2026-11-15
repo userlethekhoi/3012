@@ -331,6 +331,11 @@ public struct BottomConsolePreviewPanel: View {
             }
         }
         .background(Color(hex: palette.sidebarBackground))
+        .onChange(of: sshService.activeTunnels) { tunnels in
+            if let port = selectedPreviewPort, !tunnels.contains(where: { $0.localPort == port }) {
+                selectedPreviewPort = nil
+            }
+        }
     }
 
     private func tabLabel(_ tab: BottomPanelTab) -> String {
@@ -792,7 +797,7 @@ private struct LiveServerWebView: UIViewRepresentable {
         """
         let userScript = WKUserScript(source: consoleBridgeJS, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         contentController.addUserScript(userScript)
-        contentController.add(context.coordinator, name: "ide3012Console")
+        contentController.add(WeakScriptMessageProxy(target: context.coordinator), name: "ide3012Console")
         config.userContentController = contentController
 
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -849,6 +854,19 @@ private struct LiveServerWebView: UIViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 self?.onConsoleLog(WebDevToolsLogEntry(level: level, message: text))
             }
+        }
+    }
+
+    private final class WeakScriptMessageProxy: NSObject, WKScriptMessageHandler {
+        weak var target: WKScriptMessageHandler?
+
+        init(target: WKScriptMessageHandler) {
+            self.target = target
+            super.init()
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            target?.userContentController(userContentController, didReceive: message)
         }
     }
 }

@@ -68,6 +68,18 @@ public enum AIProviderClient {
         return URLSession(configuration: cfg)
     }()
 
+    private static let isoLock = NSLock()
+    private static let isoFractionalFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoStandardFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
     static func normalizedBase(_ raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         while s.hasSuffix("/") { s.removeLast() }
@@ -190,14 +202,16 @@ public enum AIProviderClient {
                     switch format {
                     case .openAICompatible:
                         try await streamOpenAICompatible(base: base, key: key, model: model, system: systemPrompt,
-                                                         history: history, temperature: temperature, emit: emit)
+                                                         history: history, temperature: temperature,
+                                                         maxTokens: maxOutputTokens, emit: emit)
                     case .anthropic:
                         try await streamAnthropic(base: base, key: key, model: model, system: systemPrompt,
                                                   history: history, temperature: temperature,
                                                   maxTokens: maxOutputTokens, emit: emit)
                     case .gemini:
                         try await streamGemini(base: base, key: key, model: model, system: systemPrompt,
-                                               history: history, temperature: temperature, emit: emit)
+                                               history: history, temperature: temperature,
+                                               maxTokens: maxOutputTokens, emit: emit)
                     case .appleOnDevice:
                         try await runAppleOnDevice(system: systemPrompt, history: history, emit: emit)
                     }
@@ -212,7 +226,7 @@ public enum AIProviderClient {
 
     private static func streamOpenAICompatible(
         base: String, key: String, model: String, system: String,
-        history: [AIChatTurn], temperature: Double?, emit: (String) -> Void
+        history: [AIChatTurn], temperature: Double?, maxTokens: Int, emit: (String) -> Void
     ) async throws {
         guard let url = URL(string: base + "/chat/completions") else { throw AIProviderError.invalidURL(base) }
         var messages: [[String: Any]] = [["role": "system", "content": system]]
@@ -235,6 +249,7 @@ public enum AIProviderClient {
         }
         var payload: [String: Any] = ["model": model, "messages": messages, "stream": true]
         if let temperature { payload["temperature"] = temperature }
+        if maxTokens > 0 { payload["max_tokens"] = maxTokens }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -289,9 +304,16 @@ public enum AIProviderClient {
             }
             return ["role": turn.role.rawValue, "content": blocks]
         }
+        let lowerModel = model.lowercased()
+        let isLegacyClaude3 = lowerModel.contains("claude-3-")
+            && !lowerModel.contains("3-5")
+            && !lowerModel.contains("3.5")
+            && !lowerModel.contains("3-7")
+            && !lowerModel.contains("3.7")
+        let effectiveMax = isLegacyClaude3 ? min(maxTokens, 4096) : maxTokens
         var payload: [String: Any] = [
             "model": model,
-            "max_tokens": max(1024, maxTokens),
+            "max_tokens": max(1024, effectiveMax),
             "system": system,
             "messages": formattedMessages,
             "stream": true
@@ -306,21 +328,31 @@ public enum AIProviderClient {
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        _ = try await consumeSSE(req) { event in
+        var produced = false
+        let leftover = try await consumeSSE(req) { event in
             guard (event["type"] as? String) == "content_block_delta",
                   let delta = event["delta"] as? [String: Any],
                   (delta["type"] as? String) == "text_delta",
                   let text = delta["text"] as? String else { return }
+            produced = true
             emit(text)
+        }
+        if !produced, let obj = jsonObject(leftover),
+           let contentBlocks = obj["content"] as? [[String: Any]] {
+            let text = contentBlocks.compactMap { ($0["type"] as? String) == "text" ? ($0["text"] as? String) : nil }.joined()
+            if !text.isEmpty {
+                emit(text)
+            }
         }
     }
 
     private static func streamGemini(
         base: String, key: String, model: String, system: String,
-        history: [AIChatTurn], temperature: Double?, emit: (String) -> Void
+        history: [AIChatTurn], temperature: Double?, maxTokens: Int, emit: (String) -> Void
     ) async throws {
         let modelPath = model.hasPrefix("models/") ? String(model.dropFirst(7)) : model
-        guard let url = URL(string: "\(base)/models/\(modelPath):streamGenerateContent?alt=sse") else {
+        let encodedModelPath = modelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? modelPath
+        guard let url = URL(string: "\(base)/models/\(encodedModelPath):streamGenerateContent?alt=sse") else {
             throw AIProviderError.invalidURL(base)
         }
         var payload: [String: Any] = [
@@ -335,7 +367,10 @@ public enum AIProviderClient {
                 return ["role": turn.role == .user ? "user" : "model", "parts": parts]
             }
         ]
-        if let temperature { payload["generationConfig"] = ["temperature": temperature] }
+        var genConfig: [String: Any] = [:]
+        if let temperature { genConfig["temperature"] = temperature }
+        if maxTokens > 0 { genConfig["maxOutputTokens"] = maxTokens }
+        if !genConfig.isEmpty { payload["generationConfig"] = genConfig }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -343,16 +378,41 @@ public enum AIProviderClient {
         req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        _ = try await consumeSSE(req) { event in
+        func emitGeminiEvent(_ event: [String: Any]) throws -> Bool {
             if let feedback = event["promptFeedback"] as? [String: Any],
                let reason = feedback["blockReason"] as? String {
                 throw AIProviderError.unavailable("Gemini đã chặn yêu cầu: \(reason)")
             }
             guard let candidates = event["candidates"] as? [[String: Any]],
                   let content = candidates.first?["content"] as? [String: Any],
-                  let parts = content["parts"] as? [[String: Any]] else { return }
+                  let parts = content["parts"] as? [[String: Any]] else { return false }
+            var emitted = false
             for part in parts where (part["thought"] as? Bool) != true {
-                if let text = part["text"] as? String, !text.isEmpty { emit(text) }
+                if let text = part["text"] as? String, !text.isEmpty {
+                    emit(text)
+                    emitted = true
+                }
+            }
+            return emitted
+        }
+
+        var produced = false
+        let leftover = try await consumeSSE(req) { event in
+            if try emitGeminiEvent(event) {
+                produced = true
+            }
+        }
+        if !produced, !leftover.isEmpty {
+            if let obj = jsonObject(leftover) {
+                _ = try emitGeminiEvent(obj)
+            } else if let data = leftover.data(using: .utf8),
+                      let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                for item in arr {
+                    if let err = item["error"] {
+                        throw AIProviderError.http(0, messageText(from: err))
+                    }
+                    _ = try emitGeminiEvent(item)
+                }
             }
         }
     }
@@ -386,8 +446,13 @@ public enum AIProviderClient {
                 let clipped = raw.count > 1800 ? String(raw.suffix(1800)) : raw
                 transcript += (turn.role == .user ? "User: " : "Assistant: ") + clipped + "\n\n"
             }
-            var prompt = system + "\n\n" + transcript + "Assistant:"
-            if prompt.count > 11_000 { prompt = String(prompt.suffix(11_000)) }
+            let sysPrefix = system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? ""
+                : String(system.prefix(3500)) + "\n\n"
+            let remainingBudget = max(1000, 11_000 - sysPrefix.count)
+            let tail = transcript + "Assistant:"
+            let boundedTail = tail.count > remainingBudget ? String(tail.suffix(remainingBudget)) : tail
+            let prompt = sysPrefix + boundedTail
             let session = LanguageModelSession()
             let response = try await session.respond(to: prompt)
             emit(response.content)
@@ -399,8 +464,8 @@ public enum AIProviderClient {
 
     // MARK: Networking Helpers
 
-    /// Reads a Server-Sent-Events stream line by line in realtime. Returns any non-SSE body text
-    /// (used as a fallback when a server ignores streaming).
+    /// Reads a Server-Sent-Events stream line by line in realtime using strict LF splitting
+    /// (preserving multi-byte UTF-8 sequences that contain 0x85). Returns any non-SSE body text.
     private static func consumeSSE(
         _ request: URLRequest,
         onEvent: ([String: Any]) throws -> Void
@@ -415,25 +480,75 @@ public enum AIProviderClient {
             throw AIProviderError.http(http.statusCode, extractErrorMessage(body))
         }
 
-        var leftover = ""
-        for try await rawLine in bytes.lines {
-            try Task.checkCancellation()
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard line.hasPrefix("data:") else {
-                if !line.isEmpty, !line.hasPrefix("event:"), !line.hasPrefix(":"),
-                   !line.hasPrefix("id:"), !line.hasPrefix("retry:") {
-                    leftover += line
-                }
-                continue
-            }
-            let payload = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            if payload == "[DONE]" { break }
-            guard let event = jsonObject(payload) else { continue }
+        var lineBytes: [UInt8] = []
+        var eventDataLines: [String] = []
+        var leftoverBytes: [UInt8] = []
+
+        func flushSSEEvent() throws -> Bool {
+            guard !eventDataLines.isEmpty else { return false }
+            let payload = eventDataLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            eventDataLines.removeAll(keepingCapacity: true)
+            if payload.isEmpty { return false }
+            if payload == "[DONE]" { return true }
+            guard let event = jsonObject(payload) else { return false }
             if let err = event["error"] {
                 throw AIProviderError.http(0, messageText(from: err))
             }
             try onEvent(event)
+            return false
         }
+
+        func processLineBytes(_ rawLineBytes: [UInt8]) throws -> Bool {
+            var slice = rawLineBytes
+            if slice.last == 0x0D {
+                slice.removeLast()
+            }
+            guard let rawLine = String(bytes: slice, encoding: .utf8) else { return false }
+            if rawLine.isEmpty {
+                return try flushSSEEvent()
+            }
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix(":") {
+                return false
+            }
+            if trimmed.hasPrefix("data:") {
+                var value = String(trimmed.dropFirst(5))
+                if value.hasPrefix(" ") { value.removeFirst() }
+                if value.trimmingCharacters(in: .whitespaces) == "[DONE]" {
+                    _ = try flushSSEEvent()
+                    return true
+                }
+                if !eventDataLines.isEmpty, jsonObject(eventDataLines.joined(separator: "\n")) != nil {
+                    if try flushSSEEvent() { return true }
+                }
+                eventDataLines.append(value)
+            } else if trimmed.hasPrefix("event:") || trimmed.hasPrefix("id:") || trimmed.hasPrefix("retry:") {
+                // SSE control fields
+            } else {
+                leftoverBytes.append(contentsOf: slice)
+                leftoverBytes.append(0x0A)
+            }
+            return false
+        }
+
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            if byte == 0x0A {
+                if try processLineBytes(lineBytes) {
+                    lineBytes.removeAll(keepingCapacity: true)
+                    break
+                }
+                lineBytes.removeAll(keepingCapacity: true)
+            } else {
+                lineBytes.append(byte)
+            }
+        }
+        if !lineBytes.isEmpty {
+            _ = try processLineBytes(lineBytes)
+        }
+        _ = try flushSSEEvent()
+
+        let leftover = String(bytes: leftoverBytes, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if let obj = jsonObject(leftover), let err = obj["error"] {
             throw AIProviderError.http(0, messageText(from: err))
         }
@@ -488,9 +603,9 @@ public enum AIProviderClient {
 
     private static func isoDate(_ string: String?) -> Date? {
         guard let string, !string.isEmpty else { return nil }
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = withFraction.date(from: string) { return d }
-        return ISO8601DateFormatter().date(from: string)
+        isoLock.lock()
+        defer { isoLock.unlock() }
+        if let d = isoFractionalFormatter.date(from: string) { return d }
+        return isoStandardFormatter.date(from: string)
     }
 }

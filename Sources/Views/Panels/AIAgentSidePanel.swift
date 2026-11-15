@@ -399,7 +399,7 @@ public struct AIAgentSidePanel: View {
                         Label(preferences.tr("Tag File / Context ('@')", "Tag File / Context ('@')"), systemImage: "at")
                     }
                 } label: {
-                    Image(systemName: "photo.badge.plus")
+                    Image(systemName: "plus.circle.fill")
                         .font(.system(size: 18))
                         .foregroundColor(Color(hex: palette.accent))
                         .frame(width: 28, height: 32)
@@ -746,11 +746,23 @@ public struct AIAgentSidePanel: View {
                         Label("Đã áp dụng", systemImage: "checkmark")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.green)
-                        if edit.previousContent != nil {
+                        if edit.previousContent != nil || !edit.existedBeforeEdit {
                             Button {
-                                aiService.revertAppliedEdit(messageID: messageID, editID: edit.id) { rel, prev in
-                                    workspace.applyAgentFileEdit(relativePath: rel, newContent: prev)
-                                }
+                                aiService.revertAppliedEdit(
+                                    messageID: messageID,
+                                    editID: edit.id,
+                                    restoreHandler: { rel, prev in
+                                        workspace.applyAgentFileEdit(relativePath: rel, newContent: prev)
+                                    },
+                                    deleteHandler: { rel in
+                                        let rootCanon = WorkspaceManager.canonicalPath(workspace.rootURL)
+                                        let rootPrefix = rootCanon.hasSuffix("/") ? rootCanon : rootCanon + "/"
+                                        let targetURL = workspace.rootURL.appendingPathComponent(rel)
+                                        if WorkspaceManager.canonicalPath(targetURL).hasPrefix(rootPrefix) {
+                                            workspace.deleteItem(at: targetURL)
+                                        }
+                                    }
+                                )
                             } label: {
                                 Text("Undo")
                                     .font(.system(size: 9.5, weight: .bold))
@@ -771,7 +783,7 @@ public struct AIAgentSidePanel: View {
                 }
             }
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView([.horizontal, .vertical], showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(edit.diffPreviewLines.enumerated()), id: \.offset) { _, line in
                         Text(line)

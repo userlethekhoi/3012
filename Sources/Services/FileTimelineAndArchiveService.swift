@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import ZIPFoundation
 
@@ -24,6 +25,7 @@ public final class FileTimelineAndArchiveService: ObservableObject {
     @Published public var archiveStatusMessage: String = ""
 
     private let storageRoot: URL
+    private var currentlyLoadedFileCanonicalPath: String?
 
     public init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -31,28 +33,52 @@ public final class FileTimelineAndArchiveService: ObservableObject {
         try? FileManager.default.createDirectory(at: storageRoot, withIntermediateDirectories: true)
     }
 
+    private func canonicalPath(for fileURL: URL) -> String {
+        WorkspaceManager.canonicalPath(fileURL)
+    }
+
     // MARK: - Local File Version Timeline
     public func loadSnapshots(for fileURL: URL) {
+        let canonical = canonicalPath(for: fileURL)
+        currentlyLoadedFileCanonicalPath = canonical
         let storeURL = timelineJSONURL(for: fileURL)
-        guard let data = try? Data(contentsOf: storeURL),
-              let decoded = try? JSONDecoder().decode([FileTimelineSnapshot].self, from: data) else {
-            activeFileSnapshots = []
+        if let data = try? Data(contentsOf: storeURL),
+           let decoded = try? JSONDecoder().decode([FileTimelineSnapshot].self, from: data) {
+            activeFileSnapshots = decoded
             return
         }
-        activeFileSnapshots = decoded
+        let legacyURL = legacyTimelineJSONURL(for: fileURL)
+        if let data = try? Data(contentsOf: legacyURL),
+           let decoded = try? JSONDecoder().decode([FileTimelineSnapshot].self, from: data) {
+            activeFileSnapshots = decoded
+            return
+        }
+        activeFileSnapshots = []
     }
 
     public func recordSnapshot(for fileURL: URL, content: String, label: String = "Auto-Save") {
+        let canonical = canonicalPath(for: fileURL)
         let storeURL = timelineJSONURL(for: fileURL)
         var history: [FileTimelineSnapshot] = []
         if let data = try? Data(contentsOf: storeURL),
            let decoded = try? JSONDecoder().decode([FileTimelineSnapshot].self, from: data) {
             history = decoded
+        } else if let data = try? Data(contentsOf: legacyTimelineJSONURL(for: fileURL)),
+                  let decoded = try? JSONDecoder().decode([FileTimelineSnapshot].self, from: data) {
+            history = decoded
         }
 
-        // Deduplicate if identical to latest snapshot
+        // Deduplicate if identical to latest snapshot (while allowing explicit non-Auto-Save label upgrade)
         if let latest = history.first, latest.content == content {
-            activeFileSnapshots = history
+            if label != "Auto-Save" && latest.label == "Auto-Save" {
+                history[0] = FileTimelineSnapshot(label: label, content: content)
+                if let encoded = try? JSONEncoder().encode(history) {
+                    try? encoded.write(to: storeURL, options: .atomic)
+                }
+            }
+            if currentlyLoadedFileCanonicalPath == nil || currentlyLoadedFileCanonicalPath == canonical {
+                activeFileSnapshots = history
+            }
             return
         }
 
@@ -72,10 +98,18 @@ public final class FileTimelineAndArchiveService: ObservableObject {
         if let encoded = try? JSONEncoder().encode(history) {
             try? encoded.write(to: storeURL, options: .atomic)
         }
-        activeFileSnapshots = history
+        if currentlyLoadedFileCanonicalPath == nil || currentlyLoadedFileCanonicalPath == canonical {
+            activeFileSnapshots = history
+        }
     }
 
     private func timelineJSONURL(for fileURL: URL) -> URL {
+        let digest = SHA256.hash(data: Data(canonicalPath(for: fileURL).utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return storageRoot.appendingPathComponent("\(hex).json")
+    }
+
+    private func legacyTimelineJSONURL(for fileURL: URL) -> URL {
         let key = Data(fileURL.standardizedFileURL.path.utf8)
             .base64EncodedString()
             .replacingOccurrences(of: "/", with: "_")
@@ -85,9 +119,16 @@ public final class FileTimelineAndArchiveService: ObservableObject {
     }
 
     // MARK: - Export & Import Project .zip
-    public func exportProjectZip(workspaceRoot: URL) -> URL? {
+    public func exportProjectZip(workspaceRoot: URL, preferredArchiveName: String? = nil) -> URL? {
         let fm = FileManager.default
-        let projectName = workspaceRoot.lastPathComponent.isEmpty ? "3012Project" : workspaceRoot.lastPathComponent
+        let candidateName = (preferredArchiveName?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
+            $0.isEmpty ? nil : $0
+        } ?? workspaceRoot.lastPathComponent
+        let sanitized = candidateName
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let projectName = (sanitized.isEmpty || sanitized.hasPrefix(".")) ? "3012Project" : sanitized
         let destZip = fm.temporaryDirectory.appendingPathComponent("\(projectName).zip")
         if fm.fileExists(atPath: destZip.path) {
             try? fm.removeItem(at: destZip)
@@ -271,12 +312,17 @@ public final class FileTimelineAndArchiveService: ObservableObject {
 
     private func purgeMacOSArchiveJunk(in directory: URL) {
         let fm = FileManager.default
-        if let items = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey]) {
+        if let items = try? fm.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+        ) {
             for item in items {
                 let name = item.lastPathComponent
+                let vals = try? item.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                if vals?.isSymbolicLink == true { continue }
                 if name == "__MACOSX" || name == ".DS_Store" {
                     try? fm.removeItem(at: item)
-                } else if (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false {
+                } else if vals?.isDirectory ?? false {
                     purgeMacOSArchiveJunk(in: item)
                 }
             }

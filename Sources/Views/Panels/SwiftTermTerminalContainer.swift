@@ -98,6 +98,11 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         private var activeREPL: String? = nil
         private var isExecutingAsyncCommand: Bool = false
         private var utf8Accumulator: [UInt8] = []
+        private var escapeBuffer: [UInt8] = []
+        private var isCollectingEscape: Bool = false
+        private var lastWasCR: Bool = false
+        private var pendingCommands: [String] = []
+        private var isDrainingCommands: Bool = false
         private var sessionEnv: [String: String] = [
             "OS": "iOS_NonJB_Sandbox",
             "SHELL": "3012-Workstation-Shell",
@@ -303,76 +308,127 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         // MARK: - Local Interactive Line Discipline
         @MainActor
         private func handleLocalShellBytes(_ bytes: [UInt8], in tv: TerminalView) {
-            if bytes == [0x03] { // Ctrl+C
-                localLineBuffer = ""
-                if let repl = activeREPL {
-                    activeREPL = nil
-                    tv.feed(text: "^C\r\nLeft \(repl) interactive CLI.\r\n")
-                } else {
-                    tv.feed(text: "^C\r\n")
-                }
-                printLocalPrompt()
-                return
-            }
-            if bytes == [0x04] { // Ctrl+D
-                if let repl = activeREPL {
-                    activeREPL = nil
-                    localLineBuffer = ""
-                    tv.feed(text: "\r\nExited \(repl) REPL.\r\n")
-                    printLocalPrompt()
-                }
-                return
-            }
-            if bytes == [0x0C] { // Ctrl+L
-                tv.feed(text: "\u{001B}[2J\u{001B}[H")
-                printLocalPrompt()
-                tv.feed(text: localLineBuffer)
-                return
-            }
-            if bytes == [0x09] { // Tab completion
-                handleTabCompletion(in: tv)
-                return
-            }
-            if bytes == [0x1B, 0x5B, 0x41] { // Up arrow
-                guard !commandHistory.isEmpty else { return }
-                historyCursor = max(0, historyCursor - 1)
-                replaceCurrentInput(with: commandHistory[historyCursor], in: tv)
-                return
-            }
-            if bytes == [0x1B, 0x5B, 0x42] { // Down arrow
-                guard !commandHistory.isEmpty else { return }
-                historyCursor = min(commandHistory.count, historyCursor + 1)
-                let nextCmd = historyCursor < commandHistory.count ? commandHistory[historyCursor] : ""
-                replaceCurrentInput(with: nextCmd, in: tv)
-                return
-            }
-
             for b in bytes {
-                if b == 13 || b == 10 { // Enter
+                if isCollectingEscape {
+                    escapeBuffer.append(b)
+                    if escapeBuffer.count == 2 {
+                        if b == 0x5B || b == 0x4F { // CSI '[' or SS3 'O'
+                            continue
+                        }
+                        // Alt+key or standalone ESC sequence
+                        isCollectingEscape = false
+                        escapeBuffer.removeAll()
+                        continue
+                    }
+                    let second = escapeBuffer[1]
+                    if second == 0x5B {
+                        // CSI sequence ends at 0x40...0x7E
+                        if (b >= 0x40 && b <= 0x7E) || escapeBuffer.count >= 24 {
+                            let seq = escapeBuffer
+                            isCollectingEscape = false
+                            escapeBuffer.removeAll()
+                            if seq == [0x1B, 0x5B, 0x41] { // Up arrow
+                                guard !commandHistory.isEmpty else { continue }
+                                historyCursor = max(0, historyCursor - 1)
+                                replaceCurrentInput(with: commandHistory[historyCursor], in: tv)
+                            } else if seq == [0x1B, 0x5B, 0x42] { // Down arrow
+                                guard !commandHistory.isEmpty else { continue }
+                                historyCursor = min(commandHistory.count, historyCursor + 1)
+                                let nextCmd = historyCursor < commandHistory.count ? commandHistory[historyCursor] : ""
+                                replaceCurrentInput(with: nextCmd, in: tv)
+                            }
+                        }
+                        continue
+                    } else if second == 0x4F {
+                        let seq = escapeBuffer
+                        isCollectingEscape = false
+                        escapeBuffer.removeAll()
+                        if seq == [0x1B, 0x4F, 0x41] {
+                            guard !commandHistory.isEmpty else { continue }
+                            historyCursor = max(0, historyCursor - 1)
+                            replaceCurrentInput(with: commandHistory[historyCursor], in: tv)
+                        } else if seq == [0x1B, 0x4F, 0x42] {
+                            guard !commandHistory.isEmpty else { continue }
+                            historyCursor = min(commandHistory.count, historyCursor + 1)
+                            let nextCmd = historyCursor < commandHistory.count ? commandHistory[historyCursor] : ""
+                            replaceCurrentInput(with: nextCmd, in: tv)
+                        }
+                        continue
+                    }
+                }
+
+                if b == 0x1B { // ESC
+                    lastWasCR = false
+                    utf8Accumulator.removeAll()
+                    isCollectingEscape = true
+                    escapeBuffer = [0x1B]
+                    continue
+                }
+                if b == 0x03 { // Ctrl+C
+                    lastWasCR = false
+                    utf8Accumulator.removeAll()
+                    localLineBuffer = ""
+                    pendingCommands.removeAll()
+                    if let repl = activeREPL {
+                        activeREPL = nil
+                        tv.feed(text: "^C\r\nLeft \(repl) interactive CLI.\r\n")
+                    } else {
+                        tv.feed(text: "^C\r\n")
+                    }
+                    printLocalPrompt()
+                    continue
+                }
+                if b == 0x04 { // Ctrl+D
+                    lastWasCR = false
+                    if let repl = activeREPL {
+                        activeREPL = nil
+                        localLineBuffer = ""
+                        tv.feed(text: "\r\nExited \(repl) REPL.\r\n")
+                        printLocalPrompt()
+                    }
+                    continue
+                }
+                if b == 0x0C { // Ctrl+L
+                    lastWasCR = false
+                    tv.feed(text: "\u{001B}[2J\u{001B}[H")
+                    printLocalPrompt()
+                    tv.feed(text: localLineBuffer)
+                    continue
+                }
+                if b == 0x09 { // Tab completion
+                    lastWasCR = false
+                    handleTabCompletion(in: tv)
+                    continue
+                }
+
+                if b == 13 || b == 10 { // Enter (\r or \n; coalesce \r\n)
+                    if b == 10 && lastWasCR {
+                        lastWasCR = false
+                        continue
+                    }
+                    lastWasCR = (b == 13)
+                    utf8Accumulator.removeAll()
                     tv.feed(text: "\r\n")
                     let cmd = localLineBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
                     localLineBuffer = ""
                     guard !cmd.isEmpty else {
-                        printLocalPrompt()
+                        if !isDrainingCommands && pendingCommands.isEmpty {
+                            printLocalPrompt()
+                        }
                         continue
                     }
                     commandHistory.append(cmd)
                     historyCursor = commandHistory.count
-
-                    Task { @MainActor [weak self, weak tv] in
-                        guard let self, let tv else { return }
-                        self.isExecutingAsyncCommand = true
-                        await self.dispatchEnteredLine(cmd, in: tv)
-                        self.isExecutingAsyncCommand = false
-                        self.printLocalPrompt()
-                    }
+                    enqueueLocalCommand(cmd, in: tv)
                 } else if b == 127 || b == 8 { // Backspace
+                    lastWasCR = false
                     utf8Accumulator.removeAll()
                     if !localLineBuffer.isEmpty {
                         localLineBuffer.removeLast()
                         tv.feed(text: "\u{08} \u{08}")
                     }
                 } else if b >= 32 {
+                    lastWasCR = false
                     if b < 0x80 && utf8Accumulator.isEmpty {
                         let ch = String(UnicodeScalar(b))
                         localLineBuffer.append(ch)
@@ -388,6 +444,27 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                         }
                     }
                 }
+            }
+        }
+
+        @MainActor
+        private func enqueueLocalCommand(_ cmd: String, in tv: TerminalView) {
+            pendingCommands.append(cmd)
+            guard !isDrainingCommands else { return }
+            isDrainingCommands = true
+            isExecutingAsyncCommand = true
+
+            Task { @MainActor [weak self, weak tv] () -> Void in
+                guard let self, let tv else { return }
+                defer {
+                    self.isDrainingCommands = false
+                    self.isExecutingAsyncCommand = false
+                }
+                while !self.pendingCommands.isEmpty {
+                    let nextCmd = self.pendingCommands.removeFirst()
+                    await self.dispatchEnteredLine(nextCmd, in: tv)
+                }
+                self.printLocalPrompt()
             }
         }
 
@@ -744,15 +821,25 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             case "rm", "del", "erase", "rmdir", "rd", "remove-item":
                 let paths = args.filter { !$0.hasPrefix("-") && !($0.hasPrefix("/") && $0.count <= 3) }
                 guard !paths.isEmpty else { emit("usage: \(cmd) <target>\n"); return }
+                let canonRoot = WorkspaceManager.canonicalPath(parent.workspace.rootURL)
                 for p in paths {
-                    let target = resolvePath(p, cwd: cwd)
+                    let trimmedP = p.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmedP == "." || trimmedP == ".." || trimmedP == "/" || trimmedP == "~" {
+                        emit("\u{001B}[31m\(cmd): refusing to remove protected path '\(p)'\u{001B}[0m\n")
+                        continue
+                    }
+                    let target = resolvePath(trimmedP, cwd: cwd)
+                    let canonTarget = WorkspaceManager.canonicalPath(target)
+                    guard canonTarget != canonRoot && canonTarget.hasPrefix(canonRoot + "/") else {
+                        emit("\u{001B}[31m\(cmd): refusing to remove path outside Workspace '\(p)'\u{001B}[0m\n")
+                        continue
+                    }
                     if fm.fileExists(atPath: target.path) {
-                        try? fm.removeItem(at: target)
+                        parent.workspace.deleteItem(at: target)
                     } else {
                         emit("\u{001B}[31m\(cmd): cannot remove '\(p)': No such file or directory\u{001B}[0m\n")
                     }
                 }
-                parent.workspace.reloadTree()
 
             case "cp", "copy", "xcopy", "mv", "move", "ren", "rename":
                 let paths = args.filter { !$0.hasPrefix("-") && !($0.hasPrefix("/") && $0.count <= 3) }

@@ -14,15 +14,32 @@ public final class ProCodingAccessoryBar: UIInputView {
 
     private var hasActiveCompletion: Bool = false
     private weak var tabButton: UIButton?
+    private var selectionAnchor: Int? = nil
     private var isSelectionMode: Bool = false {
         didSet {
             selectButton?.backgroundColor = isSelectionMode ? UIColor.systemBlue : UIColor.white.withAlphaComponent(0.12)
+            if isSelectionMode {
+                if let tv = targetTextView {
+                    let maxLen = (tv.text as NSString).length
+                    selectionAnchor = clampRange(tv.selectedRange, maxLength: maxLen).location
+                }
+            } else {
+                selectionAnchor = nil
+            }
         }
     }
     private weak var selectButton: UIButton?
+    private weak var compactToggleButton: UIButton?
+    private weak var rowDividerView: UIView?
+    private weak var row2ScrollView: UIScrollView?
+    private var isCompactBar: Bool = UserDefaults.standard.bool(forKey: "3012.compactCodingBar")
     private var accumulatedX: CGFloat = 0
     private var accumulatedY: CGFloat = 0
     private let feedback = UIImpactFeedbackGenerator(style: .light)
+
+    public override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: isCompactBar ? 36 : 64)
+    }
 
     public func setHasActiveCompletion(_ active: Bool) {
         hasActiveCompletion = active
@@ -32,12 +49,15 @@ public final class ProCodingAccessoryBar: UIInputView {
     }
 
     public init() {
-        super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 80), inputViewStyle: .keyboard)
+        let compact = UserDefaults.standard.bool(forKey: "3012.compactCodingBar")
+        super.init(frame: CGRect(x: 0, y: 0, width: 320, height: compact ? 36 : 64), inputViewStyle: .keyboard)
+        self.allowsSelfSizing = true
         setupUI()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        self.allowsSelfSizing = true
         setupUI()
     }
 
@@ -54,8 +74,9 @@ public final class ProCodingAccessoryBar: UIInputView {
         rowDivider.translatesAutoresizingMaskIntoConstraints = false
         rowDivider.backgroundColor = UIColor.white.withAlphaComponent(0.08)
         addSubview(rowDivider)
+        self.rowDividerView = rowDivider
 
-        // Row 1: Undo / Redo / Copy / Paste / Cut / Select / Arrows / Home / End / Trackpad + Fixed Hide Keyboard
+        // Row 1: Undo / Redo / Copy / Paste / Cut / Select / Arrows / Home / End / Trackpad + Slim/Expand & Hide Keyboard
         let row1Scroll = UIScrollView()
         row1Scroll.translatesAutoresizingMaskIntoConstraints = false
         row1Scroll.showsHorizontalScrollIndicator = false
@@ -69,6 +90,21 @@ public final class ProCodingAccessoryBar: UIInputView {
         row1Stack.alignment = .center
         row1Scroll.addSubview(row1Stack)
 
+        let compactBtn = makeActionButton(
+            title: nil,
+            systemIcon: isCompactBar ? "chevron.up" : "chevron.down",
+            accent: false
+        ) { [weak self] in
+            guard let self else { return }
+            self.feedback.impactOccurred()
+            self.isCompactBar.toggle()
+            UserDefaults.standard.set(self.isCompactBar, forKey: "3012.compactCodingBar")
+            self.applyCompactState(reloadKeyboard: true)
+        }
+        compactBtn.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(compactBtn)
+        self.compactToggleButton = compactBtn
+
         let hideKBButton = makeActionButton(title: nil, systemIcon: "keyboard.chevron.compact.down", accent: false) { [weak self] in
             self?.targetTextView?.resignFirstResponder()
         }
@@ -81,6 +117,7 @@ public final class ProCodingAccessoryBar: UIInputView {
         row2Scroll.showsHorizontalScrollIndicator = false
         row2Scroll.alwaysBounceHorizontal = true
         addSubview(row2Scroll)
+        self.row2ScrollView = row2Scroll
 
         let row2Stack = UIStackView()
         row2Stack.translatesAutoresizingMaskIntoConstraints = false
@@ -96,14 +133,19 @@ public final class ProCodingAccessoryBar: UIInputView {
             topBorder.heightAnchor.constraint(equalToConstant: 0.5),
 
             hideKBButton.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -6),
-            hideKBButton.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            hideKBButton.widthAnchor.constraint(equalToConstant: 36),
-            hideKBButton.heightAnchor.constraint(equalToConstant: 32),
+            hideKBButton.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            hideKBButton.widthAnchor.constraint(equalToConstant: 34),
+            hideKBButton.heightAnchor.constraint(equalToConstant: 29),
+
+            compactBtn.trailingAnchor.constraint(equalTo: hideKBButton.leadingAnchor, constant: -4),
+            compactBtn.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            compactBtn.widthAnchor.constraint(equalToConstant: 28),
+            compactBtn.heightAnchor.constraint(equalToConstant: 29),
 
             row1Scroll.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 6),
-            row1Scroll.trailingAnchor.constraint(equalTo: hideKBButton.leadingAnchor, constant: -6),
+            row1Scroll.trailingAnchor.constraint(equalTo: compactBtn.leadingAnchor, constant: -5),
             row1Scroll.topAnchor.constraint(equalTo: topAnchor, constant: 1),
-            row1Scroll.heightAnchor.constraint(equalToConstant: 38),
+            row1Scroll.heightAnchor.constraint(equalToConstant: 32),
 
             row1Stack.leadingAnchor.constraint(equalTo: row1Scroll.contentLayoutGuide.leadingAnchor),
             row1Stack.trailingAnchor.constraint(equalTo: row1Scroll.contentLayoutGuide.trailingAnchor),
@@ -119,7 +161,7 @@ public final class ProCodingAccessoryBar: UIInputView {
             row2Scroll.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 6),
             row2Scroll.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -6),
             row2Scroll.topAnchor.constraint(equalTo: rowDivider.bottomAnchor),
-            row2Scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row2Scroll.heightAnchor.constraint(equalToConstant: 30.5),
 
             row2Stack.leadingAnchor.constraint(equalTo: row2Scroll.contentLayoutGuide.leadingAnchor),
             row2Stack.trailingAnchor.constraint(equalTo: row2Scroll.contentLayoutGuide.trailingAnchor),
@@ -127,6 +169,8 @@ public final class ProCodingAccessoryBar: UIInputView {
             row2Stack.bottomAnchor.constraint(equalTo: row2Scroll.contentLayoutGuide.bottomAnchor),
             row2Stack.heightAnchor.constraint(equalTo: row2Scroll.frameLayoutGuide.heightAnchor)
         ])
+
+        applyCompactState(reloadKeyboard: false)
 
         // MARK: Populate Row 1 — Quick Undo/Redo, Copy/Paste/Cut, Arrows & Trackpad
         let undoBtn = makeActionButton(title: nil, systemIcon: "arrow.uturn.backward", accent: false) { [weak self] in
@@ -163,10 +207,10 @@ public final class ProCodingAccessoryBar: UIInputView {
         let rightArrow = makeRepeatableArrowButton(systemIcon: "arrow.right") { [weak self] in
             self?.triggerQuick(.moveRight, haptic: false)
         }
-        let homeBtn = makeActionButton(title: nil, systemIcon: "arrow.left.to.line.compact", accent: false) { [weak self] in
+        let homeBtn = makeActionButton(title: nil, systemIcon: "arrow.left.to.line", accent: false) { [weak self] in
             self?.triggerQuick(.moveLineStart)
         }
-        let endBtn = makeActionButton(title: nil, systemIcon: "arrow.right.to.line.compact", accent: false) { [weak self] in
+        let endBtn = makeActionButton(title: nil, systemIcon: "arrow.right.to.line", accent: false) { [weak self] in
             self?.triggerQuick(.moveLineEnd)
         }
         let selectAllBtn = makeActionButton(title: "All", systemIcon: nil, accent: false) { [weak self] in
@@ -191,8 +235,14 @@ public final class ProCodingAccessoryBar: UIInputView {
             if self.onAcceptPrimaryCompletion?() == true {
                 return
             }
-            let spaces = String(repeating: " ", count: self.tabWidthProvider?() ?? 2)
-            tv.insertText(spaces)
+            let lang = self.languageProvider?() ?? .plainText
+            let indentText: String
+            if lang == .go || lang == .makefile {
+                indentText = "\t"
+            } else {
+                indentText = String(repeating: " ", count: max(1, self.tabWidthProvider?() ?? 2))
+            }
+            tv.insertText(indentText)
             self.onAfterProgrammaticEdit?(tv)
         }
         self.tabButton = tabBtn
@@ -266,7 +316,15 @@ public final class ProCodingAccessoryBar: UIInputView {
             feedback.impactOccurred()
         }
         let lang = languageProvider?() ?? .plainText
-        let mutated = Self.performAction(kind, on: tv, isSelectionMode: isSelectionMode, language: lang)
+        var anchorCopy = selectionAnchor
+        let mutated = Self.performAction(
+            kind,
+            on: tv,
+            isSelectionMode: isSelectionMode,
+            selectionAnchor: &anchorCopy,
+            language: lang
+        )
+        selectionAnchor = isSelectionMode ? anchorCopy : nil
         if mutated {
             onAfterProgrammaticEdit?(tv)
         }
@@ -280,6 +338,25 @@ public final class ProCodingAccessoryBar: UIInputView {
         on tv: TextView,
         isSelectionMode: Bool = false,
         language: CodeLanguage = .plainText
+    ) -> Bool {
+        var ignoredAnchor: Int? = nil
+        return performAction(
+            kind,
+            on: tv,
+            isSelectionMode: isSelectionMode,
+            selectionAnchor: &ignoredAnchor,
+            language: language
+        )
+    }
+
+    @MainActor
+    @discardableResult
+    private static func performAction(
+        _ kind: EditorQuickActionKind,
+        on tv: TextView,
+        isSelectionMode: Bool,
+        selectionAnchor: inout Int?,
+        language: CodeLanguage
     ) -> Bool {
         switch kind {
         case .undo:
@@ -297,6 +374,7 @@ public final class ProCodingAccessoryBar: UIInputView {
             return performCut(in: tv)
         case .selectAll:
             let len = (tv.text as NSString).length
+            selectionAnchor = isSelectionMode ? 0 : nil
             tv.selectedRange = NSRange(location: 0, length: len)
             return false
         case .duplicateLine:
@@ -310,22 +388,22 @@ public final class ProCodingAccessoryBar: UIInputView {
         case .moveLineDown:
             return performMoveLine(in: tv, down: true)
         case .moveLeft:
-            moveCursorHorizontally(in: tv, offset: -1, isSelectionMode: isSelectionMode)
+            moveCursorHorizontally(in: tv, offset: -1, isSelectionMode: isSelectionMode, selectionAnchor: &selectionAnchor)
             return false
         case .moveRight:
-            moveCursorHorizontally(in: tv, offset: 1, isSelectionMode: isSelectionMode)
+            moveCursorHorizontally(in: tv, offset: 1, isSelectionMode: isSelectionMode, selectionAnchor: &selectionAnchor)
             return false
         case .moveUp:
-            moveCursorVertically(in: tv, down: false, isSelectionMode: isSelectionMode)
+            moveCursorVertically(in: tv, down: false, isSelectionMode: isSelectionMode, selectionAnchor: &selectionAnchor)
             return false
         case .moveDown:
-            moveCursorVertically(in: tv, down: true, isSelectionMode: isSelectionMode)
+            moveCursorVertically(in: tv, down: true, isSelectionMode: isSelectionMode, selectionAnchor: &selectionAnchor)
             return false
         case .moveLineStart:
-            moveCursorToLineEdge(in: tv, toEnd: false, isSelectionMode: isSelectionMode)
+            moveCursorToLineEdge(in: tv, toEnd: false, isSelectionMode: isSelectionMode, selectionAnchor: &selectionAnchor)
             return false
         case .moveLineEnd:
-            moveCursorToLineEdge(in: tv, toEnd: true, isSelectionMode: isSelectionMode)
+            moveCursorToLineEdge(in: tv, toEnd: true, isSelectionMode: isSelectionMode, selectionAnchor: &selectionAnchor)
             return false
         }
     }
@@ -616,7 +694,7 @@ public final class ProCodingAccessoryBar: UIInputView {
 
         NSLayoutConstraint.activate([
             pill.widthAnchor.constraint(equalToConstant: 82),
-            pill.heightAnchor.constraint(equalToConstant: 32),
+            pill.heightAnchor.constraint(equalToConstant: 29),
             row.centerXAnchor.constraint(equalTo: pill.centerXAnchor),
             row.centerYAnchor.constraint(equalTo: pill.centerYAnchor)
         ])
@@ -645,14 +723,18 @@ public final class ProCodingAccessoryBar: UIInputView {
             while abs(accumulatedX) >= stepX {
                 let delta = accumulatedX > 0 ? 1 : -1
                 accumulatedX -= CGFloat(delta) * stepX
-                Self.moveCursorHorizontally(in: tv, offset: delta, isSelectionMode: isSelectionMode)
+                var anchorCopy = selectionAnchor
+                Self.moveCursorHorizontally(in: tv, offset: delta, isSelectionMode: isSelectionMode, selectionAnchor: &anchorCopy)
+                selectionAnchor = isSelectionMode ? anchorCopy : nil
                 feedback.impactOccurred()
             }
 
             while abs(accumulatedY) >= stepY {
                 let goingDown = accumulatedY > 0
                 accumulatedY -= (goingDown ? 1 : -1) * stepY
-                Self.moveCursorVertically(in: tv, down: goingDown, isSelectionMode: isSelectionMode)
+                var anchorCopy = selectionAnchor
+                Self.moveCursorVertically(in: tv, down: goingDown, isSelectionMode: isSelectionMode, selectionAnchor: &anchorCopy)
+                selectionAnchor = isSelectionMode ? anchorCopy : nil
                 feedback.impactOccurred()
             }
         default:
@@ -660,8 +742,60 @@ public final class ProCodingAccessoryBar: UIInputView {
         }
     }
 
+    private func applyCompactState(reloadKeyboard: Bool) {
+        rowDividerView?.isHidden = isCompactBar
+        row2ScrollView?.isHidden = isCompactBar
+        let iconName = isCompactBar ? "chevron.up" : "chevron.down"
+        compactToggleButton?.setImage(
+            UIImage(systemName: iconName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 11.5, weight: .semibold)),
+            for: .normal
+        )
+        invalidateIntrinsicContentSize()
+        frame.size.height = isCompactBar ? 36 : 64
+        setNeedsLayout()
+        layoutIfNeeded()
+        if reloadKeyboard {
+            targetTextView?.reloadInputViews()
+        }
+    }
+
+    private static func lineUsableLength(in nsText: NSString, lineRange: NSRange) -> Int {
+        guard lineRange.length > 0 else { return 0 }
+        let lineEnd = lineRange.location + lineRange.length
+        if lineRange.length >= 2, lineEnd <= nsText.length {
+            let tail2 = nsText.substring(with: NSRange(location: lineEnd - 2, length: 2))
+            if tail2 == "\r\n" { return max(0, lineRange.length - 2) }
+        }
+        if lineEnd <= nsText.length {
+            let lastChar = nsText.substring(with: NSRange(location: lineEnd - 1, length: 1))
+            if lastChar == "\n" || lastChar == "\r" { return max(0, lineRange.length - 1) }
+        }
+        return lineRange.length
+    }
+
+    private static func alignedComposedLocation(_ loc: Int, in nsText: NSString) -> Int {
+        let clamped = min(max(0, loc), nsText.length)
+        guard clamped > 0 && clamped < nsText.length else { return clamped }
+        let seq = nsText.rangeOfComposedCharacterSequence(at: clamped)
+        return seq.location
+    }
+
+    private static func resolvedActiveEdge(in range: NSRange, anchor: inout Int?) -> Int {
+        let a = anchor ?? range.location
+        anchor = a
+        if range.length == 0 {
+            return range.location
+        }
+        return range.location < a ? range.location : (range.location + range.length)
+    }
+
     @MainActor
-    private static func moveCursorHorizontally(in tv: TextView, offset: Int, isSelectionMode: Bool) {
+    private static func moveCursorHorizontally(
+        in tv: TextView,
+        offset: Int,
+        isSelectionMode: Bool,
+        selectionAnchor: inout Int?
+    ) {
         let ns = tv.text as NSString
         let totalLen = ns.length
         let current = clampRange(tv.selectedRange, maxLength: totalLen)
@@ -680,14 +814,14 @@ public final class ProCodingAccessoryBar: UIInputView {
         }
 
         if isSelectionMode {
-            let curEnd = current.location + current.length
+            let curEnd = resolvedActiveEdge(in: current, anchor: &selectionAnchor)
+            let anchor = min(max(0, selectionAnchor ?? current.location), totalLen)
             let newEnd = stepComposedLocation(from: curEnd, delta: offset)
-            if newEnd >= current.location {
-                tv.selectedRange = NSRange(location: current.location, length: newEnd - current.location)
-            } else {
-                tv.selectedRange = NSRange(location: newEnd, length: current.location - newEnd)
-            }
+            let start = min(anchor, newEnd)
+            let length = abs(newEnd - anchor)
+            tv.selectedRange = NSRange(location: start, length: length)
         } else {
+            selectionAnchor = nil
             let base = offset > 0 ? (current.location + current.length) : current.location
             let nextLoc = stepComposedLocation(from: base, delta: offset)
             tv.selectedRange = NSRange(location: nextLoc, length: 0)
@@ -696,12 +830,17 @@ public final class ProCodingAccessoryBar: UIInputView {
     }
 
     @MainActor
-    private static func moveCursorVertically(in tv: TextView, down: Bool, isSelectionMode: Bool) {
+    private static func moveCursorVertically(
+        in tv: TextView,
+        down: Bool,
+        isSelectionMode: Bool,
+        selectionAnchor: inout Int?
+    ) {
         let nsText = tv.text as NSString
         let totalLen = nsText.length
         guard totalLen > 0 else { return }
         let safeSel = clampRange(tv.selectedRange, maxLength: totalLen)
-        let pos = safeSel.location
+        let pos = isSelectionMode ? resolvedActiveEdge(in: safeSel, anchor: &selectionAnchor) : safeSel.location
         let currentLineRange = nsText.lineRange(for: NSRange(location: pos, length: 0))
         let colOffset = pos - currentLineRange.location
 
@@ -709,49 +848,62 @@ public final class ProCodingAccessoryBar: UIInputView {
         if down {
             let nextLineStart = currentLineRange.location + currentLineRange.length
             guard nextLineStart < totalLen else {
-                applyVerticalMove(in: tv, to: totalLen, isSelectionMode: isSelectionMode)
+                applyVerticalMove(in: tv, to: totalLen, isSelectionMode: isSelectionMode, selectionAnchor: &selectionAnchor)
                 return
             }
             let nextLineRange = nsText.lineRange(for: NSRange(location: nextLineStart, length: 0))
-            let hasNewline = nextLineRange.length > 0 && nsText.substring(with: NSRange(location: nextLineRange.location + nextLineRange.length - 1, length: 1)) == "\n"
-            let usableLen = hasNewline ? max(0, nextLineRange.length - 1) : nextLineRange.length
+            let usableLen = lineUsableLength(in: nsText, lineRange: nextLineRange)
             targetLocation = nextLineRange.location + min(colOffset, usableLen)
         } else {
             guard currentLineRange.location > 0 else {
-                applyVerticalMove(in: tv, to: 0, isSelectionMode: isSelectionMode)
+                applyVerticalMove(in: tv, to: 0, isSelectionMode: isSelectionMode, selectionAnchor: &selectionAnchor)
                 return
             }
             let prevLineRange = nsText.lineRange(for: NSRange(location: currentLineRange.location - 1, length: 0))
-            let hasNewline = prevLineRange.length > 0 && nsText.substring(with: NSRange(location: prevLineRange.location + prevLineRange.length - 1, length: 1)) == "\n"
-            let usableLen = hasNewline ? max(0, prevLineRange.length - 1) : prevLineRange.length
+            let usableLen = lineUsableLength(in: nsText, lineRange: prevLineRange)
             targetLocation = prevLineRange.location + min(colOffset, usableLen)
         }
-        applyVerticalMove(in: tv, to: min(max(0, targetLocation), totalLen), isSelectionMode: isSelectionMode)
+        let aligned = alignedComposedLocation(targetLocation, in: nsText)
+        applyVerticalMove(in: tv, to: aligned, isSelectionMode: isSelectionMode, selectionAnchor: &selectionAnchor)
     }
 
     @MainActor
-    private static func moveCursorToLineEdge(in tv: TextView, toEnd: Bool, isSelectionMode: Bool) {
+    private static func moveCursorToLineEdge(
+        in tv: TextView,
+        toEnd: Bool,
+        isSelectionMode: Bool,
+        selectionAnchor: inout Int?
+    ) {
         let nsText = tv.text as NSString
         let totalLen = nsText.length
         guard totalLen > 0 else { return }
         let safeSel = clampRange(tv.selectedRange, maxLength: totalLen)
-        let lineRange = nsText.lineRange(for: NSRange(location: safeSel.location, length: 0))
-        let hasNewline = lineRange.length > 0 && nsText.substring(with: NSRange(location: lineRange.location + lineRange.length - 1, length: 1)) == "\n"
-        let targetLoc = toEnd
-            ? (lineRange.location + (hasNewline ? lineRange.length - 1 : lineRange.length))
-            : lineRange.location
-        applyVerticalMove(in: tv, to: min(max(0, targetLoc), totalLen), isSelectionMode: isSelectionMode)
+        let pos = isSelectionMode ? resolvedActiveEdge(in: safeSel, anchor: &selectionAnchor) : safeSel.location
+        let lineRange = nsText.lineRange(for: NSRange(location: pos, length: 0))
+        let usableLen = lineUsableLength(in: nsText, lineRange: lineRange)
+        let targetLoc = toEnd ? (lineRange.location + usableLen) : lineRange.location
+        let aligned = alignedComposedLocation(targetLoc, in: nsText)
+        applyVerticalMove(in: tv, to: aligned, isSelectionMode: isSelectionMode, selectionAnchor: &selectionAnchor)
     }
 
     @MainActor
-    private static func applyVerticalMove(in tv: TextView, to location: Int, isSelectionMode: Bool) {
+    private static func applyVerticalMove(
+        in tv: TextView,
+        to location: Int,
+        isSelectionMode: Bool,
+        selectionAnchor: inout Int?
+    ) {
+        let totalLen = (tv.text as NSString).length
+        let clampedTarget = min(max(0, location), totalLen)
         if isSelectionMode {
-            let anchor = tv.selectedRange.location
-            let start = min(anchor, location)
-            let length = abs(location - anchor)
+            let anchor = min(max(0, selectionAnchor ?? clampRange(tv.selectedRange, maxLength: totalLen).location), totalLen)
+            selectionAnchor = anchor
+            let start = min(anchor, clampedTarget)
+            let length = abs(clampedTarget - anchor)
             tv.selectedRange = NSRange(location: start, length: length)
         } else {
-            tv.selectedRange = NSRange(location: location, length: 0)
+            selectionAnchor = nil
+            tv.selectedRange = NSRange(location: clampedTarget, length: 0)
         }
         tv.scrollRangeToVisible(tv.selectedRange)
     }
@@ -763,16 +915,16 @@ public final class ProCodingAccessoryBar: UIInputView {
         btn.tintColor = .white
         btn.layer.cornerRadius = 7
         if let systemIcon {
-            btn.setImage(UIImage(systemName: systemIcon, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12.5, weight: .semibold)), for: .normal)
+            btn.setImage(UIImage(systemName: systemIcon, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)), for: .normal)
         } else if let title {
             btn.setTitle(title, for: .normal)
-            btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
+            btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .semibold)
             btn.setTitleColor(.white, for: .normal)
         }
-        let width: CGFloat = (title?.count ?? 1) > 2 ? 42 : 34
+        let width: CGFloat = (title?.count ?? 1) > 2 ? 40 : 33
         NSLayoutConstraint.activate([
             btn.widthAnchor.constraint(equalToConstant: width),
-            btn.heightAnchor.constraint(equalToConstant: 32)
+            btn.heightAnchor.constraint(equalToConstant: 29)
         ])
         btn.addAction(UIAction { _ in action() }, for: .touchUpInside)
         return btn
@@ -784,10 +936,10 @@ public final class ProCodingAccessoryBar: UIInputView {
         btn.backgroundColor = UIColor.white.withAlphaComponent(0.14)
         btn.tintColor = .white
         btn.layer.cornerRadius = 7
-        btn.setImage(UIImage(systemName: systemIcon, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12.5, weight: .semibold)), for: .normal)
+        btn.setImage(UIImage(systemName: systemIcon, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)), for: .normal)
         NSLayoutConstraint.activate([
-            btn.widthAnchor.constraint(equalToConstant: 33),
-            btn.heightAnchor.constraint(equalToConstant: 32)
+            btn.widthAnchor.constraint(equalToConstant: 32),
+            btn.heightAnchor.constraint(equalToConstant: 29)
         ])
         return btn
     }
@@ -817,10 +969,10 @@ public final class ProCodingAccessoryBar: UIInputView {
 
         NSLayoutConstraint.activate([
             container.widthAnchor.constraint(equalToConstant: 33),
-            container.heightAnchor.constraint(equalToConstant: 32),
-            topHint.topAnchor.constraint(equalTo: container.topAnchor, constant: 1.5),
+            container.heightAnchor.constraint(equalToConstant: 29),
+            topHint.topAnchor.constraint(equalTo: container.topAnchor, constant: 1),
             topHint.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            mainLbl.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2.5),
+            mainLbl.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
             mainLbl.centerXAnchor.constraint(equalTo: container.centerXAnchor)
         ])
 

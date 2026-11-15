@@ -173,13 +173,19 @@ public struct TheosBuilderSheet: View {
                                     theosService.serverURL = TheosBuildService.defaultServerURL
                                 }
                                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                .buttonStyle(.bordered)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                                .buttonStyle(.borderless)
 
                                 Button("kaydus.xyz") {
                                     theosService.serverURL = TheosBuildService.alternateServerURL
                                 }
                                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                .buttonStyle(.bordered)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                                .buttonStyle(.borderless)
 
                                 Spacer()
 
@@ -187,7 +193,11 @@ public struct TheosBuilderSheet: View {
                                     Task { await theosService.checkServerHealth() }
                                 }
                                 .font(.system(size: 11.5, weight: .bold))
-                                .buttonStyle(.borderedProminent)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8))
+                                .buttonStyle(.borderless)
                             }
                         }
 

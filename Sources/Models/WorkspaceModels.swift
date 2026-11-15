@@ -227,7 +227,7 @@ public enum CodeLanguage: String, CaseIterable, Identifiable, Codable {
         case .javascript, .typescript, .tsx, .graphql:
             return "curlybraces.square"
         case .json, .json5, .yaml, .toml, .ini, .protobuf:
-            return "ellipsis.curlybraces"
+            return "curlybraces"
         case .python, .ruby, .perl, .lua, .php:
             return "terminal"
         case .c, .cpp, .objectiveC, .rust, .zig, .dlang, .assembly:
@@ -243,7 +243,7 @@ public enum CodeLanguage: String, CaseIterable, Identifiable, Codable {
         case .sql:
             return "cylinder.split.1x2"
         case .shell, .fish, .powershell, .makefile, .cmake:
-            return "apple.terminal"
+            return "terminal.fill"
         case .markdown, .latex:
             return "doc.plaintext"
         case .diff:
@@ -419,7 +419,7 @@ public enum CodeLanguage: String, CaseIterable, Identifiable, Codable {
         case "json5": return .json5
         case "yaml", "yml": return .yaml
         case "toml": return .toml
-        case "xml", "svg", "plist", "csproj", "fsproj", "vbproj", "xaml", "AndroidManifest": return .xml
+        case "xml", "svg", "plist", "csproj", "fsproj", "vbproj", "xaml", "androidmanifest": return .xml
         case "proto": return .protobuf
         case "ini", "cfg", "conf", "properties", "env": return .ini
 
@@ -441,13 +441,37 @@ public enum CodeLanguage: String, CaseIterable, Identifiable, Codable {
         }
 
         // Layer 3: Shebang & Content Signature Sniffing (when extensionless or unknown)
-        let sample: String? = contentSample ?? (try? String(contentsOf: url, encoding: .utf8)).map { String($0.prefix(1200)) }
+        let sample: String?
+        if let provided = contentSample {
+            sample = provided
+        } else {
+            sample = readSamplePrefix(from: url, maxBytes: 1200)
+        }
         if let sample {
             if let detected = sniffContentLanguage(sample) {
                 return detected
             }
         }
         return .plainText
+    }
+
+    private static func readSamplePrefix(from url: URL, maxBytes: Int) -> String? {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue else {
+            return nil
+        }
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return nil
+        }
+        defer { try? handle.close() }
+        let data: Data
+        if #available(iOS 13.4, *) {
+            data = (try? handle.read(upToCount: maxBytes)) ?? Data()
+        } else {
+            data = handle.readData(ofLength: maxBytes)
+        }
+        guard !data.isEmpty else { return nil }
+        return String(decoding: data, as: UTF8.self)
     }
 
     public static func sniffContentLanguage(_ sample: String) -> CodeLanguage? {
@@ -769,11 +793,8 @@ public struct FileNode: Identifiable, Hashable {
     public let name: String
     public let isDirectory: Bool
     public let isDeletedGhost: Bool
+    public let language: CodeLanguage
     public var children: [FileNode]?
-
-    public var language: CodeLanguage {
-        CodeLanguage.detect(from: url)
-    }
 
     public init(url: URL, isDirectory: Bool, isDeletedGhost: Bool = false, children: [FileNode]? = nil) {
         self.id = isDeletedGhost ? "deleted::\(url.path)" : url.path
@@ -781,6 +802,7 @@ public struct FileNode: Identifiable, Hashable {
         self.name = url.lastPathComponent
         self.isDirectory = isDirectory
         self.isDeletedGhost = isDeletedGhost
+        self.language = (isDirectory || isDeletedGhost) ? .plainText : CodeLanguage.detect(from: url)
         self.children = children
     }
 }

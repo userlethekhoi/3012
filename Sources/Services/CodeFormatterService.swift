@@ -13,7 +13,11 @@ public enum CodeFormatterService {
     ) async -> String {
         if let ssh = sshService, ssh.isConnected, let remoteCmd = vpsFormatterCommand(for: language, code: code) {
             let res = await ssh.executeCommandOnVPS(remoteCmd)
-            if !res.isEmpty && !res.hasPrefix("[Process exited") && !res.hasPrefix("[SSH Error]") {
+            let trimmedCheck = res.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedCheck.isEmpty
+                && !trimmedCheck.hasPrefix("[Process exited")
+                && !trimmedCheck.hasPrefix("[SSH Error]")
+                && !trimmedCheck.hasPrefix("Chưa kết nối") {
                 return res
             }
         }
@@ -77,18 +81,34 @@ public enum CodeFormatterService {
 
     // MARK: - 1. JSON / JSONC Formatter
     private static func formatJSON(_ code: String, tabWidth: Int) -> String {
+        let indentWidth = max(tabWidth, 2)
         if let data = code.data(using: .utf8),
            let obj = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
-           let prettyData = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+           JSONSerialization.isValidJSONObject(obj),
+           let prettyData = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted]),
            let pretty = String(data: prettyData, encoding: .utf8) {
-            if tabWidth == 2 {
-                // Foundation uses 2 or 4 spaces depending on OS; normalize leading indent if 4->2
-                return pretty + "\n"
+            let lines = pretty.components(separatedBy: "\n")
+            let baseUnit = lines.compactMap { line -> Int? in
+                let trimmed = line.drop(while: { $0 == " " })
+                guard !trimmed.isEmpty else { return nil }
+                let spaces = line.count - trimmed.count
+                return spaces > 0 ? spaces : nil
+            }.min() ?? 2
+
+            if baseUnit != indentWidth && baseUnit > 0 {
+                let reindented = lines.map { line -> String in
+                    let body = line.drop(while: { $0 == " " })
+                    let leadingSpaces = line.count - body.count
+                    guard leadingSpaces > 0 else { return line }
+                    let level = max(1, Int(round(Double(leadingSpaces) / Double(baseUnit))))
+                    return String(repeating: " ", count: level * indentWidth) + body
+                }.joined(separator: "\n")
+                return reindented + "\n"
             }
             return pretty + "\n"
         }
-        // Fallback for JSONC / JSON5 with comments
-        return formatBraceLanguage(code, indentUnit: String(repeating: " ", count: max(tabWidth, 2)), language: .json5)
+        // Fallback for scalar JSON literals or JSONC / JSON5 with comments
+        return formatBraceLanguage(code, indentUnit: String(repeating: " ", count: indentWidth), language: .json5)
     }
 
     // MARK: - 2. HTML / XML / Vue / Svelte / Astro Hierarchical Tag Formatter
@@ -177,30 +197,116 @@ public enum CodeFormatterService {
                 depth = max(0, depth + lineDelta)
             }
         }
+        if inScriptOrStyle && !embeddedLines.isEmpty {
+            let subFormatted = formatBraceLanguage(
+                embeddedLines.joined(separator: "\n"),
+                indentUnit: unit,
+                language: embeddedIsCSS ? .css : .javascript
+            )
+            let basePrefix = String(repeating: unit, count: depth)
+            for subLine in subFormatted.components(separatedBy: "\n") {
+                let cleanSub = subLine.trimmingCharacters(in: .newlines)
+                out.append(cleanSub.isEmpty ? "" : basePrefix + cleanSub)
+            }
+        }
         return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
     }
 
     // MARK: - 3. SQL Smart Keyword & Clause Formatter
     private static func formatSQL(_ code: String, tabWidth: Int) -> String {
-        let keywords: [String] = [
-            "SELECT", "FROM", "WHERE", "INSERT INTO", "VALUES", "UPDATE", "SET", "DELETE FROM",
-            "CREATE TABLE", "ALTER TABLE", "DROP TABLE", "PRIMARY KEY", "FOREIGN KEY",
-            "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "OUTER JOIN", "JOIN", "ON",
-            "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET", "UNION", "DISTINCT",
-            "AND", "OR", "NOT", "NULL", "AS", "COUNT", "SUM", "AVG", "MIN", "MAX"
+        let singleKeywords: Set<String> = [
+            "SELECT", "FROM", "WHERE", "VALUES", "UPDATE", "SET",
+            "JOIN", "ON", "HAVING", "LIMIT", "OFFSET", "UNION", "DISTINCT",
+            "AND", "OR", "NOT", "NULL", "AS", "COUNT", "SUM", "AVG", "MIN", "MAX",
+            "INTO", "INSERT", "DELETE", "CREATE", "ALTER", "DROP", "TABLE",
+            "PRIMARY", "FOREIGN", "KEY", "LEFT", "RIGHT", "INNER", "OUTER", "GROUP", "ORDER", "BY"
         ]
-        var result = code
-        for kw in keywords {
-            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: kw) + "\\b"
-            if let rx = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
-                result = rx.stringByReplacingMatches(
-                    in: result,
-                    range: NSRange(location: 0, length: (result as NSString).length),
-                    withTemplate: kw
-                )
-            }
+        let chars = Array(code)
+        var out = ""
+        out.reserveCapacity(chars.count)
+        var i = 0
+        var quoteChar: Character? = nil
+        var inLineComment = false
+        var inBlockComment = false
+
+        func isIdentChar(_ ch: Character) -> Bool {
+            ch.isLetter || ch.isNumber || ch == "_"
         }
-        return formatBraceLanguage(result, indentUnit: String(repeating: " ", count: max(tabWidth, 2)), language: .sql)
+
+        while i < chars.count {
+            let c = chars[i]
+            if inLineComment {
+                out.append(c)
+                if c == "\n" { inLineComment = false }
+                i += 1
+                continue
+            }
+            if inBlockComment {
+                out.append(c)
+                if c == "*" && i + 1 < chars.count && chars[i + 1] == "/" {
+                    out.append("/")
+                    inBlockComment = false
+                    i += 2
+                    continue
+                }
+                i += 1
+                continue
+            }
+            if let q = quoteChar {
+                out.append(c)
+                if c == q {
+                    if i + 1 < chars.count && chars[i + 1] == q {
+                        out.append(q)
+                        i += 2
+                        continue
+                    }
+                    quoteChar = nil
+                } else if c == "\\" && i + 1 < chars.count {
+                    out.append(chars[i + 1])
+                    i += 2
+                    continue
+                }
+                i += 1
+                continue
+            }
+
+            if c == "-" && i + 1 < chars.count && chars[i + 1] == "-" {
+                out.append("--")
+                inLineComment = true
+                i += 2
+                continue
+            }
+            if c == "/" && i + 1 < chars.count && chars[i + 1] == "*" {
+                out.append("/*")
+                inBlockComment = true
+                i += 2
+                continue
+            }
+            if c == "'" || c == "\"" || c == "`" {
+                out.append(c)
+                quoteChar = c
+                i += 1
+                continue
+            }
+            if isIdentChar(c) {
+                var end = i + 1
+                while end < chars.count && isIdentChar(chars[end]) {
+                    end += 1
+                }
+                let word = String(chars[i..<end])
+                let upper = word.uppercased()
+                if singleKeywords.contains(upper) {
+                    out.append(upper)
+                } else {
+                    out.append(word)
+                }
+                i = end
+                continue
+            }
+            out.append(c)
+            i += 1
+        }
+        return formatBraceLanguage(out, indentUnit: String(repeating: " ", count: max(tabWidth, 2)), language: .sql)
     }
 
     // MARK: - 4. Significant Indentation Normalizer (Python / YAML / Nim / Elm / Haskell)
@@ -235,10 +341,27 @@ public enum CodeFormatterService {
     private static func formatBraceLanguage(_ code: String, indentUnit: String, language: CodeLanguage) -> String {
         var depth = 0
         var inBlockComment = false
+        var inTripleQuote = false
+        var inBacktick = false
         var out: [String] = []
         var blankRun = 0
 
         for rawLine in code.components(separatedBy: "\n") {
+            if inTripleQuote || inBacktick {
+                out.append(rawLine)
+                let state = scanBraceDelta(
+                    in: rawLine,
+                    language: language,
+                    initiallyInBlockComment: false,
+                    initiallyInTripleQuote: inTripleQuote,
+                    initiallyInBacktick: inBacktick
+                )
+                inTripleQuote = state.inTripleQuote
+                inBacktick = state.inBacktick
+                depth = max(0, depth + state.opens - state.closes)
+                continue
+            }
+
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty {
                 blankRun += 1
@@ -250,7 +373,7 @@ public enum CodeFormatterService {
             blankRun = 0
 
             // Preprocessor directives in C/C++/Obj-C stay at column 0 (or standard indent)
-            if (language == .c || language == .cpp || language == .objectiveC) && trimmed.hasPrefix("#") {
+            if !inBlockComment && (language == .c || language == .cpp || language == .objectiveC) && trimmed.hasPrefix("#") {
                 out.append(trimmed)
                 continue
             }
@@ -258,9 +381,17 @@ public enum CodeFormatterService {
             if inBlockComment {
                 let prefix = String(repeating: indentUnit, count: depth)
                 out.append(prefix + (trimmed.hasPrefix("*") ? " " + trimmed : trimmed))
-                if trimmed.contains("*/") {
-                    inBlockComment = false
-                }
+                let state = scanBraceDelta(
+                    in: trimmed,
+                    language: language,
+                    initiallyInBlockComment: true,
+                    initiallyInTripleQuote: false,
+                    initiallyInBacktick: false
+                )
+                inBlockComment = state.inBlockComment
+                inTripleQuote = state.inTripleQuote
+                inBacktick = state.inBacktick
+                depth = max(0, depth + state.opens - state.closes)
                 continue
             }
 
@@ -290,9 +421,17 @@ public enum CodeFormatterService {
             out.append(String(repeating: indentUnit, count: lineDepth) + spacedLine)
 
             // Lexically scan line ignoring strings and comments to compute exact net brace change
-            let (opens, closes, endedInBlockComment) = scanBraceDelta(in: spacedLine, language: language)
-            inBlockComment = endedInBlockComment
-            let adjustedNet = opens - closes
+            let state = scanBraceDelta(
+                in: spacedLine,
+                language: language,
+                initiallyInBlockComment: false,
+                initiallyInTripleQuote: false,
+                initiallyInBacktick: false
+            )
+            inBlockComment = state.inBlockComment
+            inTripleQuote = state.inTripleQuote
+            inBacktick = state.inBacktick
+            let adjustedNet = state.opens - state.closes
             depth = max(0, depth + adjustedNet)
         }
 
@@ -320,12 +459,20 @@ public enum CodeFormatterService {
         return result
     }
 
-    private static func scanBraceDelta(in line: String, language: CodeLanguage) -> (opens: Int, closes: Int, inBlockComment: Bool) {
+    private static func scanBraceDelta(
+        in line: String,
+        language: CodeLanguage,
+        initiallyInBlockComment: Bool = false,
+        initiallyInTripleQuote: Bool = false,
+        initiallyInBacktick: Bool = false
+    ) -> (opens: Int, closes: Int, inBlockComment: Bool, inTripleQuote: Bool, inBacktick: Bool) {
         let chars = Array(line)
         var i = 0
         var opens = 0
         var closes = 0
-        var inBlock = false
+        var inBlock = initiallyInBlockComment
+        var inTriple = initiallyInTripleQuote
+        var inBacktick = initiallyInBacktick
         var quote: Character? = nil
 
         while i < chars.count {
@@ -335,6 +482,30 @@ public enum CodeFormatterService {
                     inBlock = false
                     i += 2
                     continue
+                }
+                i += 1
+                continue
+            }
+            if inTriple {
+                if c == "\\" {
+                    i += 2
+                    continue
+                }
+                if c == "\"" && i + 2 < chars.count && chars[i + 1] == "\"" && chars[i + 2] == "\"" {
+                    inTriple = false
+                    i += 3
+                    continue
+                }
+                i += 1
+                continue
+            }
+            if inBacktick {
+                if c == "\\" && language != .go {
+                    i += 2
+                    continue
+                }
+                if c == "`" {
+                    inBacktick = false
                 }
                 i += 1
                 continue
@@ -360,8 +531,36 @@ public enum CodeFormatterService {
             if (language == .shell || language == .hcl || language == .perl || language == .r || language == .julia) && c == "#" {
                 break
             }
-            if c == "\"" || c == "'" || c == "`" {
-                quote = c
+            if c == "\"" && i + 2 < chars.count && chars[i + 1] == "\"" && chars[i + 2] == "\"" {
+                inTriple = true
+                i += 3
+                continue
+            }
+            if c == "`" {
+                inBacktick = true
+                i += 1
+                continue
+            }
+            if c == "'" {
+                if language == .rust {
+                    // Only skip actual char literals ('a' or '\n'); preserve Rust lifetimes ('a, 'static)
+                    if i + 2 < chars.count && chars[i + 2] == "'" && chars[i + 1] != "\\" {
+                        i += 3
+                        continue
+                    } else if i + 1 < chars.count && chars[i + 1] == "\\" {
+                        quote = "'"
+                        i += 1
+                        continue
+                    }
+                    i += 1
+                    continue
+                }
+                quote = "'"
+                i += 1
+                continue
+            }
+            if c == "\"" {
+                quote = "\""
                 i += 1
                 continue
             }
@@ -372,7 +571,7 @@ public enum CodeFormatterService {
             }
             i += 1
         }
-        return (opens, closes, inBlock)
+        return (opens, closes, inBlock, inTriple, inBacktick)
     }
 
     // MARK: - 6. Keyword-Block Formatter (Ruby / Lua / Elixir / Shell / Fish / Pascal / CMake)
@@ -446,27 +645,27 @@ public enum CodeFormatterService {
         let b64 = Data(code.utf8).base64EncodedString()
         switch language {
         case .c, .cpp, .objectiveC, .csharp, .java, .protobuf, .solidity:
-            return "command -v clang-format >/dev/null 2>&1 && echo '\(b64)' | base64 -d | clang-format"
+            return "command -v clang-format >/dev/null 2>&1 && echo '\(b64)' | base64 -d | clang-format 2>/dev/null"
         case .python:
-            return "(command -v black >/dev/null 2>&1 && echo '\(b64)' | base64 -d | black -q -) || (command -v autopep8 >/dev/null 2>&1 && echo '\(b64)' | base64 -d | autopep8 -)"
+            return "(command -v black >/dev/null 2>&1 && echo '\(b64)' | base64 -d | black -q - 2>/dev/null) || (command -v autopep8 >/dev/null 2>&1 && echo '\(b64)' | base64 -d | autopep8 - 2>/dev/null)"
         case .go:
-            return "command -v gofmt >/dev/null 2>&1 && echo '\(b64)' | base64 -d | gofmt"
+            return "command -v gofmt >/dev/null 2>&1 && echo '\(b64)' | base64 -d | gofmt 2>/dev/null"
         case .rust:
-            return "command -v rustfmt >/dev/null 2>&1 && echo '\(b64)' | base64 -d | rustfmt"
+            return "command -v rustfmt >/dev/null 2>&1 && echo '\(b64)' | base64 -d | rustfmt 2>/dev/null"
         case .zig:
-            return "command -v zig >/dev/null 2>&1 && echo '\(b64)' | base64 -d | zig fmt --stdin"
+            return "command -v zig >/dev/null 2>&1 && echo '\(b64)' | base64 -d | zig fmt --stdin 2>/dev/null"
         case .dart:
-            return "command -v dart >/dev/null 2>&1 && echo '\(b64)' | base64 -d | dart format"
+            return "command -v dart >/dev/null 2>&1 && echo '\(b64)' | base64 -d | dart format 2>/dev/null"
         case .swift:
-            return "command -v swift-format >/dev/null 2>&1 && echo '\(b64)' | base64 -d | swift-format"
+            return "command -v swift-format >/dev/null 2>&1 && echo '\(b64)' | base64 -d | swift-format 2>/dev/null"
         case .shell:
-            return "command -v shfmt >/dev/null 2>&1 && echo '\(b64)' | base64 -d | shfmt -i 2"
+            return "command -v shfmt >/dev/null 2>&1 && echo '\(b64)' | base64 -d | shfmt -i 2 2>/dev/null"
         case .hcl:
-            return "command -v terraform >/dev/null 2>&1 && echo '\(b64)' | base64 -d | terraform fmt -"
+            return "command -v terraform >/dev/null 2>&1 && echo '\(b64)' | base64 -d | terraform fmt - 2>/dev/null"
         case .nix:
-            return "command -v nixfmt >/dev/null 2>&1 && echo '\(b64)' | base64 -d | nixfmt"
+            return "command -v nixfmt >/dev/null 2>&1 && echo '\(b64)' | base64 -d | nixfmt 2>/dev/null"
         case .html, .css, .scss, .javascript, .typescript, .tsx, .vue, .svelte, .astro, .yaml, .markdown, .graphql:
-            return "command -v prettier >/dev/null 2>&1 && echo '\(b64)' | base64 -d | prettier --stdin-filepath index.\(language.defaultExtension)"
+            return "command -v prettier >/dev/null 2>&1 && echo '\(b64)' | base64 -d | prettier --stdin-filepath index.\(language.defaultExtension) 2>/dev/null"
         default:
             return nil
         }

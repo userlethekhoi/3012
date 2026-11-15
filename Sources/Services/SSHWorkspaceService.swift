@@ -85,6 +85,47 @@ private final class TunnelInboundBridgeHandler: ChannelInboundHandler, @unchecke
     }
 }
 
+private final class TunnelConnectionStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var connectionsByPort: [UInt16: [ObjectIdentifier: NWConnection]] = [:]
+
+    func add(_ conn: NWConnection, forPort port: UInt16) {
+        let id = ObjectIdentifier(conn)
+        lock.lock()
+        var map = connectionsByPort[port] ?? [:]
+        map[id] = conn
+        connectionsByPort[port] = map
+        lock.unlock()
+    }
+
+    func remove(_ conn: NWConnection, forPort port: UInt16) {
+        let id = ObjectIdentifier(conn)
+        lock.lock()
+        connectionsByPort[port]?[id] = nil
+        if connectionsByPort[port]?.isEmpty == true {
+            connectionsByPort[port] = nil
+        }
+        lock.unlock()
+    }
+
+    func cancelAll(forPort port: UInt16) {
+        lock.lock()
+        let conns = connectionsByPort.removeValue(forKey: port)?.values
+        lock.unlock()
+        conns?.forEach { $0.cancel() }
+    }
+
+    func cancelAll() {
+        lock.lock()
+        let maps = Array(connectionsByPort.values)
+        connectionsByPort.removeAll()
+        lock.unlock()
+        for map in maps {
+            map.values.forEach { $0.cancel() }
+        }
+    }
+}
+
 @MainActor
 public final class SSHWorkspaceService: ObservableObject {
     @Published public var savedProfiles: [VPSHostProfile] = [] {
@@ -105,6 +146,7 @@ public final class SSHWorkspaceService: ObservableObject {
     private var ptyTask: Task<Void, Never>?
     private var ptyStdinWriter: TTYStdinWriter?
     private var tunnelListeners: [UInt16: NWListener] = [:]
+    private let tunnelConnectionStore = TunnelConnectionStore()
     private let tunnelQueue = DispatchQueue(label: "com.dev.app3012.sshtunnel", qos: .userInitiated)
 
     // Mapping from local cached file URL -> remote SFTP path so Editor tabs sync automatically on Save!
@@ -175,7 +217,9 @@ public final class SSHWorkspaceService: ObservableObject {
             listener.cancel()
         }
         tunnelListeners.removeAll()
+        tunnelConnectionStore.cancelAll()
         activeTunnels.removeAll()
+        remoteFileBindings.removeAll()
 
         if let sftp = sftpClient {
             try? await sftp.close()
@@ -333,14 +377,59 @@ public final class SSHWorkspaceService: ObservableObject {
         }
     }
 
+    public func uploadDataViaSFTP(data: Data, remotePath: String) async throws {
+        guard let sftp = sftpClient else {
+            throw NSError(domain: "SSHWorkspaceService", code: 503, userInfo: [NSLocalizedDescriptionKey: "Chưa kết nối SFTP tới VPS."])
+        }
+        var buf = ByteBufferAllocator().buffer(capacity: data.count)
+        buf.writeBytes(data)
+        let finalBuf = buf
+        try await sftp.withFile(filePath: remotePath, flags: [.write, .create, .truncate]) { file in
+            try await file.write(finalBuf)
+        }
+    }
+
+    public func downloadDataViaSFTP(remotePath: String, maxBytes: Int = 128 * 1024 * 1024) async throws -> Data {
+        guard let sftp = sftpClient else {
+            throw NSError(domain: "SSHWorkspaceService", code: 503, userInfo: [NSLocalizedDescriptionKey: "Chưa kết nối SFTP tới VPS."])
+        }
+        let buffer = try await sftp.withFile(filePath: remotePath, flags: .read) { file in
+            if maxBytes > 0, let attrs = try? await file.readAttributes(), let size = attrs.size, size > UInt64(maxBytes) {
+                throw NSError(domain: "SSHWorkspaceService", code: 413, userInfo: [NSLocalizedDescriptionKey: "File vượt quá giới hạn \(maxBytes) bytes (\(size) bytes)."])
+            }
+            return try await file.readAll()
+        }
+        let data = Data(buffer.readableBytesView)
+        if maxBytes > 0, data.count > maxBytes {
+            throw NSError(domain: "SSHWorkspaceService", code: 413, userInfo: [NSLocalizedDescriptionKey: "File vượt quá giới hạn \(maxBytes) bytes (\(data.count) bytes)."])
+        }
+        return data
+    }
+
     // MARK: - Remote Command & Zero-Config VPS Code Runner
     public func executeCommandOnVPS(_ command: String) async -> String {
         guard let client = sshClient else {
             return "Chưa kết nối SSH tới VPS."
         }
+        let marker = "__3012_EXIT:"
+        let wrapped = "(\n\(command)\n); printf '\\n\(marker)%d__' $?"
         do {
-            let buffer = try await client.executeCommand(command, maxResponseSize: 2 * 1024 * 1024, mergeStreams: true, inShell: true)
-            return String(buffer: buffer)
+            let buffer = try await client.executeCommand(wrapped, maxResponseSize: 4 * 1024 * 1024, mergeStreams: true, inShell: true)
+            let raw = String(buffer: buffer)
+            guard let markerRange = raw.range(of: marker, options: .backwards) else {
+                return raw
+            }
+            let body = String(raw[..<markerRange.lowerBound]).trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
+            let afterMarker = raw[markerRange.upperBound...]
+            let codeStr = afterMarker.prefix { $0.isNumber || $0 == "-" }
+            let exitCode = Int(codeStr) ?? 0
+            if exitCode == 0 {
+                return body
+            }
+            if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "[Process exited with code \(exitCode)]"
+            }
+            return "\(body)\n[Process exited with code \(exitCode)]"
         } catch let failed as SSHClient.CommandFailed {
             return "[Process exited with code \(failed.exitCode)]"
         } catch {
@@ -350,8 +439,14 @@ public final class SSHWorkspaceService: ObservableObject {
 
     public func compileAndRunOnVPS(code: String, language: CodeLanguage, fileName: String, stdin: String) async -> String {
         guard sshClient != nil else { return "Not connected" }
-        let safeFile = fileName.replacingOccurrences(of: " ", with: "_")
-        let workDir = "/tmp/3012_runner"
+        let rawBase = URL(fileURLWithPath: fileName).lastPathComponent
+        let sanitized = String(rawBase.map { ch -> Character in
+            if ch.isASCII && (ch.isLetter || ch.isNumber || ch == "." || ch == "_" || ch == "-") {
+                return ch
+            }
+            return "_"
+        })
+        let safeFile = (sanitized.isEmpty || sanitized == "." || sanitized == "..") ? "main.txt" : sanitized
         let b64Code = Data(code.utf8).base64EncodedString()
         let b64Stdin = Data(stdin.utf8).base64EncodedString()
 
@@ -416,7 +511,9 @@ public final class SSHWorkspaceService: ObservableObject {
         }
 
         let fullScript = """
-        mkdir -p \(workDir) && cd \(workDir) && \
+        WORK_DIR="$(mktemp -d /tmp/3012_runner.XXXXXX)" && \
+        trap 'rm -rf "$WORK_DIR"' EXIT && \
+        cd "$WORK_DIR" && \
         echo '\(b64Code)' | base64 -d > '\(safeFile)' && \
         echo '\(b64Stdin)' | base64 -d > stdin.txt && \
         (\(runCmd)) 2>&1
@@ -506,29 +603,44 @@ public final class SSHWorkspaceService: ObservableObject {
         guard let nwPort = NWEndpoint.Port(rawValue: localPort) else { return }
 
         let queue = self.tunnelQueue
+        let connStore = self.tunnelConnectionStore
         do {
             let params = NWParameters.tcp
             params.allowLocalEndpointReuse = true
+            params.acceptLocalOnly = true
             let listener = try NWListener(using: params, on: nwPort)
 
             listener.newConnectionHandler = { nwConn in
-                nwConn.start(queue: queue)
-                Task {
-                    do {
-                        let originator = try SocketAddress(ipAddress: "127.0.0.1", port: Int(localPort))
-                        let settings = SSHChannelType.DirectTCPIP(
-                            targetHost: remoteHost,
-                            targetPort: Int(remotePort),
-                            originatorAddress: originator
-                        )
-                        let sshChannel = try await client.createDirectTCPIPChannel(using: settings) { ch in
-                            ch.pipeline.addHandler(TunnelInboundBridgeHandler(nwConnection: nwConn))
+                connStore.add(nwConn, forPort: localPort)
+                var didStart = false
+                nwConn.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        guard !didStart else { return }
+                        didStart = true
+                        Task {
+                            do {
+                                let originator = try SocketAddress(ipAddress: "127.0.0.1", port: Int(localPort))
+                                let settings = SSHChannelType.DirectTCPIP(
+                                    targetHost: remoteHost,
+                                    targetPort: Int(remotePort),
+                                    originatorAddress: originator
+                                )
+                                let sshChannel = try await client.createDirectTCPIPChannel(using: settings) { ch in
+                                    ch.pipeline.addHandler(TunnelInboundBridgeHandler(nwConnection: nwConn))
+                                }
+                                Self.pumpNWConnectionToSSHChannel(nwConn: nwConn, sshChannel: sshChannel, queue: queue)
+                            } catch {
+                                nwConn.cancel()
+                            }
                         }
-                        Self.pumpNWConnectionToSSHChannel(nwConn: nwConn, sshChannel: sshChannel, queue: queue)
-                    } catch {
-                        nwConn.cancel()
+                    case .failed, .cancelled:
+                        connStore.remove(nwConn, forPort: localPort)
+                    default:
+                        break
                     }
                 }
+                nwConn.start(queue: queue)
             }
 
             listener.start(queue: tunnelQueue)
@@ -543,6 +655,7 @@ public final class SSHWorkspaceService: ObservableObject {
     public func stopLocalPortForward(localPort: UInt16) {
         tunnelListeners[localPort]?.cancel()
         tunnelListeners.removeValue(forKey: localPort)
+        tunnelConnectionStore.cancelAll(forPort: localPort)
         activeTunnels.removeAll { $0.localPort == localPort }
     }
 
@@ -551,9 +664,21 @@ public final class SSHWorkspaceService: ObservableObject {
             if let data, !data.isEmpty {
                 var buffer = sshChannel.allocator.buffer(capacity: data.count)
                 buffer.writeBytes(data)
-                sshChannel.writeAndFlush(buffer, promise: nil)
-            }
-            if isComplete || error != nil {
+                sshChannel.writeAndFlush(buffer).whenComplete { result in
+                    switch result {
+                    case .success:
+                        if isComplete || error != nil {
+                            sshChannel.close(promise: nil)
+                            nwConn.cancel()
+                        } else {
+                            pumpNWConnectionToSSHChannel(nwConn: nwConn, sshChannel: sshChannel, queue: queue)
+                        }
+                    case .failure:
+                        sshChannel.close(promise: nil)
+                        nwConn.cancel()
+                    }
+                }
+            } else if isComplete || error != nil {
                 sshChannel.close(promise: nil)
                 nwConn.cancel()
             } else {

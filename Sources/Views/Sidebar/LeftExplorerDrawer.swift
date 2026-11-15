@@ -1,86 +1,5 @@
 import SwiftUI
-import UniformTypeIdentifiers
 import UIKit
-
-public enum WorkspaceDocumentPickerMode: String, Identifiable {
-    case singleFile
-    case folder
-    case zip
-    case themeJSON
-
-    public var id: String { rawValue }
-}
-
-public struct SystemDocumentPickerSheet: UIViewControllerRepresentable {
-    public let mode: WorkspaceDocumentPickerMode
-    public let onPickURL: (URL) -> Void
-    public let onPickURLs: (([URL]) -> Void)?
-
-    public init(
-        mode: WorkspaceDocumentPickerMode,
-        onPickURL: @escaping (URL) -> Void,
-        onPickURLs: (([URL]) -> Void)? = nil
-    ) {
-        self.mode = mode
-        self.onPickURL = onPickURL
-        self.onPickURLs = onPickURLs
-    }
-
-    public func makeCoordinator() -> Coordinator {
-        Coordinator(onPickURL: onPickURL, onPickURLs: onPickURLs)
-    }
-
-    public func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let types: [UTType]
-        let asCopy: Bool
-        switch mode {
-        case .singleFile:
-            types = [.data, .content, .text, .sourceCode]
-            asCopy = false
-        case .folder:
-            types = [.folder]
-            asCopy = false
-        case .zip:
-            types = [.zip, .archive, .data]
-            asCopy = true
-        case .themeJSON:
-            types = [.json, .data]
-            asCopy = true
-        }
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: asCopy)
-        picker.allowsMultipleSelection = (mode == .singleFile)
-        picker.shouldShowFileExtensions = true
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    public func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
-    public final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPickURL: (URL) -> Void
-        let onPickURLs: (([URL]) -> Void)?
-
-        init(onPickURL: @escaping (URL) -> Void, onPickURLs: (([URL]) -> Void)?) {
-            self.onPickURL = onPickURL
-            self.onPickURLs = onPickURLs
-        }
-
-        public func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard !urls.isEmpty else { return }
-            DispatchQueue.main.async { [onPickURL, onPickURLs] in
-                if let onPickURLs {
-                    onPickURLs(urls)
-                } else {
-                    for url in urls {
-                        onPickURL(url)
-                    }
-                }
-            }
-        }
-
-        public func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {}
-    }
-}
 
 public enum SidebarActivityTab: Int, CaseIterable, Identifiable {
     case explorer = 0
@@ -142,6 +61,7 @@ public struct LeftExplorerDrawer: View {
     @State private var newProjectName: String = ""
     @State private var targetParentDir: URL?
     @State private var renameTargetURL: URL?
+    @State private var showRenameAlert: Bool = false
     @State private var renameText: String = ""
     @State private var exportedZipURL: URL? = nil
 
@@ -168,6 +88,7 @@ public struct LeftExplorerDrawer: View {
     @State private var tunnelPortString: String = "3000"
     @State private var isProvisioningVPS: Bool = false
     @State private var provisionOutputText: String? = nil
+    @State private var cachedSSHPublicKey: String = ""
 
     // Extensions UI state
     @State private var openVSXQuery: String = "theme"
@@ -217,52 +138,60 @@ public struct LeftExplorerDrawer: View {
     }
 
     private func presentLocalPicker(_ mode: WorkspaceDocumentPickerMode) {
-        NativeDocumentPickerPresenter.shared.presentPicker(
+        onCloseDrawer()
+        NativeDocumentPickerPresenter.shared.presentResourcePicker(
             mode: mode,
-            onPickURL: { pickedURL in
+            initialDelay: 0.28,
+            onPickResources: { resources in
                 switch mode {
-                case .singleFile:
-                    workspace.openExternalSingleFile(from: pickedURL)
+                case .singleFile, .folderFilesCopy:
+                    workspace.openExternalSingleFiles(from: resources)
                     liveServer.updateRootDirectory(workspace.rootURL)
                 case .folder:
-                    workspace.switchWorkspaceFolder(to: pickedURL)
-                    liveServer.updateRootDirectory(workspace.rootURL)
+                    if let first = resources.first {
+                        workspace.switchWorkspaceFolder(to: first.url, hasSecurityScope: first.hasSecurityScope)
+                        liveServer.updateRootDirectory(workspace.rootURL)
+                    }
                 case .zip:
-                    if workspace.importAndOpenZip(from: pickedURL) {
+                    if let first = resources.first,
+                       workspace.importAndOpenZip(from: first.url, hasSecurityScope: first.hasSecurityScope) {
                         liveServer.updateRootDirectory(workspace.rootURL)
                     }
                 case .themeJSON:
                     break
                 }
-            },
-            onPickURLs: mode == .singleFile ? { pickedURLs in
-                for url in pickedURLs {
-                    workspace.openExternalSingleFile(from: url)
-                }
-                liveServer.updateRootDirectory(workspace.rootURL)
-            } : nil
+            }
         )
     }
 
     private func triggerOpenSingleFile() {
+        onCloseDrawer()
         if let onRequestOpenSingleFile {
-            onRequestOpenSingleFile()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                onRequestOpenSingleFile()
+            }
         } else {
             presentLocalPicker(.singleFile)
         }
     }
 
     private func triggerOpenFolder() {
+        onCloseDrawer()
         if let onRequestOpenFolder {
-            onRequestOpenFolder()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                onRequestOpenFolder()
+            }
         } else {
             presentLocalPicker(.folder)
         }
     }
 
     private func triggerImportZip() {
+        onCloseDrawer()
         if let onRequestImportZip {
-            onRequestImportZip()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                onRequestImportZip()
+            }
         } else {
             presentLocalPicker(.zip)
         }
@@ -486,82 +415,100 @@ public struct LeftExplorerDrawer: View {
             .background(Color(hex: palette.sidebarBackground))
         }
         // Alerts & Sheets
-        .alert(preferences.tr("Tạo File Mới", "New File"), isPresented: $showNewFileAlert) {
-            TextField(preferences.tr("Ví dụ: main.cpp, index.html, app.py", "e.g. main.cpp, index.html, app.py"), text: $newItemName)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-            Button(preferences.tr("Tạo", "Create")) {
-                workspace.createFile(named: newItemName, in: targetParentDir)
-                newItemName = ""
+        .compatibleTextInputAlert(
+            preferences.tr("Tạo File Mới", "New File"),
+            isPresented: $showNewFileAlert,
+            text: $newItemName,
+            placeholder: preferences.tr("Ví dụ: main.cpp, index.html, app.py", "e.g. main.cpp, index.html, app.py"),
+            confirmTitle: preferences.tr("Tạo", "Create"),
+            cancelTitle: preferences.tr("Hủy", "Cancel")
+        ) {
+            let created = workspace.createFile(named: newItemName, in: targetParentDir)
+            newItemName = ""
+            targetParentDir = nil
+            if created != nil {
                 onCloseDrawer()
             }
-            Button(preferences.tr("Hủy", "Cancel"), role: .cancel) { newItemName = "" }
         }
-        .alert(preferences.tr("Tạo Thư Mục Mới", "New Folder"), isPresented: $showNewFolderAlert) {
-            TextField(preferences.tr("Tên thư mục", "Folder name"), text: $newItemName)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-            Button(preferences.tr("Tạo", "Create")) {
-                workspace.createFolder(named: newItemName, in: targetParentDir)
-                newItemName = ""
+        .compatibleTextInputAlert(
+            preferences.tr("Tạo Thư Mục Mới", "New Folder"),
+            isPresented: $showNewFolderAlert,
+            text: $newItemName,
+            placeholder: preferences.tr("Tên thư mục", "Folder name"),
+            confirmTitle: preferences.tr("Tạo", "Create"),
+            cancelTitle: preferences.tr("Hủy", "Cancel")
+        ) {
+            workspace.createFolder(named: newItemName, in: targetParentDir)
+            newItemName = ""
+            targetParentDir = nil
+        }
+        .compatibleTextInputAlert(
+            preferences.tr("Đổi Tên", "Rename"),
+            isPresented: $showRenameAlert,
+            text: $renameText,
+            placeholder: preferences.tr("Tên mới", "New name"),
+            confirmTitle: preferences.tr("Lưu", "Save"),
+            cancelTitle: preferences.tr("Hủy", "Cancel")
+        ) {
+            if let url = renameTargetURL {
+                workspace.renameItem(at: url, to: renameText)
             }
-            Button(preferences.tr("Hủy", "Cancel"), role: .cancel) { newItemName = "" }
+            renameTargetURL = nil
+            showRenameAlert = false
         }
-        .alert(preferences.tr("Đổi Tên", "Rename"), isPresented: Binding(
-            get: { renameTargetURL != nil },
-            set: { if !$0 { renameTargetURL = nil } }
-        )) {
-            TextField(preferences.tr("Tên mới", "New name"), text: $renameText)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-            Button(preferences.tr("Lưu", "Save")) {
-                if let url = renameTargetURL {
-                    workspace.renameItem(at: url, to: renameText)
-                }
-                renameTargetURL = nil
-            }
-            Button(preferences.tr("Hủy", "Cancel"), role: .cancel) { renameTargetURL = nil }
-        }
-        .alert("Tạo File Trên VPS (SFTP)", isPresented: $showNewRemoteFileAlert) {
-            TextField("Ví dụ: server.cpp, app.py", text: $remoteNewName)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-            Button("Tạo & Mở") {
-                let name = remoteNewName
-                remoteNewName = ""
-                Task {
-                    if let localMirror = await sshService.createRemoteFile(named: name) {
-                        workspace.openFile(at: localMirror)
-                        onCloseDrawer()
-                    }
+        .onChange(of: showRenameAlert) { presented in
+            if !presented {
+                DispatchQueue.main.async {
+                    renameTargetURL = nil
                 }
             }
-            Button("Hủy", role: .cancel) { remoteNewName = "" }
         }
-        .alert("Tạo Thư Mục Trên VPS", isPresented: $showNewRemoteFolderAlert) {
-            TextField("Tên thư mục trên VPS", text: $remoteNewName)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-            Button("Tạo") {
-                let name = remoteNewName
-                remoteNewName = ""
-                Task { await sshService.createRemoteFolder(named: name) }
+        .compatibleTextInputAlert(
+            "Tạo File Trên VPS (SFTP)",
+            isPresented: $showNewRemoteFileAlert,
+            text: $remoteNewName,
+            placeholder: "Ví dụ: server.cpp, app.py",
+            confirmTitle: "Tạo & Mở",
+            cancelTitle: "Hủy"
+        ) {
+            let name = remoteNewName
+            remoteNewName = ""
+            Task {
+                if let localMirror = await sshService.createRemoteFile(named: name) {
+                    workspace.openFile(at: localMirror)
+                    onCloseDrawer()
+                }
             }
-            Button("Hủy", role: .cancel) { remoteNewName = "" }
         }
-        .alert(preferences.tr("Tạo Project Mới", "New Project Workspace"), isPresented: $showNewProjectAlert) {
-            TextField(preferences.tr("Tên dự án (ví dụ: MyWebApp)", "Project name (e.g. MyWebApp)"), text: $newProjectName)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-            Button(preferences.tr("Tạo & Mở", "Create & Open")) {
-                workspace.createNewProjectWorkspace(named: newProjectName)
-                liveServer.updateRootDirectory(workspace.rootURL)
-                newProjectName = ""
-            }
-            Button(preferences.tr("Hủy", "Cancel"), role: .cancel) { newProjectName = "" }
+        .compatibleTextInputAlert(
+            "Tạo Thư Mục Trên VPS",
+            isPresented: $showNewRemoteFolderAlert,
+            text: $remoteNewName,
+            placeholder: "Tên thư mục trên VPS",
+            confirmTitle: "Tạo",
+            cancelTitle: "Hủy"
+        ) {
+            let name = remoteNewName
+            remoteNewName = ""
+            Task { await sshService.createRemoteFolder(named: name) }
+        }
+        .compatibleTextInputAlert(
+            preferences.tr("Tạo Project Mới", "New Project Workspace"),
+            isPresented: $showNewProjectAlert,
+            text: $newProjectName,
+            placeholder: preferences.tr("Tên dự án (ví dụ: MyWebApp)", "Project name (e.g. MyWebApp)"),
+            confirmTitle: preferences.tr("Tạo & Mở", "Create & Open"),
+            cancelTitle: preferences.tr("Hủy", "Cancel")
+        ) {
+            workspace.createNewProjectWorkspace(named: newProjectName)
+            liveServer.updateRootDirectory(workspace.rootURL)
+            newProjectName = ""
         }
         .sheet(isPresented: $showAddVPSSheet) {
             vpsEditorSheet()
+                .onAppear {
+                    cachedSSHPublicKey = KeychainVault.generateOrLoadDeviceEd25519Key().publicKeyAuthorizedLine
+                }
         }
     }
 
@@ -592,7 +539,7 @@ public struct LeftExplorerDrawer: View {
                     Button {
                         triggerOpenSingleFile()
                     } label: {
-                        Label(preferences.tr("Mở File lẻ trên máy (File)...", "Open File on Device (File)..."), systemImage: "doc.badge.arrow.up")
+                        Label(preferences.tr("Mở File lẻ trên máy (File)...", "Open File on Device (File)..."), systemImage: "arrow.up.doc")
                     }
                     Button {
                         triggerOpenFolder()
@@ -682,7 +629,7 @@ public struct LeftExplorerDrawer: View {
                     triggerOpenSingleFile()
                 } label: {
                     HStack(spacing: 3) {
-                        Image(systemName: "doc.badge.arrow.up")
+                        Image(systemName: "arrow.up.doc")
                             .font(.system(size: 10, weight: .semibold))
                         Text(preferences.tr("Mở File", "Open File"))
                             .font(.system(size: 10, weight: .semibold))
@@ -856,6 +803,7 @@ public struct LeftExplorerDrawer: View {
                             onRename: { url in
                                 renameText = url.lastPathComponent
                                 renameTargetURL = url
+                                showRenameAlert = true
                             },
                             onDelete: { url in
                                 workspace.deleteItem(at: url)
@@ -1086,7 +1034,8 @@ public struct LeftExplorerDrawer: View {
                             gitService.githubToken = githubTokenInput
                             Task {
                                 if sshService.isConnected {
-                                    let res = await sshService.executeCommandOnVPS("cd '\(sshService.currentRemoteDirectory)' && git pull --rebase 2>&1")
+                                    let escapedDir = sshService.currentRemoteDirectory.replacingOccurrences(of: "'", with: "'\"'\"'")
+                                    let res = await sshService.executeCommandOnVPS("cd '\(escapedDir)' && git pull --rebase 2>&1")
                                     gitService.statusBanner = res
                                 } else {
                                     let ok = await gitService.pullFromGitHub(into: workspace.rootURL)
@@ -1111,8 +1060,20 @@ public struct LeftExplorerDrawer: View {
                             let msg = commitMessageInput
                             Task {
                                 if sshService.isConnected {
-                                    let res = await sshService.executeCommandOnVPS("cd '\(sshService.currentRemoteDirectory)' && git push 2>&1")
+                                    let escapedDir = sshService.currentRemoteDirectory.replacingOccurrences(of: "'", with: "'\"'\"'")
+                                    let trimmedMsg = msg.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    let cmd: String
+                                    if trimmedMsg.isEmpty {
+                                        cmd = "cd '\(escapedDir)' && git push 2>&1"
+                                    } else {
+                                        let escapedMsg = trimmedMsg.replacingOccurrences(of: "'", with: "'\"'\"'")
+                                        cmd = "cd '\(escapedDir)' && git add -A && (git commit -m '\(escapedMsg)' || true) && git push 2>&1"
+                                    }
+                                    let res = await sshService.executeCommandOnVPS(cmd)
                                     gitService.statusBanner = res
+                                    if !trimmedMsg.isEmpty {
+                                        commitMessageInput = ""
+                                    }
                                 } else {
                                     await gitService.pushToGitHubREST(workspaceRoot: workspace.rootURL, commitMessage: msg)
                                     workspace.resetDiffBaselineToCurrentDisk(with: gitService.commits.first?.snapshotFiles)
@@ -1184,6 +1145,12 @@ public struct LeftExplorerDrawer: View {
                                     await gitService.refreshStatus(workspaceRoot: workspace.rootURL, sshService: sshService)
                                 } else {
                                     await gitService.discardChanges(for: item.relativePath, workspaceRoot: workspace.rootURL)
+                                    let targetURL = workspace.rootURL.appendingPathComponent(item.relativePath)
+                                    if let tabIdx = workspace.openTabs.firstIndex(where: { WorkspaceManager.canonicalPath($0.fileURL) == WorkspaceManager.canonicalPath(targetURL) }),
+                                       let reloaded = try? String(contentsOf: targetURL, encoding: .utf8) {
+                                        workspace.openTabs[tabIdx].content = reloaded
+                                        workspace.openTabs[tabIdx].savedContent = reloaded
+                                    }
                                     workspace.reloadTree()
                                 }
                             }
@@ -1649,16 +1616,16 @@ public struct LeftExplorerDrawer: View {
                     if draftVPS.authKind == .password {
                         SecureField("Mật khẩu SSH", text: $draftVPSPassword)
                     } else {
-                        let keyInfo = KeychainVault.generateOrLoadDeviceEd25519Key()
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Public Key Ed25519 của thiết bị (Dán vào ~/.ssh/authorized_keys trên VPS):")
                                 .font(.footnote)
                                 .foregroundColor(.secondary)
-                            Text(keyInfo.publicKeyAuthorizedLine)
+                            Text(cachedSSHPublicKey.isEmpty ? KeychainVault.generateOrLoadDeviceEd25519Key().publicKeyAuthorizedLine : cachedSSHPublicKey)
                                 .font(.system(size: 10, design: .monospaced))
                                 .lineLimit(3)
                             Button {
-                                UIPasteboard.general.string = keyInfo.publicKeyAuthorizedLine
+                                let pubKey = cachedSSHPublicKey.isEmpty ? KeychainVault.generateOrLoadDeviceEd25519Key().publicKeyAuthorizedLine : cachedSSHPublicKey
+                                UIPasteboard.general.string = pubKey
                             } label: {
                                 Label("Copy SSH Public Key", systemImage: "doc.on.doc")
                             }
@@ -1763,14 +1730,9 @@ private struct FileNodeRow: View {
                         }
                     } else {
                         if node.isDeletedGhost {
-                            Button {
-                                onRestoreDeleted(node.url)
-                            } label: {
-                                Image(systemName: "arrow.uturn.backward")
-                                    .font(.system(size: 9.5, weight: .bold))
-                                    .foregroundColor(itemTitleColor)
-                            }
-                            .buttonStyle(.plain)
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundColor(itemTitleColor)
                         }
 
                         if let badge = itemDiffStatus.badgeText {

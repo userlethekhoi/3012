@@ -127,7 +127,10 @@ public final class LiveServerService: ObservableObject {
         let now = Date()
         recentRemoteViewers[host] = now
         recentRemoteViewers = recentRemoteViewers.filter { now.timeIntervalSince($0.value) < 25 }
-        sharedViewerCount = recentRemoteViewers.count
+        let updatedCount = recentRemoteViewers.count
+        if sharedViewerCount != updatedCount {
+            sharedViewerCount = updatedCount
+        }
     }
 
     public func start(serving directory: URL, preferredPort: UInt16 = 5500, keepAliveInBackground: Bool = true) {
@@ -144,14 +147,16 @@ public final class LiveServerService: ObservableObject {
 
     private func tryStartListener(on candidatePort: UInt16, attemptsRemaining: Int, keepAlive: Bool) {
         guard let nwPort = NWEndpoint.Port(rawValue: candidatePort) else { return }
+        listener?.cancel()
+        listener = nil
         do {
             let params = NWParameters.tcp
             params.allowLocalEndpointReuse = true
             let newListener = try NWListener(using: params, on: nwPort)
 
-            newListener.stateUpdateHandler = { [weak self] state in
+            newListener.stateUpdateHandler = { [weak self, weak newListener] state in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, let newListener, self.listener === newListener else { return }
                     switch state {
                     case .ready:
                         self.port = candidatePort
@@ -160,8 +165,11 @@ public final class LiveServerService: ObservableObject {
                         self.updateBackgroundKeepAlive(enabled: keepAlive)
                     case .failed:
                         newListener.cancel()
+                        if self.listener === newListener {
+                            self.listener = nil
+                        }
                         self.isRunning = false
-                        if attemptsRemaining > 0 {
+                        if attemptsRemaining > 0 && candidatePort < 65535 {
                             self.tryStartListener(on: candidatePort + 1, attemptsRemaining: attemptsRemaining - 1, keepAlive: keepAlive)
                         }
                     default:
@@ -181,7 +189,7 @@ public final class LiveServerService: ObservableObject {
             self.listener = newListener
             newListener.start(queue: serverQueue)
         } catch {
-            if attemptsRemaining > 0 {
+            if attemptsRemaining > 0 && candidatePort < 65535 {
                 tryStartListener(on: candidatePort + 1, attemptsRemaining: attemptsRemaining - 1, keepAlive: keepAlive)
             }
         }
@@ -276,7 +284,7 @@ public final class LiveServerService: ObservableObject {
         accumulated: Data,
         completion: @escaping @Sendable (Data?) -> Void
     ) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] chunk, _, isComplete, _ in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] chunk, _, isComplete, error in
             guard let self else {
                 completion(nil)
                 return
@@ -284,6 +292,10 @@ public final class LiveServerService: ObservableObject {
             var buffer = accumulated
             if let chunk {
                 buffer.append(chunk)
+            }
+            if error != nil || ((chunk == nil || chunk?.isEmpty == true) && isComplete) {
+                completion(buffer.isEmpty ? nil : buffer)
+                return
             }
             let headerEnd = Data("\r\n\r\n".utf8)
             if buffer.range(of: headerEnd) != nil || buffer.count >= 65536 || isComplete {
@@ -306,7 +318,7 @@ public final class LiveServerService: ObservableObject {
                 <p>Chủ dự án đã tắt liên kết chia sẻ Live Server trên ứng dụng 3012 iOS.</p>
                 </body></html>
                 """
-                let resp = Self.buildHTTPResponse(status: "403 Forbidden", contentType: "text/html; charset=utf-8", body: Data(deniedHTML.utf8))
+                let resp = Self.buildHTTPResponse(status: "403 Forbidden", contentType: "text/html; charset=utf-8", body: Data(deniedHTML.utf8), allowCORS: isLocalOwner)
                 connection.start(queue: serverQueue)
                 connection.send(content: resp, completion: .contentProcessed { _ in connection.cancel() })
                 return
@@ -314,13 +326,28 @@ public final class LiveServerService: ObservableObject {
             shareBox.registerNonLoopback(connection)
         }
 
+        let timeoutWorkItem = DispatchWorkItem { [weak self, weak connection] () -> Void in
+            guard let connection else { return }
+            self?.shareBox.unregister(connection)
+            connection.cancel()
+        }
+        serverQueue.asyncAfter(deadline: .now() + 10, execute: timeoutWorkItem)
+
         connection.start(queue: serverQueue)
         receiveHTTPRequest(on: connection, accumulated: Data()) { [weak self] data in
+            timeoutWorkItem.cancel()
             guard let self else {
                 connection.cancel()
                 return
             }
-            guard let data, let requestText = String(data: data, encoding: .utf8) else {
+            guard let data else {
+                self.shareBox.unregister(connection)
+                connection.cancel()
+                return
+            }
+            let headerEndMarker = Data("\r\n\r\n".utf8)
+            let headerData = data.range(of: headerEndMarker).map { data[..<$0.lowerBound] } ?? data[...]
+            guard let requestText = String(data: headerData, encoding: .utf8) else {
                 self.shareBox.unregister(connection)
                 connection.cancel()
                 return
@@ -328,7 +355,7 @@ public final class LiveServerService: ObservableObject {
 
             if !isLocalOwner {
                 if !self.shareBox.enabled {
-                    let resp = Self.buildHTTPResponse(status: "403 Forbidden", contentType: "text/plain", body: Data("403 Sharing Disabled".utf8))
+                    let resp = Self.buildHTTPResponse(status: "403 Forbidden", contentType: "text/plain", body: Data("403 Sharing Disabled".utf8), allowCORS: isLocalOwner)
                     connection.send(content: resp, completion: .contentProcessed { _ in
                         self.shareBox.unregister(connection)
                         connection.cancel()
@@ -351,8 +378,16 @@ public final class LiveServerService: ObservableObject {
             // Optional 4-digit PIN gate for external shared viewers (owner 127.0.0.1 always bypasses)
             let requiredPIN = self.shareBox.pinCode
             if !isLocalOwner && !requiredPIN.isEmpty {
-                let cookieHeader = lines.first(where: { $0.lowercased().hasPrefix("cookie:") }) ?? ""
-                let hasValidCookie = cookieHeader.contains("3012_pin=\(requiredPIN)")
+                let expectedToken = "3012_pin=\(requiredPIN)"
+                let hasValidCookie = lines.contains { line in
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    guard trimmed.lowercased().hasPrefix("cookie:") else { return false }
+                    let rawCookies = String(trimmed.dropFirst("cookie:".count))
+                    return rawCookies
+                        .split(separator: ";")
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .contains(expectedToken)
+                }
                 let queryPIN = Self.extractQueryValue(named: "pin", from: queryStr)
 
                 if pathOnly == "/__3012_auth" || queryPIN == requiredPIN {
@@ -360,7 +395,7 @@ public final class LiveServerService: ObservableObject {
                         let redirHeaders = [
                             "HTTP/1.1 302 Found",
                             "Location: /",
-                            "Set-Cookie: 3012_pin=\(requiredPIN); Path=/; SameSite=Lax",
+                            "Set-Cookie: 3012_pin=\(requiredPIN); Path=/; HttpOnly; SameSite=Lax",
                             "Content-Length: 0",
                             "Connection: close",
                             "",
@@ -376,7 +411,7 @@ public final class LiveServerService: ObservableObject {
 
                 if !hasValidCookie {
                     let pinHTML = Self.buildPinGateHTML(wrongAttempt: queryPIN != nil && !queryPIN!.isEmpty)
-                    let resp = Self.buildHTTPResponse(status: "401 Unauthorized", contentType: "text/html; charset=utf-8", body: Data(pinHTML.utf8))
+                    let resp = Self.buildHTTPResponse(status: "401 Unauthorized", contentType: "text/html; charset=utf-8", body: Data(pinHTML.utf8), allowCORS: isLocalOwner)
                     connection.send(content: resp, completion: .contentProcessed { _ in
                         self.shareBox.unregister(connection)
                         connection.cancel()
@@ -387,7 +422,7 @@ public final class LiveServerService: ObservableObject {
 
             if pathOnly == "/__3012_version" {
                 let body = Data("\(self.versionBox.value)".utf8)
-                let response = Self.buildHTTPResponse(status: "200 OK", contentType: "text/plain; charset=utf-8", body: body)
+                let response = Self.buildHTTPResponse(status: "200 OK", contentType: "text/plain; charset=utf-8", body: body, allowCORS: isLocalOwner)
                 connection.send(content: response, completion: .contentProcessed { _ in
                     self.shareBox.unregister(connection)
                     connection.cancel()
@@ -396,7 +431,7 @@ public final class LiveServerService: ObservableObject {
             }
 
             guard let rootDir = self.rootBox.url else {
-                let resp = Self.buildHTTPResponse(status: "503 Service Unavailable", contentType: "text/plain", body: Data("Workspace not mounted".utf8))
+                let resp = Self.buildHTTPResponse(status: "503 Service Unavailable", contentType: "text/plain", body: Data("Workspace not mounted".utf8), allowCORS: isLocalOwner)
                 connection.send(content: resp, completion: .contentProcessed { _ in
                     self.shareBox.unregister(connection)
                     connection.cancel()
@@ -405,6 +440,19 @@ public final class LiveServerService: ObservableObject {
             }
 
             let decodedPath = pathOnly.removingPercentEncoding ?? pathOnly
+            let hasForbiddenDotfile = decodedPath
+                .split(separator: "/", omittingEmptySubsequences: true)
+                .contains { $0.hasPrefix(".") && $0 != ".well-known" }
+            if hasForbiddenDotfile {
+                let forbidden = Data("403 Forbidden".utf8)
+                let resp = Self.buildHTTPResponse(status: "403 Forbidden", contentType: "text/plain", body: forbidden, allowCORS: isLocalOwner)
+                connection.send(content: resp, completion: .contentProcessed { _ in
+                    self.shareBox.unregister(connection)
+                    connection.cancel()
+                })
+                return
+            }
+
             let relative = decodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
             // Prevent path traversal outside workspace root (resolving /var vs /private/var symlinks)
@@ -416,7 +464,7 @@ public final class LiveServerService: ObservableObject {
             let isWithinRoot = (targetURL.path == rootPath) || targetURL.path.hasPrefix(rootPath.hasSuffix("/") ? rootPath : rootPath + "/")
             guard isWithinRoot else {
                 let forbidden = Data("403 Forbidden".utf8)
-                let resp = Self.buildHTTPResponse(status: "403 Forbidden", contentType: "text/plain", body: forbidden)
+                let resp = Self.buildHTTPResponse(status: "403 Forbidden", contentType: "text/plain", body: forbidden, allowCORS: isLocalOwner)
                 connection.send(content: resp, completion: .contentProcessed { _ in
                     self.shareBox.unregister(connection)
                     connection.cancel()
@@ -448,7 +496,7 @@ public final class LiveServerService: ObservableObject {
 
             if let listDir = directoryToList {
                 let listingHTML = Self.buildDirectoryListingHTML(for: listDir, relativePath: relative)
-                let resp = Self.buildHTTPResponse(status: "200 OK", contentType: "text/html; charset=utf-8", body: Data(listingHTML.utf8))
+                let resp = Self.buildHTTPResponse(status: "200 OK", contentType: "text/html; charset=utf-8", body: Data(listingHTML.utf8), allowCORS: isLocalOwner)
                 connection.send(content: resp, completion: .contentProcessed { _ in
                     self.shareBox.unregister(connection)
                     connection.cancel()
@@ -457,13 +505,14 @@ public final class LiveServerService: ObservableObject {
             }
 
             guard var fileData = try? Data(contentsOf: resolvedURL) else {
+                let escapedRel = Self.escapeHTML(relative)
                 let notFoundHTML = """
                 <html><body style="font-family:sans-serif;background:#0f172a;color:#e2e8f0;padding:2rem;">
                 <h2>3012 Live Server — 404 Not Found</h2>
-                <p>File <code>/\(relative)</code> does not exist in the current workspace.</p>
+                <p>File <code>/\(escapedRel)</code> does not exist in the current workspace.</p>
                 </body></html>
                 """
-                let resp = Self.buildHTTPResponse(status: "404 Not Found", contentType: "text/html; charset=utf-8", body: Data(notFoundHTML.utf8))
+                let resp = Self.buildHTTPResponse(status: "404 Not Found", contentType: "text/html; charset=utf-8", body: Data(notFoundHTML.utf8), allowCORS: isLocalOwner)
                 connection.send(content: resp, completion: .contentProcessed { _ in
                     self.shareBox.unregister(connection)
                     connection.cancel()
@@ -473,8 +522,9 @@ public final class LiveServerService: ObservableObject {
 
             let ext = resolvedURL.pathExtension.lowercased()
             let mime = Self.mimeType(for: ext)
+            let isHTML = (ext == "html" || ext == "htm")
 
-            if ext == "html" || ext == "htm", var htmlStr = String(data: fileData, encoding: .utf8) {
+            if isHTML, var htmlStr = String(data: fileData, encoding: .utf8) {
                 let liveReloadSnippet = """
                 <script>
                 (function(){
@@ -499,7 +549,82 @@ public final class LiveServerService: ObservableObject {
                 fileData = Data(htmlStr.utf8)
             }
 
-            let response = Self.buildHTTPResponse(status: "200 OK", contentType: mime, body: fileData)
+            if !isHTML, let rangeHeader = lines.first(where: { $0.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("range:") }) {
+                let rawSpec = rangeHeader.trimmingCharacters(in: .whitespaces).dropFirst("range:".count).trimmingCharacters(in: .whitespaces).lowercased()
+                if rawSpec.hasPrefix("bytes=") {
+                    let byteSpec = String(rawSpec.dropFirst("bytes=".count))
+                    let firstRange = byteSpec.split(separator: ",").first.map(String.init) ?? byteSpec
+                    let bounds = firstRange.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+                    let total = fileData.count
+                    if total == 0 {
+                        let resp = Self.buildHTTPResponse(
+                            status: "416 Range Not Satisfiable",
+                            contentType: "text/plain",
+                            body: Data(),
+                            allowCORS: isLocalOwner,
+                            extraHeaders: ["Content-Range: bytes */0", "Accept-Ranges: bytes"]
+                        )
+                        connection.send(content: resp, completion: .contentProcessed { _ in
+                            self.shareBox.unregister(connection)
+                            connection.cancel()
+                        })
+                        return
+                    }
+                    if bounds.count == 2 {
+                        let startStr = bounds[0].trimmingCharacters(in: .whitespaces)
+                        let endStr = bounds[1].trimmingCharacters(in: .whitespaces)
+                        var parsedRange: ClosedRange<Int>? = nil
+                        if startStr.isEmpty, let suffixLen = Int(endStr), suffixLen > 0 {
+                            let start = max(0, total - suffixLen)
+                            parsedRange = start...(total - 1)
+                        } else if let start = Int(startStr), start >= 0, start < total {
+                            let end = endStr.isEmpty ? (total - 1) : min(total - 1, Int(endStr) ?? (total - 1))
+                            if start <= end {
+                                parsedRange = start...end
+                            }
+                        }
+                        if let r = parsedRange {
+                            let slice = Data(fileData[r.lowerBound...r.upperBound])
+                            let resp = Self.buildHTTPResponse(
+                                status: "206 Partial Content",
+                                contentType: mime,
+                                body: slice,
+                                allowCORS: isLocalOwner,
+                                extraHeaders: [
+                                    "Accept-Ranges: bytes",
+                                    "Content-Range: bytes \(r.lowerBound)-\(r.upperBound)/\(total)"
+                                ]
+                            )
+                            connection.send(content: resp, completion: .contentProcessed { _ in
+                                self.shareBox.unregister(connection)
+                                connection.cancel()
+                            })
+                            return
+                        } else {
+                            let resp = Self.buildHTTPResponse(
+                                status: "416 Range Not Satisfiable",
+                                contentType: "text/plain",
+                                body: Data(),
+                                allowCORS: isLocalOwner,
+                                extraHeaders: ["Content-Range: bytes */\(total)", "Accept-Ranges: bytes"]
+                            )
+                            connection.send(content: resp, completion: .contentProcessed { _ in
+                                self.shareBox.unregister(connection)
+                                connection.cancel()
+                            })
+                            return
+                        }
+                    }
+                }
+            }
+
+            let response = Self.buildHTTPResponse(
+                status: "200 OK",
+                contentType: mime,
+                body: fileData,
+                allowCORS: isLocalOwner,
+                extraHeaders: isHTML ? [] : ["Accept-Ranges: bytes"]
+            )
             connection.send(content: response, completion: .contentProcessed { _ in
                 self.shareBox.unregister(connection)
                 connection.cancel()
@@ -610,6 +735,15 @@ public final class LiveServerService: ObservableObject {
             }
     }
 
+    nonisolated private static func escapeHTML(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
+
     nonisolated private static func buildDirectoryListingHTML(for directory: URL, relativePath: String) -> String {
         let entries = ((try? FileManager.default.contentsOfDirectory(
             at: directory,
@@ -624,14 +758,11 @@ public final class LiveServerService: ObservableObject {
             let display = isDir ? "\(name)/" : name
             let hrefRel = baseRel.isEmpty ? name : "\(baseRel)/\(name)"
             let hrefEncoded = "/" + encodeRelativePath(hrefRel)
-            let escapedDisplay = display
-                .replacingOccurrences(of: "&", with: "&amp;")
-                .replacingOccurrences(of: "<", with: "&lt;")
-                .replacingOccurrences(of: ">", with: "&gt;")
+            let escapedDisplay = escapeHTML(display)
             return "<li><a href=\"\(hrefEncoded)\">\(escapedDisplay)</a></li>"
         }.joined(separator: "\n")
 
-        let titlePath = baseRel.isEmpty ? "/" : "/\(baseRel)"
+        let titlePath = escapeHTML(baseRel.isEmpty ? "/" : "/\(baseRel)")
         return """
         <!DOCTYPE html>
         <html lang="vi">
@@ -656,17 +787,27 @@ public final class LiveServerService: ObservableObject {
         """
     }
 
-    nonisolated private static func buildHTTPResponse(status: String, contentType: String, body: Data) -> Data {
-        let headers = [
+    nonisolated private static func buildHTTPResponse(
+        status: String,
+        contentType: String,
+        body: Data,
+        allowCORS: Bool = false,
+        extraHeaders: [String] = []
+    ) -> Data {
+        var headerLines = [
             "HTTP/1.1 \(status)",
             "Content-Type: \(contentType)",
             "Content-Length: \(body.count)",
-            "Cache-Control: no-store, no-cache, must-revalidate",
-            "Access-Control-Allow-Origin: *",
-            "Connection: close",
-            "",
-            ""
-        ].joined(separator: "\r\n")
+            "Cache-Control: no-store, no-cache, must-revalidate"
+        ]
+        if allowCORS {
+            headerLines.append("Access-Control-Allow-Origin: *")
+        }
+        headerLines.append(contentsOf: extraHeaders)
+        headerLines.append("Connection: close")
+        headerLines.append("")
+        headerLines.append("")
+        let headers = headerLines.joined(separator: "\r\n")
         var full = Data(headers.utf8)
         full.append(body)
         return full

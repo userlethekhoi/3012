@@ -278,7 +278,7 @@ public struct FileLanguageIconView: View {
                 return .symbol("shippingbox.fill", Color(red: 0.92, green: 0.54, blue: 0.22))
             }
             if lowerName == "dockerfile" || lowerName.hasPrefix("dockerfile.") {
-                return .symbol("shippingbox.circle.fill", Color(red: 0.22, green: 0.72, blue: 0.95))
+                return .symbol("shippingbox.fill", Color(red: 0.22, green: 0.72, blue: 0.95))
             }
             if lowerName == "package.swift" {
                 return .symbol("swift", Color(red: 0.97, green: 0.45, blue: 0.15))
@@ -445,7 +445,7 @@ public struct FileLanguageIconView: View {
         case .powershell:
             return .monogram(">_", Color(red: 0.32, green: 0.66, blue: 0.96))
         case .dockerfile:
-            return .symbol("shippingbox.circle.fill", Color(red: 0.22, green: 0.72, blue: 0.95))
+            return .symbol("shippingbox.fill", Color(red: 0.22, green: 0.72, blue: 0.95))
         case .makefile:
             return .symbol("hammer.fill", Color(red: 0.89, green: 0.48, blue: 0.22))
         case .cmake:
@@ -461,7 +461,7 @@ public struct FileLanguageIconView: View {
         case .regex:
             return .monogram(".*", Color(red: 0.88, green: 0.54, blue: 0.28))
         case .diff:
-            return .symbol("plus.forwardslash.minus", Color(red: 0.48, green: 0.82, blue: 0.56))
+            return .symbol("slash.circle", Color(red: 0.48, green: 0.82, blue: 0.56))
         case .plainText:
             return .symbol("doc.text", Color(red: 0.60, green: 0.66, blue: 0.74))
         }

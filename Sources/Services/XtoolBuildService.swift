@@ -185,6 +185,7 @@ public final class XtoolBuildService: ObservableObject {
     @Published public private(set) var downloadedArtifacts: [XtoolArtifactItem] = []
 
     private var activeTask: Task<Void, Never>?
+    private var buildGeneration: Int = 0
 
     public init() {
         if let rawMode = UserDefaults.standard.string(forKey: "3012.xtool.buildMode"),
@@ -323,7 +324,7 @@ public final class XtoolBuildService: ObservableObject {
             let package = Package(
                 name: "\(cleanName)",
                 platforms: [
-                    .iOS(.v17)
+                    .iOS(.v15)
                 ],
                 products: [
                     // xtool builds apps from .library products instead of executable targets
@@ -364,16 +365,16 @@ public final class XtoolBuildService: ObservableObject {
                 @State private var tapCount: Int = 0
 
                 var body: some View {
-                    NavigationStack {
+                    NavigationView {
                         VStack(spacing: 16) {
                             Image(systemName: "hammer.circle.fill")
                                 .font(.system(size: 56))
-                                .foregroundStyle(.blue)
+                                .foregroundColor(.blue)
                             Text("\(cleanName)")
                                 .font(.title.bold())
                             Text("Built with 3012 IDE + xtool SwiftPM")
                                 .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                .foregroundColor(.secondary)
                             Button("Tap Count: \\(tapCount)") {
                                 tapCount += 1
                             }
@@ -382,6 +383,7 @@ public final class XtoolBuildService: ObservableObject {
                         .padding()
                         .navigationTitle("\(cleanName)")
                     }
+                    .navigationViewStyle(.stack)
                 }
             }
             """
@@ -404,7 +406,7 @@ public final class XtoolBuildService: ObservableObject {
             let package = Package(
                 name: "\(cleanName)",
                 platforms: [
-                    .iOS(.v17)
+                    .iOS(.v15)
                 ],
                 products: [
                     .library(name: "\(cleanName)", targets: ["\(cleanName)"]),
@@ -451,12 +453,12 @@ public final class XtoolBuildService: ObservableObject {
                     VStack(spacing: 12) {
                         Image(systemName: "square.grid.2x2.fill")
                             .font(.system(size: 48))
-                            .foregroundStyle(.indigo)
+                            .foregroundColor(.indigo)
                         Text("\(cleanName) + Widget")
                             .font(.title2.bold())
                         Text("Check your Home Screen widgets after installing via xtool.")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
                     }
                     .padding()
@@ -487,6 +489,16 @@ public final class XtoolBuildService: ObservableObject {
                 }
             }
 
+            private struct WidgetContainerCompatModifier: ViewModifier {
+                func body(content: Content) -> some View {
+                    if #available(iOS 17.0, *) {
+                        content.containerBackground(Color.clear, for: .widget)
+                    } else {
+                        content.padding(8)
+                    }
+                }
+            }
+
             @main
             struct \(widgetName): Widget {
                 var body: some WidgetConfiguration {
@@ -496,9 +508,9 @@ public final class XtoolBuildService: ObservableObject {
                                 .font(.headline)
                             Text(entry.date, style: .time)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundColor(.secondary)
                         }
-                        .containerBackground(.fill.tertiary, for: .widget)
+                        .modifier(WidgetContainerCompatModifier())
                     }
                     .configurationDisplayName("\(cleanName) Widget")
                     .description("Built with xtool & 3012 IDE.")
@@ -525,7 +537,7 @@ public final class XtoolBuildService: ObservableObject {
             let package = Package(
                 name: "\(cleanName)",
                 platforms: [
-                    .iOS(.v17)
+                    .iOS(.v15)
                 ],
                 products: [
                     .library(name: "\(cleanName)", targets: ["\(cleanName)"])
@@ -588,12 +600,12 @@ public final class XtoolBuildService: ObservableObject {
                     VStack(spacing: 14) {
                         Image(systemName: "wrench.and.screwdriver.fill")
                             .font(.system(size: 46))
-                            .foregroundStyle(.orange)
+                            .foregroundColor(.orange)
                         Text("\(cleanName) Non-JB Host")
                             .font(.title2.bold())
                         Text(statusMessage)
                             .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
+                            .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
                         Button("Retry dlopen") {
                             statusMessage = DylibRuntimeLoader.loadDefaultEmbeddedDylib()
@@ -618,9 +630,18 @@ public final class XtoolBuildService: ObservableObject {
         for entry in files {
             let dest = root.appendingPathComponent(entry.relPath)
             try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? entry.content.write(to: dest, atomically: true, encoding: .utf8)
+            do {
+                try entry.content.write(to: dest, atomically: true, encoding: .utf8)
+                syncOpenTab(in: workspace, fileURL: dest, content: entry.content)
+                if !workspace.suppressOutboundSyncEvents {
+                    workspace.onWorkspaceMutation?(.upsertFile(relativePath: entry.relPath, content: entry.content))
+                }
+            } catch {
+                buildStatusText = "Không ghi được \(entry.relPath): \(error.localizedDescription)"
+            }
         }
         workspace.reloadTree()
+        workspace.onFileSavedOrChanged?()
 
         let primaryURL = root.appendingPathComponent(primaryFile)
         if fm.fileExists(atPath: primaryURL.path) {
@@ -740,6 +761,8 @@ public final class XtoolBuildService: ObservableObject {
     ) {
         guard !isBuilding else { return }
         activeTask?.cancel()
+        buildGeneration &+= 1
+        let gen = buildGeneration
 
         isBuilding = true
         buildLog = "[3012 xtool] Chuẩn bị dự án SwiftPM từ \(workspaceRoot.lastPathComponent)...\n"
@@ -749,9 +772,11 @@ public final class XtoolBuildService: ObservableObject {
         activeTask = Task { [weak self] () -> Void in
             guard let self else { return }
             defer {
-                self.isBuilding = false
-                self.refreshLocalPackages(in: workspaceRoot)
-                onWorkspaceChanged()
+                if self.buildGeneration == gen {
+                    self.isBuilding = false
+                    self.refreshLocalPackages(in: workspaceRoot)
+                    onWorkspaceChanged()
+                }
             }
 
             switch self.buildMode {
@@ -791,31 +816,47 @@ public final class XtoolBuildService: ObservableObject {
             buildStatusText = "Chưa kết nối SSH VPS"
             return
         }
-        guard let zipData = createCleanXtoolZipData(workspaceRoot: workspaceRoot) else {
+        guard let zipData = await Task.detached(priority: .userInitiated) { () -> Data? in
+            Self.createCleanXtoolZipData(workspaceRoot: workspaceRoot)
+        }.value else {
             appendLog("[3012 xtool] Không thể nén dự án xtool.\n", runner: runner)
             buildStatusText = "Lỗi nén .zip"
             return
         }
 
         let remoteDir = "/tmp/3012_xtool_\(String(UUID().uuidString.prefix(8)))"
-        let b64Zip = zipData.base64EncodedString()
-        buildStatusText = "Đang đẩy mã nguồn & chạy xtool trên VPS..."
-        appendLog("[3012 xtool] Đang biên dịch qua SSH (\(sshService.connectedProfile?.host ?? "VPS"))...\n", runner: runner)
+        buildStatusText = "Đang tải mã nguồn qua SFTP lên VPS..."
+        appendLog("[3012 xtool] Đang tải dự án qua SFTP & biên dịch trên VPS (\(sshService.connectedProfile?.host ?? "VPS"))...\n", runner: runner)
 
+        let prepOut = await sshService.executeCommandOnVPS("rm -rf '\(remoteDir)' && mkdir -p '\(remoteDir)/src'")
+        if prepOut.contains("[Process exited with code") || prepOut.hasPrefix("[SSH Error]") {
+            appendLog(prepOut + "\n", runner: runner)
+            buildStatusText = "Không tạo được thư mục tạm trên VPS"
+            return
+        }
+
+        do {
+            try await sshService.uploadDataViaSFTP(data: zipData, remotePath: "\(remoteDir)/proj.zip")
+        } catch {
+            _ = await sshService.executeCommandOnVPS("rm -rf '\(remoteDir)'")
+            appendLog("[3012 xtool] Lỗi upload SFTP: \(error.localizedDescription)\n", runner: runner)
+            buildStatusText = "Lỗi upload SFTP"
+            return
+        }
+
+        buildStatusText = "Đang chạy xtool build trên VPS..."
         let script = """
-        rm -rf '\(remoteDir)' && mkdir -p '\(remoteDir)/src' && cd '\(remoteDir)' && \
-        cat <<'EOF_ZIP' | base64 -d > proj.zip
-        \(b64Zip)
-        EOF_ZIP
+        cd '\(remoteDir)' && \
         unzip -qq -o proj.zip -d src && \
-        PROJ=$(find src -maxdepth 4 -type f -name xtool.yml | head -n 1 | xargs -r dirname) && \
-        [ -z "$PROJ" ] && PROJ=$(find src -maxdepth 4 -type f -name Package.swift | head -n 1 | xargs -r dirname) ; \
+        MF=$(find src -maxdepth 4 -type f -name xtool.yml | head -n 1) && \
+        [ -z "$MF" ] && MF=$(find src -maxdepth 4 -type f -name Package.swift | head -n 1); \
+        [ -n "$MF" ] && PROJ=$(dirname "$MF") && \
         cd "$PROJ" && \
         if command -v xtool >/dev/null 2>&1; then \
           (xtool dev build --help >/dev/null 2>&1 && xtool dev build 2>&1 || xtool dev 2>&1); \
         else \
           echo "[3012] xtool CLI not installed in PATH — fallback swift build --release" && swift build -c release 2>&1; \
-        fi; echo "__3012_EXIT=$?"
+        fi
         """
 
         let out = await sshService.executeCommandOnVPS(script)
@@ -840,11 +881,7 @@ public final class XtoolBuildService: ObservableObject {
         var fetched: [String] = []
         for path in remoteArtifacts {
             let fileName = (path as NSString).lastPathComponent
-            let b64Bin = await sshService.executeCommandOnVPS("base64 -w0 '\(path)' 2>/dev/null || base64 '\(path)'")
-                .replacingOccurrences(of: "\n", with: "")
-                .replacingOccurrences(of: "\r", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if let decoded = Data(base64Encoded: b64Bin) {
+            if let decoded = try? await sshService.downloadDataViaSFTP(remotePath: path) {
                 try? decoded.write(to: packagesDir.appendingPathComponent(fileName), options: .atomic)
                 fetched.append(fileName)
             }
@@ -873,7 +910,9 @@ public final class XtoolBuildService: ObservableObject {
         try? fm.createDirectory(at: workflowPath.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? Self.githubWorkflowTemplate(productName: product).write(to: workflowPath, atomically: true, encoding: .utf8)
 
-        guard let zipData = createCleanXtoolZipData(workspaceRoot: workspaceRoot) else {
+        guard let zipData = await Task.detached(priority: .userInitiated) { () -> Data? in
+            Self.createCleanXtoolZipData(workspaceRoot: workspaceRoot)
+        }.value else {
             appendLog("[3012 xtool] Lỗi đóng gói .zip ngoại tuyến.\n", runner: runner)
             buildStatusText = "Lỗi nén .zip"
             return
@@ -976,13 +1015,26 @@ public final class XtoolBuildService: ObservableObject {
         guard let plistData = try? Data(contentsOf: plistURL),
               var plistDict = try PropertyListSerialization.propertyList(from: plistData, options: .mutableContainersAndLeaves, format: nil) as? [String: Any],
               let execName = plistDict["CFBundleExecutable"] as? String,
-              !execName.isEmpty else {
-            throw XtoolInjectionError.executableMissing("Không đọc được CFBundleExecutable trong Info.plist.")
+              !execName.isEmpty,
+              execName != ".",
+              execName != "..",
+              !execName.contains("/"),
+              !execName.contains("\\") else {
+            throw XtoolInjectionError.executableMissing("Không đọc được CFBundleExecutable hợp lệ trong Info.plist.")
         }
 
         let executableURL = appBundleURL.appendingPathComponent(execName)
-        guard fm.fileExists(atPath: executableURL.path) else {
+        let canonBundle = WorkspaceManager.canonicalPath(appBundleURL)
+        let canonExec = WorkspaceManager.canonicalPath(executableURL)
+        guard canonExec.hasPrefix(canonBundle + "/"),
+              fm.fileExists(atPath: executableURL.path) else {
             throw XtoolInjectionError.executableMissing("Thiếu file thực thi chính '\(execName)' trong .app.")
+        }
+
+        if let dylibBytes = try? Data(contentsOf: dylibURL),
+           dylibBytes.range(of: Data("CydiaSubstrate".utf8)) != nil
+           || dylibBytes.range(of: Data("libsubstrate".utf8)) != nil {
+            onProgress("• Lưu ý Non-JB: \(dylibURL.lastPathComponent) tham chiếu CydiaSubstrate/libsubstrate — hãy nhúng kèm libsubstrate/ElleKit hoặc dùng dylib thuần UIKit.")
         }
 
         // Update optional Info.plist overrides (Bundle ID / Display Name)
@@ -1142,12 +1194,22 @@ public final class XtoolBuildService: ObservableObject {
             let cmdSize = Int(readUInt32LE(data, at: cursor + 4))
             guard cmdSize >= 8 && cursor + cmdSize <= commandsEnd else { break }
 
+            // LC_ENCRYPTION_INFO (0x21) | LC_ENCRYPTION_INFO_64 (0x2c): reject FairPlay-encrypted binaries
+            if (cmd == 0x00000021 || cmd == 0x0000002c), cmdSize >= 20 {
+                let cryptID = readUInt32LE(data, at: cursor + 16)
+                if cryptID != 0 {
+                    throw XtoolInjectionError.invalidMachO("Binary đang bị mã hóa FairPlay (cryptid=\(cryptID)). Hãy dùng .ipa đã giải mã trước khi nhúng .dylib.")
+                }
+            }
+
             // LC_LOAD_DYLIB (0x0c) | LC_LOAD_WEAK_DYLIB (0x80000018) | LC_REEXPORT_DYLIB (0x8000001f)
             if (cmd == 0x0000000c || cmd == 0x80000018 || cmd == 0x8000001f), cmdSize >= 24 {
                 let nameOffset = Int(readUInt32LE(data, at: cursor + 8))
                 let strStart = cursor + nameOffset
                 if strStart >= cursor + 24 && strStart < cursor + cmdSize {
-                    let sub = data[strStart..<(cursor + cmdSize)]
+                    let subStart = data.startIndex + strStart
+                    let subEnd = data.startIndex + cursor + cmdSize
+                    let sub = data[subStart..<subEnd]
                     let existingName = String(bytes: sub.prefix(while: { $0 != 0 }), encoding: .utf8) ?? ""
                     if existingName == dylibInstallPath {
                         return false
@@ -1178,9 +1240,17 @@ public final class XtoolBuildService: ObservableObject {
 
         let firstCodeFilePos = sliceOffset + minSectionOffset
         let availablePadding = firstCodeFilePos - commandsEnd
-        guard availablePadding >= newCmdSize else {
+        guard availablePadding >= newCmdSize, commandsEnd + newCmdSize <= sliceLimit else {
             throw XtoolInjectionError.insufficientHeaderPadding(
                 available: max(0, availablePadding),
+                required: newCmdSize
+            )
+        }
+        let padStart = data.startIndex + commandsEnd
+        let padEnd = data.startIndex + commandsEnd + newCmdSize
+        if data[padStart..<padEnd].contains(where: { $0 != 0 }) {
+            throw XtoolInjectionError.insufficientHeaderPadding(
+                available: 0,
                 required: newCmdSize
             )
         }
@@ -1194,33 +1264,39 @@ public final class XtoolBuildService: ObservableObject {
         writeUInt32LE(0x00010000, to: &loadCmd, at: 20)         // compatibility_version 1.0.0
         loadCmd.replaceSubrange(24..<(24 + pathBytes.count), with: pathBytes)
 
-        data.replaceSubrange(commandsEnd..<(commandsEnd + newCmdSize), with: loadCmd)
+        data.replaceSubrange(padStart..<padEnd, with: loadCmd)
         writeUInt32LE(UInt32(ncmds + 1), to: &data, at: sliceOffset + 16)
         writeUInt32LE(UInt32(sizeofcmds + newCmdSize), to: &data, at: sliceOffset + 20)
         return true
     }
 
     private nonisolated static func readUInt32LE(_ data: Data, at offset: Int) -> UInt32 {
-        let b0 = UInt32(data[offset])
-        let b1 = UInt32(data[offset + 1]) << 8
-        let b2 = UInt32(data[offset + 2]) << 16
-        let b3 = UInt32(data[offset + 3]) << 24
+        let base = data.startIndex + offset
+        guard offset >= 0, base + 4 <= data.endIndex else { return 0 }
+        let b0 = UInt32(data[base])
+        let b1 = UInt32(data[base + 1]) << 8
+        let b2 = UInt32(data[base + 2]) << 16
+        let b3 = UInt32(data[base + 3]) << 24
         return b0 | b1 | b2 | b3
     }
 
     private nonisolated static func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
-        let b0 = UInt32(data[offset]) << 24
-        let b1 = UInt32(data[offset + 1]) << 16
-        let b2 = UInt32(data[offset + 2]) << 8
-        let b3 = UInt32(data[offset + 3])
+        let base = data.startIndex + offset
+        guard offset >= 0, base + 4 <= data.endIndex else { return 0 }
+        let b0 = UInt32(data[base]) << 24
+        let b1 = UInt32(data[base + 1]) << 16
+        let b2 = UInt32(data[base + 2]) << 8
+        let b3 = UInt32(data[base + 3])
         return b0 | b1 | b2 | b3
     }
 
     private nonisolated static func writeUInt32LE(_ value: UInt32, to data: inout Data, at offset: Int) {
-        data[offset] = UInt8(value & 0xff)
-        data[offset + 1] = UInt8((value >> 8) & 0xff)
-        data[offset + 2] = UInt8((value >> 16) & 0xff)
-        data[offset + 3] = UInt8((value >> 24) & 0xff)
+        let base = data.startIndex + offset
+        guard offset >= 0, base + 4 <= data.endIndex else { return }
+        data[base] = UInt8(value & 0xff)
+        data[base + 1] = UInt8((value >> 8) & 0xff)
+        data[base + 2] = UInt8((value >> 16) & 0xff)
+        data[base + 3] = UInt8((value >> 24) & 0xff)
     }
 
     private nonisolated static func unzipIPAWithFallbackEncodings(from archiveURL: URL, to destinationURL: URL) throws {
@@ -1258,7 +1334,7 @@ public final class XtoolBuildService: ObservableObject {
         }
     }
 
-    private func createCleanXtoolZipData(workspaceRoot: URL) -> Data? {
+    nonisolated private static func createCleanXtoolZipData(workspaceRoot: URL) -> Data? {
         let fm = FileManager.default
         let stageID = UUID().uuidString
         let stageParent = fm.temporaryDirectory.appendingPathComponent("3012_xstage_\(stageID)", isDirectory: true)
@@ -1273,9 +1349,10 @@ public final class XtoolBuildService: ObservableObject {
         do {
             try fm.createDirectory(at: projectStage, withIntermediateDirectories: true)
             let excludedDirs: Set<String> = [".git", ".build", ".swiftpm", "packages", "xtool", ".xtool-tmp", "node_modules", "__MACOSX"]
+            let canonicalRoot = WorkspaceManager.canonicalPath(workspaceRoot)
             if let enumerator = fm.enumerator(
                 at: workspaceRoot,
-                includingPropertiesForKeys: [.isDirectoryKey],
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                 options: []
             ) {
                 let rootPath = workspaceRoot.standardizedFileURL.path
@@ -1285,7 +1362,17 @@ public final class XtoolBuildService: ObservableObject {
                         enumerator.skipDescendants()
                         continue
                     }
-                    let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                    let rv = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                    let isDir = rv?.isDirectory ?? false
+                    if rv?.isSymbolicLink == true {
+                        if isDir { enumerator.skipDescendants() }
+                        continue
+                    }
+                    let canonicalItem = WorkspaceManager.canonicalPath(url)
+                    guard canonicalItem.hasPrefix(canonicalRoot + "/") else {
+                        if isDir { enumerator.skipDescendants() }
+                        continue
+                    }
                     var rel = url.standardizedFileURL.path
                     if rel.hasPrefix(rootPath) {
                         rel = String(rel.dropFirst(rootPath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -1397,9 +1484,16 @@ public final class XtoolBuildService: ObservableObject {
                 run: |
                   brew install xtool-org/tap/xtool || true
                   if command -v xtool >/dev/null 2>&1; then
-                    xtool dev build || xtool dev --help
+                    xtool dev build
                   else
                     swift build -c release
+                    BIN=$(find .build/release -maxdepth 1 -type f -perm +111 | head -n 1 || true)
+                    if [ -n "$BIN" ]; then
+                      mkdir -p "Payload/\(productName).app"
+                      cp "$BIN" "Payload/\(productName).app/\(productName)"
+                      [ -f Info.plist ] && cp Info.plist "Payload/\(productName).app/Info.plist"
+                      zip -qr "\(productName)-Unsigned.ipa" Payload
+                    fi
                   fi
               - uses: actions/upload-artifact@v4
                 if: always()

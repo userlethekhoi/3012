@@ -29,7 +29,7 @@ public struct LocalDaemonManagerSheet: View {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 12) {
-                            Image(systemName: daemonService.isKeepAliveActive ? "bolt.shield.fill" : "terminal.fill")
+                            Image(systemName: daemonService.isKeepAliveActive ? "checkmark.shield.fill" : "terminal.fill")
                                 .font(.system(size: 26, weight: .semibold))
                                 .foregroundColor(daemonService.isKeepAliveActive ? .green : .orange)
 
@@ -192,12 +192,14 @@ public struct LocalDaemonManagerSheet: View {
                                 daemonService.removeStoppedJobs()
                             }
                             .font(.caption)
+                            .buttonStyle(.borderless)
                         }
                         if daemonService.runningJobsCount > 0 {
                             Button(preferences.tr("Dừng tất cả", "Stop All"), role: .destructive) {
                                 daemonService.stopAllJobs()
                             }
                             .font(.caption)
+                            .buttonStyle(.borderless)
                         }
                     }
                 }
@@ -226,12 +228,14 @@ public struct LocalDaemonManagerSheet: View {
                                     systemImage: copiedLogsPID == selectedJob.pid ? "checkmark.circle.fill" : "doc.on.doc"
                                 )
                             }
+                            .buttonStyle(.borderless)
                             Spacer()
                             Button(role: .destructive) {
                                 daemonService.clearLogs(pid: selectedJob.pid)
                             } label: {
                                 Label(preferences.tr("Xoá Log", "Clear Logs"), systemImage: "trash")
                             }
+                            .buttonStyle(.borderless)
                         }
                         .font(.caption.weight(.semibold))
                     } header: {
@@ -288,16 +292,24 @@ public struct LocalDaemonManagerSheet: View {
                     selectedLogPID = (selectedLogPID == job.pid) ? nil : job.pid
                 } label: {
                     Label(preferences.tr("Xem Log", "Logs"), systemImage: "text.alignleft")
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.accentColor.opacity(0.14))
+                        .cornerRadius(6)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
 
                 Button {
                     daemonService.restartJob(pid: job.pid, workspaceRoot: workspace.rootURL)
                     selectedLogPID = job.pid
                 } label: {
                     Label(preferences.tr("Chạy lại", "Restart"), systemImage: "arrow.clockwise")
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.secondary.opacity(0.16))
+                        .cornerRadius(6)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
 
                 Spacer()
 
@@ -306,8 +318,12 @@ public struct LocalDaemonManagerSheet: View {
                         daemonService.stopJob(pid: job.pid)
                     } label: {
                         Label(preferences.tr("Dừng", "Kill"), systemImage: "stop.fill")
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.red.opacity(0.14))
+                            .cornerRadius(6)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderless)
                 }
             }
             .font(.system(size: 11.5, weight: .semibold))
