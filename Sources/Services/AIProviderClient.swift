@@ -26,14 +26,34 @@ public enum AIProviderError: LocalizedError {
     }
 }
 
+public struct AIAttachmentImage: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public let jpegData: Data
+    public let width: Int
+    public let height: Int
+
+    public init(id: UUID = UUID(), jpegData: Data, width: Int, height: Int) {
+        self.id = id
+        self.jpegData = jpegData
+        self.width = width
+        self.height = height
+    }
+
+    public var base64JPEG: String {
+        jpegData.base64EncodedString()
+    }
+}
+
 public struct AIChatTurn: Sendable {
     public enum Role: String, Sendable { case user, assistant }
     public let role: Role
     public let text: String
+    public let attachments: [AIAttachmentImage]
 
-    public init(role: Role, text: String) {
+    public init(role: Role, text: String, attachments: [AIAttachmentImage] = []) {
         self.role = role
         self.text = text
+        self.attachments = attachments
     }
 }
 
@@ -196,7 +216,23 @@ public enum AIProviderClient {
     ) async throws {
         guard let url = URL(string: base + "/chat/completions") else { throw AIProviderError.invalidURL(base) }
         var messages: [[String: Any]] = [["role": "system", "content": system]]
-        messages += history.map { ["role": $0.role.rawValue, "content": $0.text] }
+        for turn in history {
+            if turn.attachments.isEmpty {
+                messages.append(["role": turn.role.rawValue, "content": turn.text])
+            } else {
+                var parts: [[String: Any]] = []
+                if !turn.text.isEmpty {
+                    parts.append(["type": "text", "text": turn.text])
+                }
+                for img in turn.attachments {
+                    parts.append([
+                        "type": "image_url",
+                        "image_url": ["url": "data:image/jpeg;base64,\(img.base64JPEG)"]
+                    ])
+                }
+                messages.append(["role": turn.role.rawValue, "content": parts])
+            }
+        }
         var payload: [String: Any] = ["model": model, "messages": messages, "stream": true]
         if let temperature { payload["temperature"] = temperature }
 
@@ -234,11 +270,30 @@ public enum AIProviderClient {
         history: [AIChatTurn], temperature: Double?, maxTokens: Int, emit: (String) -> Void
     ) async throws {
         guard let url = URL(string: base + "/messages") else { throw AIProviderError.invalidURL(base) }
+        let formattedMessages: [[String: Any]] = history.map { turn in
+            if turn.attachments.isEmpty {
+                return ["role": turn.role.rawValue, "content": turn.text]
+            }
+            var blocks: [[String: Any]] = turn.attachments.map { img in
+                [
+                    "type": "image",
+                    "source": [
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": img.base64JPEG
+                    ]
+                ]
+            }
+            if !turn.text.isEmpty {
+                blocks.append(["type": "text", "text": turn.text])
+            }
+            return ["role": turn.role.rawValue, "content": blocks]
+        }
         var payload: [String: Any] = [
             "model": model,
             "max_tokens": max(1024, maxTokens),
             "system": system,
-            "messages": history.map { ["role": $0.role.rawValue, "content": $0.text] },
+            "messages": formattedMessages,
             "stream": true
         ]
         if let temperature { payload["temperature"] = min(1.0, temperature) }
@@ -271,7 +326,13 @@ public enum AIProviderClient {
         var payload: [String: Any] = [
             "systemInstruction": ["parts": [["text": system]]],
             "contents": history.map { turn in
-                ["role": turn.role == .user ? "user" : "model", "parts": [["text": turn.text]]]
+                var parts: [[String: Any]] = turn.attachments.map { img in
+                    ["inlineData": ["mimeType": "image/jpeg", "data": img.base64JPEG]]
+                }
+                if !turn.text.isEmpty || parts.isEmpty {
+                    parts.append(["text": turn.text])
+                }
+                return ["role": turn.role == .user ? "user" : "model", "parts": parts]
             }
         ]
         if let temperature { payload["generationConfig"] = ["temperature": temperature] }
@@ -321,7 +382,8 @@ public enum AIProviderClient {
             guard status.available else { throw AIProviderError.unavailable(status.detail) }
             var transcript = ""
             for turn in history.suffix(6) {
-                let clipped = turn.text.count > 1800 ? String(turn.text.suffix(1800)) : turn.text
+                let raw = turn.attachments.isEmpty ? turn.text : "\(turn.text)\n[Attached \(turn.attachments.count) image(s)]"
+                let clipped = raw.count > 1800 ? String(raw.suffix(1800)) : raw
                 transcript += (turn.role == .user ? "User: " : "Assistant: ") + clipped + "\n\n"
             }
             var prompt = system + "\n\n" + transcript + "Assistant:"

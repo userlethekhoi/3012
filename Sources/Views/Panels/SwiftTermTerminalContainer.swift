@@ -97,6 +97,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
         private var lastSyncedWorkspaceRoot: URL?
         private var activeREPL: String? = nil
         private var isExecutingAsyncCommand: Bool = false
+        private var utf8Accumulator: [UInt8] = []
         private var sessionEnv: [String: String] = [
             "OS": "iOS_NonJB_Sandbox",
             "SHELL": "3012-Workstation-Shell",
@@ -366,14 +367,26 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                         self.printLocalPrompt()
                     }
                 } else if b == 127 || b == 8 { // Backspace
+                    utf8Accumulator.removeAll()
                     if !localLineBuffer.isEmpty {
                         localLineBuffer.removeLast()
                         tv.feed(text: "\u{08} \u{08}")
                     }
                 } else if b >= 32 {
-                    let ch = String(UnicodeScalar(b))
-                    localLineBuffer.append(ch)
-                    tv.feed(text: ch)
+                    if b < 0x80 && utf8Accumulator.isEmpty {
+                        let ch = String(UnicodeScalar(b))
+                        localLineBuffer.append(ch)
+                        tv.feed(text: ch)
+                    } else {
+                        utf8Accumulator.append(b)
+                        if let decoded = String(bytes: utf8Accumulator, encoding: .utf8) {
+                            utf8Accumulator.removeAll()
+                            localLineBuffer.append(decoded)
+                            tv.feed(text: decoded)
+                        } else if utf8Accumulator.count >= 4 {
+                            utf8Accumulator.removeAll()
+                        }
+                    }
                 }
             }
         }
@@ -729,7 +742,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 parent.workspace.reloadTree()
 
             case "rm", "del", "erase", "rmdir", "rd", "remove-item":
-                let paths = args.filter { !$0.hasPrefix("-") && !$0.hasPrefix("/") }
+                let paths = args.filter { !$0.hasPrefix("-") && !($0.hasPrefix("/") && $0.count <= 3) }
                 guard !paths.isEmpty else { emit("usage: \(cmd) <target>\n"); return }
                 for p in paths {
                     let target = resolvePath(p, cwd: cwd)
@@ -742,7 +755,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                 parent.workspace.reloadTree()
 
             case "cp", "copy", "xcopy", "mv", "move", "ren", "rename":
-                let paths = args.filter { !$0.hasPrefix("-") && !$0.hasPrefix("/") }
+                let paths = args.filter { !$0.hasPrefix("-") && !($0.hasPrefix("/") && $0.count <= 3) }
                 guard paths.count >= 2 else { emit("usage: \(cmd) <source> <dest>\n"); return }
                 let src = resolvePath(paths[0], cwd: cwd)
                 var dst = resolvePath(paths[1], cwd: cwd)
@@ -822,8 +835,8 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     let job = parent.daemonService.startJob(fileURL: fileURL, workspaceRoot: parent.workspace.rootURL)
                     emit("\u{001B}[1;32m[DAEMON]\u{001B}[0m Long-running JS/Bot PID \(job.pid) started 24/7 on-device.\n")
                 } else if let content = try? String(contentsOf: fileURL, encoding: .utf8) {
-                    await parent.runner.runCode(code: content, language: .javascript, fileName: fileURL.lastPathComponent, sshService: nil)
-                    emit(parent.runner.consoleOutput + "\n")
+                    await parent.runner.runCode(code: content, language: .javascript, fileName: fileURL.lastPathComponent, sshService: parent.sshService)
+                    emit(parent.runner.consoleOutput.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n")
                 }
 
             case "python", "python3", "py", "gcc", "g++", "clang", "swift", "go", "rustc", "javac", "php", "ruby", "lua", "run":
@@ -841,7 +854,8 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     return
                 }
                 let isPython = (cmd == "python" || cmd == "python3" || cmd == "py")
-                let looksLikeBot = content.contains("startPolling") || content.contains("polling(") || content.contains("Application") || content.contains("telebot")
+                let looksLikeBot = (content.contains("telegram") || content.contains("telebot") || content.contains("aiogram"))
+                    && (content.contains("startPolling") || content.contains("polling(") || content.contains("run_polling"))
                 if isPython && (runInBackground || looksLikeBot) {
                     parent.daemonService.keepTerminalAliveInBackground = true
                     let job = parent.daemonService.startJob(fileURL: fileURL, workspaceRoot: parent.workspace.rootURL)
@@ -865,8 +879,8 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                     }
                 }()
                 emit("\u{001B}[36m[EXEC]\u{001B}[0m Compiling & running \(fileURL.lastPathComponent) (\(lang.rawValue))...\n")
-                await parent.runner.runCode(code: content, language: lang, fileName: fileURL.lastPathComponent, sshService: nil)
-                emit(parent.runner.consoleOutput + "\n")
+                await parent.runner.runCode(code: content, language: lang, fileName: fileURL.lastPathComponent, sshService: parent.sshService)
+                emit(parent.runner.consoleOutput.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n")
 
             case "npm":
                 let sub = args.first?.lowercased() ?? ""

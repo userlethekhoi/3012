@@ -25,6 +25,7 @@ struct App3012Main: App {
     @StateObject private var theosService = TheosBuildService()
     @StateObject private var xtoolService = XtoolBuildService()
     @StateObject private var daemonService = LocalDaemonService()
+    @StateObject private var pcSyncService = PCSyncService()
 
     var body: some Scene {
         WindowGroup {
@@ -41,7 +42,8 @@ struct App3012Main: App {
                 timelineService: timelineService,
                 theosService: theosService,
                 xtoolService: xtoolService,
-                daemonService: daemonService
+                daemonService: daemonService,
+                pcSyncService: pcSyncService
             )
             .preferredColorScheme(preferences.activePalette.isDark ? .dark : .light)
             .environment(\.locale, Locale(identifier: preferences.appLanguage.localeIdentifier))
@@ -63,6 +65,7 @@ public struct MainIDEWorkspaceView: View {
     @ObservedObject var theosService: TheosBuildService
     @ObservedObject var xtoolService: XtoolBuildService
     @ObservedObject var daemonService: LocalDaemonService
+    @ObservedObject var pcSyncService: PCSyncService
 
     @State private var showLeftExplorer: Bool = false
     @State private var showRightAIPanel: Bool = false
@@ -78,8 +81,10 @@ public struct MainIDEWorkspaceView: View {
     @State private var showTheosBuilderSheet: Bool = false
     @State private var showXtoolBuilderSheet: Bool = false
     @State private var showDaemonManagerSheet: Bool = false
+    @State private var showPCSyncSheet: Bool = false
+    @State private var showLiveShareSheet: Bool = false
+    @State private var showPowerToolsSheet: Bool = false
     @State private var shareZipItem: ShareableZipFile? = nil
-    @State private var rootDocumentPickerMode: WorkspaceDocumentPickerMode? = nil
 
     @State private var markdownMode: MarkdownDisplayMode = .editor
     @State private var findTriggerToken: Int = 0
@@ -179,6 +184,7 @@ public struct MainIDEWorkspaceView: View {
                         sshService: sshService,
                         extStore: extStore,
                         timelineService: timelineService,
+                        pcSync: pcSyncService,
                         onInsertSnippet: { snippetBody in
                             insertTextIntoActiveTab(snippetBody)
                         },
@@ -191,13 +197,32 @@ public struct MainIDEWorkspaceView: View {
                             showXtoolBuilderSheet = true
                         },
                         onRequestOpenSingleFile: {
-                            rootDocumentPickerMode = .singleFile
+                            presentWorkspaceDocumentPicker(.singleFile)
                         },
                         onRequestOpenFolder: {
-                            rootDocumentPickerMode = .folder
+                            presentWorkspaceDocumentPicker(.folder)
                         },
                         onRequestImportZip: {
-                            rootDocumentPickerMode = .zip
+                            presentWorkspaceDocumentPicker(.zip)
+                        },
+                        onOpenPCSyncSheet: {
+                            showLeftExplorer = false
+                            showPCSyncSheet = true
+                        },
+                        onOpenLiveShareSheet: {
+                            showLeftExplorer = false
+                            showLiveShareSheet = true
+                        },
+                        onOpenPowerToolsSheet: {
+                            showLeftExplorer = false
+                            showPowerToolsSheet = true
+                        },
+                        onJumpToSearchHit: { url, line in
+                            workspace.openFile(at: url)
+                            showLeftExplorer = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                                triggerJumpToLine(line)
+                            }
                         },
                         onOpenSettings: {
                             showLeftExplorer = false
@@ -223,6 +248,8 @@ public struct MainIDEWorkspaceView: View {
                             workspace: workspace,
                             runner: runner,
                             preferences: preferences,
+                            intelligence: intelligence,
+                            gitService: gitService,
                             onClose: {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     showRightAIPanel = false
@@ -261,6 +288,10 @@ public struct MainIDEWorkspaceView: View {
                 if let workspace {
                     intelligence?.reindexWorkspaceFiles(workspace.flattenFiles(in: workspace.fileTree))
                 }
+            }
+            pcSyncService.attachWorkspace(workspace)
+            workspace.onWorkspaceMutation = { [weak pcSyncService] event in
+                pcSyncService?.handleWorkspaceMutation(event)
             }
             liveServer.start(
                 serving: workspace.rootURL,
@@ -384,37 +415,38 @@ public struct MainIDEWorkspaceView: View {
             }
         }
         .onOpenURL { url in
+            if url.scheme?.lowercased() == "3012sync" {
+                if pcSyncService.applyPairingString(url.absoluteString) {
+                    showPCSyncSheet = true
+                }
+                return
+            }
             workspace.handleIncomingURL(url)
             liveServer.updateRootDirectory(workspace.rootURL)
         }
         .onChange(of: workspace.rootURL) { newRoot in
             liveServer.updateRootDirectory(newRoot)
         }
-        .sheet(item: $rootDocumentPickerMode) { mode in
-            SystemDocumentPickerSheet(
-                mode: mode,
-                onPickURL: { pickedURL in
-                    switch mode {
-                    case .singleFile:
-                        workspace.openExternalSingleFile(from: pickedURL)
-                        liveServer.updateRootDirectory(workspace.rootURL)
-                    case .folder:
-                        workspace.switchWorkspaceFolder(to: pickedURL)
-                        liveServer.updateRootDirectory(workspace.rootURL)
-                    case .zip:
-                        if workspace.importAndOpenZip(from: pickedURL) {
-                            liveServer.updateRootDirectory(workspace.rootURL)
-                        }
-                    case .themeJSON:
-                        break
-                    }
-                },
-                onPickURLs: mode == .singleFile ? { pickedURLs in
-                    for url in pickedURLs {
-                        workspace.openExternalSingleFile(from: url)
-                    }
-                    liveServer.updateRootDirectory(workspace.rootURL)
-                } : nil
+        .sheet(isPresented: $showPCSyncSheet) {
+            PCSyncCompanionSheet(
+                pcSync: pcSyncService,
+                workspace: workspace,
+                preferences: preferences
+            )
+        }
+        .sheet(isPresented: $showLiveShareSheet) {
+            LiveServerShareSheet(
+                liveServer: liveServer,
+                workspace: workspace,
+                preferences: preferences
+            )
+        }
+        .sheet(isPresented: $showPowerToolsSheet) {
+            DeveloperPowerToolsSheet(
+                workspace: workspace,
+                runner: runner,
+                sshService: sshService,
+                preferences: preferences
             )
         }
         .sheet(item: $shareZipItem) { item in
@@ -460,9 +492,10 @@ public struct MainIDEWorkspaceView: View {
     private func centralEditorAndPreviewArea(activeTab: OpenTab, palette: IDEColorPalette, isWide: Bool) -> some View {
         let showMarkdownSplit = (activeTab.language == .markdown && markdownMode == .split)
         let showMarkdownOnly = (activeTab.language == .markdown && markdownMode == .preview)
+        let markdownBaseDir = activeTab.fileURL.deletingLastPathComponent()
 
         if showMarkdownOnly {
-            MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette)
+            MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette, baseDirectoryURL: markdownBaseDir)
         } else if showMarkdownSplit {
             GeometryReader { splitGeo in
                 if isWide {
@@ -490,7 +523,7 @@ public struct MainIDEWorkspaceView: View {
                                 editorSplitRatio = 0.50
                             }
                         )
-                        MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette)
+                        MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette, baseDirectoryURL: markdownBaseDir)
                             .frame(width: rightW)
                     }
                 } else {
@@ -518,7 +551,7 @@ public struct MainIDEWorkspaceView: View {
                                 editorSplitRatio = 0.50
                             }
                         )
-                        MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette)
+                        MarkdownMermaidPreviewView(markdown: activeTab.content, palette: palette, baseDirectoryURL: markdownBaseDir)
                             .frame(height: bottomH)
                     }
                 }
@@ -574,6 +607,12 @@ public struct MainIDEWorkspaceView: View {
             onOpenDaemonManager: {
                 showDaemonManagerSheet = true
             },
+            onOpenShareSheet: {
+                showLiveShareSheet = true
+            },
+            onFixRawErrorWithAgent: { rawError in
+                fixRawErrorWithAgent(rawError)
+            },
             onClose: {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     showBottomPanel = false
@@ -613,6 +652,8 @@ public struct MainIDEWorkspaceView: View {
             workspace: workspace,
             runner: runner,
             preferences: preferences,
+            intelligence: intelligence,
+            gitService: gitService,
             onClose: {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     showRightAIPanel = false
@@ -999,6 +1040,55 @@ public struct MainIDEWorkspaceView: View {
                 .buttonStyle(.plain)
 
                 // 4.2 Quick Line / Clipboard Menu (Cut, Select All, Duplicate/Delete Line)
+                if activeTab.selectedRangeLength > 0 {
+                    Menu {
+                        Button {
+                            runSelectionAIAction(
+                                slashCommand: "/explain",
+                                instruction: "Giải thích rõ đoạn code đang chọn ở trên hoạt động như thế nào."
+                            )
+                        } label: {
+                            Label(preferences.tr("Giải thích đoạn chọn (/explain)", "Explain Selection (/explain)"), systemImage: "text.bubble")
+                        }
+                        Button {
+                            runSelectionAIAction(
+                                slashCommand: "/refactor",
+                                instruction: "Tối ưu / Refactor đoạn code đang chọn cho sạch hơn, nhanh hơn và đề xuất bằng <file_edit>."
+                            )
+                        } label: {
+                            Label(preferences.tr("Tối ưu đoạn chọn (/refactor)", "Refactor Selection (/refactor)"), systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        Button {
+                            runSelectionAIAction(
+                                slashCommand: "/fix",
+                                instruction: "Tìm lỗi tiềm ẩn trong đoạn code đang chọn và sửa lại bằng <file_edit>."
+                            )
+                        } label: {
+                            Label(preferences.tr("Tìm & sửa lỗi đoạn chọn (/fix)", "Fix Selection (/fix)"), systemImage: "wrench.and.screwdriver")
+                        }
+                        Button {
+                            runSelectionAIAction(
+                                slashCommand: "/test",
+                                instruction: "Viết Unit Test cho đoạn code đang chọn và đề xuất bằng <file_edit>."
+                            )
+                        } label: {
+                            Label(preferences.tr("Viết Test cho đoạn chọn (/test)", "Generate Tests (/test)"), systemImage: "checkmark.seal")
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "cpu")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text("AI")
+                                .font(.system(size: 9.5, weight: .bold))
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(hex: palette.accent).opacity(0.22))
+                        .foregroundColor(Color(hex: palette.accent))
+                        .cornerRadius(4)
+                    }
+                }
+
                 Menu {
                     Button { triggerQuickAction(.undo) } label: {
                         Label(preferences.tr("Hoàn tác (Ctrl+Z)", "Undo (Ctrl+Z)"), systemImage: "arrow.uturn.backward")
@@ -1398,10 +1488,15 @@ public struct MainIDEWorkspaceView: View {
                     Image(systemName: "folder.fill")
                         .font(.system(size: 10))
                         .foregroundColor(Color(hex: palette.accent))
-                    Text(workspace.rootURL.lastPathComponent)
+                    Text(workspace.workspaceDisplayName)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(Color(hex: palette.foreground))
                         .lineLimit(1)
+                    if pcSyncService.isConnected {
+                        Circle()
+                            .fill(pcSyncService.transportMode == .wifiLAN ? Color.green : Color.cyan)
+                            .frame(width: 5.5, height: 5.5)
+                    }
                 }
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
@@ -1455,184 +1550,78 @@ public struct MainIDEWorkspaceView: View {
                 .cornerRadius(6)
             }
 
-            // Tools & Intelligence Menu
-            Menu {
-                Button {
-                    showCommandPalette = true
-                } label: {
-                    Label(preferences.tr("Command Palette & Mở nhanh", "Command Palette & Quick Open"), systemImage: "command")
-                }
-
-                Button {
-                    saveActiveTabWithCheckpoint()
-                } label: {
-                    Label(preferences.tr("Lưu File & Tạo Mốc Lịch Sử", "Save File & Record Snapshot"), systemImage: "externaldrive.badge.checkmark")
-                }
-
-                Button {
-                    showSymbolOutlineSheet = true
-                } label: {
-                    Label(preferences.tr("Danh sách Hàm / Class (Symbol Outline)", "Symbol Outline (Functions / Classes)"), systemImage: "list.bullet.indent")
-                }
-
-                Button {
-                    showTimelineSheet = true
-                } label: {
-                    Label(preferences.tr("Lịch sử Phiên bản File (Timeline)", "File Version Timeline"), systemImage: "clock.arrow.circlepath")
-                }
-
-                Divider()
-
-                Toggle(isOn: $preferences.enableCodeCompletion) {
-                    Label(preferences.tr("Gợi ý Code thông minh (Smart IntelliSense)", "Smart Code IntelliSense"), systemImage: "text.cursor")
-                }
-
-                Toggle(isOn: $preferences.enableLiveDiagnostics) {
-                    Label(preferences.tr("Báo lỗi trực tiếp trên Editor", "Inline Error Diagnostics"), systemImage: "exclamationmark.triangle")
-                }
-
-                Toggle(isOn: $preferences.formatOnSave) {
-                    Label(preferences.tr("Tự động Format khi Lưu / Chạy", "Auto-Format on Save / Run"), systemImage: "arrow.triangle.2.circlepath")
-                }
-
-                Button {
-                    showLanguagePickerSheet = true
-                } label: {
-                    Label(preferences.tr("Chọn Ngôn ngữ Code", "Code Language Mode") + " (\(workspace.activeTab?.language.shortBadgeName ?? "Auto"))", systemImage: "chevron.left.forwardslash.chevron.right")
-                }
-
-                Button {
-                    formatActiveFile()
-                } label: {
-                    Label(preferences.tr("Format Document theo Ngôn ngữ", "Format Document by Language"), systemImage: "text.alignleft")
-                }
-
-                Divider()
-
-                Button {
+            // Tools & Intelligence Menu (Equatable wrapper prevents scroll reset on high-frequency updates)
+            HeaderToolsMenuView(
+                appLanguage: preferences.appLanguage,
+                activeLanguageBadge: workspace.activeTab?.language.shortBadgeName ?? "Auto",
+                enableCodeCompletion: preferences.enableCodeCompletion,
+                enableLiveDiagnostics: preferences.enableLiveDiagnostics,
+                formatOnSave: preferences.formatOnSave,
+                liveServerRunning: liveServer.isRunning,
+                liveServerPort: liveServer.port,
+                isShareLinkEnabled: liveServer.isShareLinkEnabled,
+                sharedViewerCount: liveServer.sharedViewerCount,
+                sshConnected: sshService.isConnected,
+                pcSyncConnected: pcSyncService.isConnected,
+                pcSyncTransportLabel: pcSyncService.transportMode.badgeLabel,
+                foregroundHex: palette.foreground,
+                accentHex: palette.accent,
+                onCommandPalette: { showCommandPalette = true },
+                onSaveSnapshot: { saveActiveTabWithCheckpoint() },
+                onSymbolOutline: { showSymbolOutlineSheet = true },
+                onTimeline: { showTimelineSheet = true },
+                onSetCodeCompletion: { preferences.enableCodeCompletion = $0 },
+                onSetLiveDiagnostics: { preferences.enableLiveDiagnostics = $0 },
+                onSetFormatOnSave: { preferences.formatOnSave = $0 },
+                onLanguagePicker: { showLanguagePickerSheet = true },
+                onFormatDocument: { formatActiveFile() },
+                onOpenSafari: {
                     if !liveServer.isRunning {
                         liveServer.start(serving: workspace.rootURL, keepAliveInBackground: preferences.keepServerInBackground)
                     }
                     let rel = (workspace.activeTab?.language == .html) ? workspace.relativePath(for: workspace.activeTab!.fileURL) : "index.html"
                     liveServer.openInSafari(relativePath: rel)
-                } label: {
-                    Label(preferences.tr("Mở localhost:\(liveServer.port) trên Safari", "Open localhost:\(liveServer.port) in Safari"), systemImage: "safari")
-                }
-
-                Button {
+                },
+                onOpenLiveShare: {
+                    if !liveServer.isRunning {
+                        liveServer.start(serving: workspace.rootURL, keepAliveInBackground: preferences.keepServerInBackground)
+                    }
+                    liveServer.refreshLANAddress()
+                    showLiveShareSheet = true
+                },
+                onOpenSplitPreview: {
                     bottomTab = .livePreview
                     withAnimation { showBottomPanel = true }
-                } label: {
-                    Label(preferences.tr("Xem Split Preview & Web F12", "Open Split Preview & Web F12"), systemImage: "rectangle.split.1x2")
-                }
-
-                Button {
+                },
+                onToggleTerminal: {
                     bottomTab = .terminal
                     withAnimation { showBottomPanel.toggle() }
-                } label: {
-                    Label(sshService.isConnected
-                          ? preferences.tr("Mở SSH PTY Terminal (SwiftTerm)", "Open SSH PTY Terminal (SwiftTerm)")
-                          : preferences.tr("Mở Terminal (SwiftTerm)", "Open Terminal (SwiftTerm)"), systemImage: "terminal")
+                },
+                onOpenFindBar: { openInlineFindBar() },
+                onOpenPCSync: { showPCSyncSheet = true },
+                onOpenPowerTools: { showPowerToolsSheet = true },
+                onScaffoldStarter: { kind in
+                    _ = workspace.scaffoldStarterTemplate(kind: kind)
+                    liveServer.updateRootDirectory(workspace.rootURL)
+                },
+                onOpenDaemonManager: { showDaemonManagerSheet = true },
+                onOpenTheos: { showTheosBuilderSheet = true },
+                onOpenXtool: { showXtoolBuilderSheet = true },
+                onPickFile: { presentWorkspaceDocumentPicker(.singleFile) },
+                onPickFolder: { presentWorkspaceDocumentPicker(.folder) },
+                onPickZip: { presentWorkspaceDocumentPicker(.zip) },
+                onExportZip: { exportWorkspaceAsZipAndShare() },
+                onOpenThemeStudio: { showThemeStudioDirect = true },
+                onSelectLanguage: { preferences.appLanguage = $0 },
+                onOpenSettings: { showSettingsSheet = true },
+                tr: { vi, en, zh, ja, ko, ru, es in
+                    preferences.tr(vi, en, zh: zh, ja: ja, ko: ko, ru: ru, es: es)
+                },
+                langDisplayName: { lang in
+                    lang.displayName(in: preferences.appLanguage)
                 }
-
-                Button {
-                    openInlineFindBar()
-                } label: {
-                    Label(preferences.tr("Tìm kiếm & Thay thế", "Find & Replace"), systemImage: "magnifyingglass")
-                }
-
-                Divider()
-
-                Button {
-                    showDaemonManagerSheet = true
-                } label: {
-                    Label(
-                        preferences.tr(
-                            "Treo Bot & Chạy Ngầm Terminal (24/7 Trên Máy)",
-                            "24/7 Background Terminal & Bot Runner (On-Device)",
-                            zh: "24/7 本机后台终端与 Bot 运行器",
-                            ja: "24/7 端末内バックグラウンド＆Bot",
-                            ko: "24/7 기기 내 백그라운드 & 봇 실행",
-                            ru: "Локальный 24/7 терминал и боты",
-                            es: "Terminal y Bots 24/7 (Local)"
-                        ),
-                        systemImage: "waveform.path.ecg"
-                    )
-                }
-
-                Button {
-                    showTheosBuilderSheet = true
-                } label: {
-                    Label(preferences.tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)"), systemImage: "hammer.fill")
-                }
-
-                Button {
-                    showXtoolBuilderSheet = true
-                } label: {
-                    Label(preferences.tr("xtool Studio (Build SwiftUI .ipa & Nhúng .dylib)", "xtool Studio (Build SwiftUI .ipa & Inject .dylib)"), systemImage: "cube.transparent.fill")
-                }
-
-                Button {
-                    rootDocumentPickerMode = .singleFile
-                } label: {
-                    Label(preferences.tr("Mở File lẻ trên máy (Files)...", "Open File(s) on Device (Files)..."), systemImage: "doc.badge.arrow.up")
-                }
-
-                Button {
-                    rootDocumentPickerMode = .folder
-                } label: {
-                    Label(preferences.tr("Mở Thư mục trên máy (Files)...", "Open Folder on Device (Files)..."), systemImage: "folder.badge.gearshape")
-                }
-
-                Button {
-                    rootDocumentPickerMode = .zip
-                } label: {
-                    Label(preferences.tr("Nhập & Tự giải nén File .zip...", "Import & Auto-Extract .zip File..."), systemImage: "doc.zipper")
-                }
-
-                Button {
-                    exportWorkspaceAsZipAndShare()
-                } label: {
-                    Label(preferences.tr("Xuất Dự án ra File .zip", "Export Project Workspace as .zip"), systemImage: "square.and.arrow.up")
-                }
-
-                Button {
-                    showThemeStudioDirect = true
-                } label: {
-                    Label(preferences.tr("Theme Studio (Tự chỉnh màu Code & App)", "Theme Studio (Customize Code & App Colors)"), systemImage: "slider.horizontal.below.square.filled.and.square")
-                }
-
-                Menu {
-                    ForEach(AppLanguage.allCases) { lang in
-                        Button {
-                            preferences.appLanguage = lang
-                        } label: {
-                            if preferences.appLanguage == lang {
-                                Label("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))", systemImage: "checkmark")
-                            } else {
-                                Text("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))")
-                            }
-                        }
-                    }
-                } label: {
-                    Label(
-                        preferences.tr("Ngôn ngữ App", "App Language", zh: "应用语言", ja: "アプリ言語", ko: "앱 언어", ru: "Язык приложения", es: "Idioma de la app") + " (\(preferences.appLanguage.shortBadge))",
-                        systemImage: "globe"
-                    )
-                }
-
-                Button {
-                    showSettingsSheet = true
-                } label: {
-                    Label(preferences.tr("Theme, Font & Cài đặt", "Themes, Fonts & Settings"), systemImage: "slider.horizontal.3")
-                }
-            } label: {
-                Image(systemName: liveServer.isRunning ? "antenna.radiowaves.left.and.right" : "ellipsis.circle")
-                    .symbolRenderingMode(.hierarchical)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(liveServer.isRunning ? .green : Color(hex: palette.foreground))
-                    .frame(width: 28, height: 30)
-            }
+            )
+            .equatable()
 
             // Coding Agent Button
             Button {
@@ -1690,7 +1679,7 @@ public struct MainIDEWorkspaceView: View {
 
             // Quick 1-Tap Open Standalone File(s) from Files.app
             Button {
-                rootDocumentPickerMode = .singleFile
+                presentWorkspaceDocumentPicker(.singleFile)
             } label: {
                 Image(systemName: "doc.badge.arrow.up")
                     .font(.system(size: 11, weight: .semibold))
@@ -1860,7 +1849,7 @@ public struct MainIDEWorkspaceView: View {
     @ViewBuilder
     private var hardwareKeyboardShortcutsHost: some View {
         ZStack {
-            Button("") { rootDocumentPickerMode = .singleFile }
+            Button("") { presentWorkspaceDocumentPicker(.singleFile) }
                 .keyboardShortcut("o", modifiers: .command)
             Button("") { saveActiveTabWithCheckpoint() }
                 .keyboardShortcut("s", modifiers: .command)
@@ -1996,9 +1985,9 @@ public struct MainIDEWorkspaceView: View {
 
             VStack(spacing: 9) {
                 Button {
-                    rootDocumentPickerMode = .singleFile
+                    presentWorkspaceDocumentPicker(.singleFile)
                 } label: {
-                    Label(preferences.tr("Mở File lẻ (Files)", "Open Standalone File(s) (Files)"), systemImage: "doc.badge.arrow.up")
+                    Label(preferences.tr("Mở File lẻ (File)", "Open Standalone File (File)"), systemImage: "doc.badge.arrow.up")
                         .font(.system(size: 12.5, weight: .semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
@@ -2009,9 +1998,9 @@ public struct MainIDEWorkspaceView: View {
 
                 HStack(spacing: 10) {
                     Button {
-                        rootDocumentPickerMode = .folder
+                        presentWorkspaceDocumentPicker(.folder)
                     } label: {
-                        Label(preferences.tr("Mở Thư mục (Files)", "Open Folder (Files)"), systemImage: "folder")
+                        Label(preferences.tr("Mở Thư mục (Folder)", "Open Folder (Folder)"), systemImage: "folder")
                             .font(.system(size: 12, weight: .semibold))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
@@ -2021,7 +2010,7 @@ public struct MainIDEWorkspaceView: View {
                     }
 
                     Button {
-                        rootDocumentPickerMode = .zip
+                        presentWorkspaceDocumentPicker(.zip)
                     } label: {
                         Label(preferences.tr("Nhập & Giải nén .zip", "Import & Extract .zip"), systemImage: "doc.zipper")
                             .font(.system(size: 12, weight: .semibold))
@@ -2029,6 +2018,32 @@ public struct MainIDEWorkspaceView: View {
                             .padding(.vertical, 7)
                             .background(Color(hex: palette.currentLineBackground))
                             .foregroundColor(Color(hex: palette.foreground))
+                            .cornerRadius(7)
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        showPCSyncSheet = true
+                    } label: {
+                        Label(preferences.tr("Đồng bộ PC (Wi-Fi / 4G)", "PC Sync (Wi-Fi / 4G)"), systemImage: "desktopcomputer")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color.green.opacity(0.16))
+                            .foregroundColor(.green)
+                            .cornerRadius(7)
+                    }
+
+                    Button {
+                        showPowerToolsSheet = true
+                    } label: {
+                        Label(preferences.tr("Công cụ Dev", "Dev Tools"), systemImage: "wrench.and.screwdriver")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color(hex: palette.currentLineBackground))
+                            .foregroundColor(Color(hex: palette.accent))
                             .cornerRadius(7)
                     }
                 }
@@ -2145,9 +2160,11 @@ public struct MainIDEWorkspaceView: View {
     }
 
     private func mergedHighlightedRanges(for tab: OpenTab) -> [HighlightedRange] {
-        var ranges = intelligence.makeRunestoneHighlightedRanges(enabled: preferences.enableLiveDiagnostics)
-        guard showInlineFindBar, !findMatchRanges.isEmpty else { return ranges }
         let docLen = (tab.content as NSString).length
+        var ranges = intelligence.makeRunestoneHighlightedRanges(enabled: preferences.enableLiveDiagnostics).filter {
+            $0.range.location >= 0 && $0.range.length > 0 && $0.range.upperBound <= docLen
+        }
+        guard showInlineFindBar, !findMatchRanges.isEmpty else { return ranges }
         for (idx, range) in findMatchRanges.enumerated() {
             guard range.location >= 0, range.length > 0, range.upperBound <= docLen else { continue }
             let isCurrent = (idx == currentFindMatchIndex)
@@ -2338,13 +2355,65 @@ public struct MainIDEWorkspaceView: View {
         }
     }
 
+    private func presentWorkspaceDocumentPicker(_ mode: WorkspaceDocumentPickerMode, delay: TimeInterval = 0.08) {
+        NativeDocumentPickerPresenter.shared.presentPicker(
+            mode: mode,
+            initialDelay: delay,
+            onPickURL: { pickedURL in
+                switch mode {
+                case .singleFile:
+                    workspace.openExternalSingleFile(from: pickedURL)
+                    liveServer.updateRootDirectory(workspace.rootURL)
+                case .folder:
+                    workspace.switchWorkspaceFolder(to: pickedURL)
+                    liveServer.updateRootDirectory(workspace.rootURL)
+                case .zip:
+                    if workspace.importAndOpenZip(from: pickedURL) {
+                        liveServer.updateRootDirectory(workspace.rootURL)
+                    }
+                case .themeJSON:
+                    break
+                }
+            },
+            onPickURLs: mode == .singleFile ? { pickedURLs in
+                for url in pickedURLs {
+                    workspace.openExternalSingleFile(from: url)
+                }
+                liveServer.updateRootDirectory(workspace.rootURL)
+            } : nil
+        )
+    }
+
+    private func currentDiagnosticsSummary() -> String {
+        intelligence.diagnostics.prefix(20).map {
+            "Line \($0.line) [\($0.severity == .error ? "ERROR" : "WARN")]: \($0.message)"
+        }.joined(separator: "\n")
+    }
+
+    private func currentGitDiffSummary() -> String {
+        gitService.changedFiles.prefix(20).map {
+            "\($0.statusBadge) \($0.relativePath) (+\($0.addedLines)/-\($0.removedLines))"
+        }.joined(separator: "\n")
+    }
+
+    private func agentExistingFileReader(_ relPath: String) -> String? {
+        let clean = relPath.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+        let url = workspace.rootURL.appendingPathComponent(clean)
+        if let tab = workspace.openTabs.first(where: { $0.fileURL.standardizedFileURL == url.standardizedFileURL }) {
+            return tab.content
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
     private func fixDiagnosticWithAgent(_ diag: EditorDiagnostic) {
         guard let active = workspace.activeTab else { return }
         withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
             showRightAIPanel = true
         }
         let relPath = workspace.relativePath(for: active.fileURL)
-        let prompt = "Hãy sửa lỗi sau tại dòng \(diag.line) trong file \(relPath): \"\(diag.message)\". Đề xuất bản sửa hoàn chỉnh bằng <file_edit>."
+        let prompt = "/fix Hãy sửa lỗi sau tại dòng \(diag.line) trong file \(relPath): \"\(diag.message)\". Đề xuất bản sửa hoàn chỉnh bằng <file_edit>."
+        let diags = currentDiagnosticsSummary()
+        let gitDiff = currentGitDiffSummary()
         Task {
             await aiService.sendPrompt(
                 userPrompt: prompt,
@@ -2353,9 +2422,64 @@ public struct MainIDEWorkspaceView: View {
                 activeFileContent: active.content,
                 selectedSnippet: workspace.selectedSnippetInActiveTab(),
                 lastConsoleOutput: runner.consoleOutput,
+                diagnosticsSummary: diags,
+                gitDiffSummary: gitDiff,
                 existingFileReader: { rel in
-                    let url = workspace.rootURL.appendingPathComponent(rel)
-                    return try? String(contentsOf: url, encoding: .utf8)
+                    agentExistingFileReader(rel)
+                }
+            )
+        }
+    }
+
+    private func fixRawErrorWithAgent(_ rawError: String) {
+        let active = workspace.activeTab
+        let relPath = active.map { workspace.relativePath(for: $0.fileURL) }
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            showRightAIPanel = true
+        }
+        let targetNote = relPath.map { "File hiện tại: \($0)\n" } ?? ""
+        let prompt = "/fix \(targetNote)Hãy phân tích lỗi bên dưới, tìm nguyên nhân gốc rễ và sửa hoàn chỉnh bằng <file_edit>:\n```\n\(rawError)\n```"
+        let diags = currentDiagnosticsSummary()
+        let gitDiff = currentGitDiffSummary()
+        Task {
+            await aiService.sendPrompt(
+                userPrompt: prompt,
+                workspaceTree: workspace.workspaceSummaryTree(),
+                activeFilePath: relPath,
+                activeFileContent: active?.content,
+                selectedSnippet: workspace.selectedSnippetInActiveTab(),
+                lastConsoleOutput: runner.consoleOutput,
+                diagnosticsSummary: diags,
+                gitDiffSummary: gitDiff,
+                existingFileReader: { rel in
+                    agentExistingFileReader(rel)
+                }
+            )
+        }
+    }
+
+    private func runSelectionAIAction(slashCommand: String, instruction: String) {
+        guard let active = workspace.activeTab else { return }
+        let relPath = workspace.relativePath(for: active.fileURL)
+        let snippet = workspace.selectedSnippetInActiveTab()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            showRightAIPanel = true
+        }
+        let prompt = "\(slashCommand) @selection (trong \(relPath))\n\(instruction)"
+        let diags = currentDiagnosticsSummary()
+        let gitDiff = currentGitDiffSummary()
+        Task {
+            await aiService.sendPrompt(
+                userPrompt: prompt,
+                workspaceTree: workspace.workspaceSummaryTree(),
+                activeFilePath: relPath,
+                activeFileContent: active.content,
+                selectedSnippet: snippet,
+                lastConsoleOutput: runner.consoleOutput,
+                diagnosticsSummary: diags,
+                gitDiffSummary: gitDiff,
+                existingFileReader: { rel in
+                    agentExistingFileReader(rel)
                 }
             )
         }
@@ -2530,19 +2654,32 @@ public struct MainIDEWorkspaceView: View {
             (preferences.tr("Treo Bot Telegram & Chạy Ngầm Terminal 24/7 (Trên Máy)", "24/7 Background Terminal & Telegram Bot Runner (On-Device)"), "waveform.path.ecg", { showDaemonManagerSheet = true }),
             (preferences.tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)"), "hammer.fill", { showTheosBuilderSheet = true }),
             (preferences.tr("xtool Studio — Build SwiftUI .ipa & Nhúng .dylib", "xtool Studio — Build SwiftUI .ipa & Inject .dylib"), "cube.transparent.fill", { showXtoolBuilderSheet = true }),
-            (preferences.tr("Mở File lẻ trên máy (Files)... (Cmd+O)", "Open File(s) from Files... (Cmd+O)"), "doc.badge.arrow.up", {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    rootDocumentPickerMode = .singleFile
-                }
+            (preferences.tr("Mở File lẻ trên máy (File)... (Cmd+O)", "Open File on Device (File)... (Cmd+O)"), "doc.badge.arrow.up", {
+                presentWorkspaceDocumentPicker(.singleFile, delay: 0.35)
             }),
-            (preferences.tr("Mở Thư mục trên máy (Files)...", "Open Folder on Device (Files)..."), "folder.badge.gearshape", {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    rootDocumentPickerMode = .folder
-                }
+            (preferences.tr("Mở Thư mục trên máy (Folder)...", "Open Folder on Device (Folder)..."), "folder.badge.gearshape", {
+                presentWorkspaceDocumentPicker(.folder, delay: 0.35)
             }),
             (preferences.tr("Nhập & Tự giải nén File .zip...", "Import & Auto-Extract .zip Archive..."), "doc.zipper", {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    rootDocumentPickerMode = .zip
+                presentWorkspaceDocumentPicker(.zip, delay: 0.35)
+            }),
+            (preferences.tr("Đồng bộ 2 chiều PC <-> Mobile (Wi-Fi / 4G)", "2-Way PC <-> Mobile Sync (Wi-Fi / 4G)"), "desktopcomputer", {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    showPCSyncSheet = true
+                }
+            }),
+            (preferences.tr("Chia sẻ Link Live Preview (:\(liveServer.port))", "Share Live Preview Link (:\(liveServer.port))"), "dot.radiowaves.left.and.right", {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    if !liveServer.isRunning {
+                        liveServer.start(serving: workspace.rootURL, keepAliveInBackground: preferences.keepServerInBackground)
+                    }
+                    liveServer.refreshLANAddress()
+                    showLiveShareSheet = true
+                }
+            }),
+            (preferences.tr("Bộ Công Cụ Dev (CP Judge / API / .env / Color)", "Developer Power Tools (CP Judge / API / .env / Color)"), "wrench.and.screwdriver.fill", {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    showPowerToolsSheet = true
                 }
             }),
             (preferences.tr("Xuất Dự án ra File .zip", "Export Project Workspace as .zip"), "square.and.arrow.up", { exportWorkspaceAsZipAndShare() }),
@@ -2566,6 +2703,250 @@ public struct MainIDEWorkspaceView: View {
                 showSettingsSheet = true
             })
         ]
+    }
+}
+
+private struct HeaderToolsMenuView: View, Equatable {
+    let appLanguage: AppLanguage
+    let activeLanguageBadge: String
+    let enableCodeCompletion: Bool
+    let enableLiveDiagnostics: Bool
+    let formatOnSave: Bool
+    let liveServerRunning: Bool
+    let liveServerPort: UInt16
+    let isShareLinkEnabled: Bool
+    let sharedViewerCount: Int
+    let sshConnected: Bool
+    let pcSyncConnected: Bool
+    let pcSyncTransportLabel: String
+    let foregroundHex: String
+    let accentHex: String
+
+    let onCommandPalette: () -> Void
+    let onSaveSnapshot: () -> Void
+    let onSymbolOutline: () -> Void
+    let onTimeline: () -> Void
+    let onSetCodeCompletion: (Bool) -> Void
+    let onSetLiveDiagnostics: (Bool) -> Void
+    let onSetFormatOnSave: (Bool) -> Void
+    let onLanguagePicker: () -> Void
+    let onFormatDocument: () -> Void
+    let onOpenSafari: () -> Void
+    let onOpenLiveShare: () -> Void
+    let onOpenSplitPreview: () -> Void
+    let onToggleTerminal: () -> Void
+    let onOpenFindBar: () -> Void
+    let onOpenPCSync: () -> Void
+    let onOpenPowerTools: () -> Void
+    let onScaffoldStarter: (ProjectStarterKind) -> Void
+    let onOpenDaemonManager: () -> Void
+    let onOpenTheos: () -> Void
+    let onOpenXtool: () -> Void
+    let onPickFile: () -> Void
+    let onPickFolder: () -> Void
+    let onPickZip: () -> Void
+    let onExportZip: () -> Void
+    let onOpenThemeStudio: () -> Void
+    let onSelectLanguage: (AppLanguage) -> Void
+    let onOpenSettings: () -> Void
+    let tr: (String, String, String?, String?, String?, String?, String?) -> String
+    let langDisplayName: (AppLanguage) -> String
+
+    static func == (lhs: HeaderToolsMenuView, rhs: HeaderToolsMenuView) -> Bool {
+        lhs.appLanguage == rhs.appLanguage &&
+        lhs.activeLanguageBadge == rhs.activeLanguageBadge &&
+        lhs.enableCodeCompletion == rhs.enableCodeCompletion &&
+        lhs.enableLiveDiagnostics == rhs.enableLiveDiagnostics &&
+        lhs.formatOnSave == rhs.formatOnSave &&
+        lhs.liveServerRunning == rhs.liveServerRunning &&
+        lhs.liveServerPort == rhs.liveServerPort &&
+        lhs.isShareLinkEnabled == rhs.isShareLinkEnabled &&
+        lhs.sharedViewerCount == rhs.sharedViewerCount &&
+        lhs.sshConnected == rhs.sshConnected &&
+        lhs.pcSyncConnected == rhs.pcSyncConnected &&
+        lhs.pcSyncTransportLabel == rhs.pcSyncTransportLabel &&
+        lhs.foregroundHex == rhs.foregroundHex &&
+        lhs.accentHex == rhs.accentHex
+    }
+
+    var body: some View {
+        Menu {
+            Button(action: onCommandPalette) {
+                Label(tr("Command Palette & Mở nhanh", "Command Palette & Quick Open", nil, nil, nil, nil, nil), systemImage: "command")
+            }
+
+            Button(action: onSaveSnapshot) {
+                Label(tr("Lưu File & Tạo Mốc Lịch Sử", "Save File & Record Snapshot", nil, nil, nil, nil, nil), systemImage: "externaldrive.badge.checkmark")
+            }
+
+            Button(action: onSymbolOutline) {
+                Label(tr("Danh sách Hàm / Class (Symbol Outline)", "Symbol Outline (Functions / Classes)", nil, nil, nil, nil, nil), systemImage: "list.bullet.indent")
+            }
+
+            Button(action: onTimeline) {
+                Label(tr("Lịch sử Phiên bản File (Timeline)", "File Version Timeline", nil, nil, nil, nil, nil), systemImage: "clock.arrow.circlepath")
+            }
+
+            Divider()
+
+            Toggle(isOn: Binding(get: { enableCodeCompletion }, set: onSetCodeCompletion)) {
+                Label(tr("Gợi ý Code thông minh (Smart IntelliSense)", "Smart Code IntelliSense", nil, nil, nil, nil, nil), systemImage: "text.cursor")
+            }
+
+            Toggle(isOn: Binding(get: { enableLiveDiagnostics }, set: onSetLiveDiagnostics)) {
+                Label(tr("Báo lỗi trực tiếp trên Editor", "Inline Error Diagnostics", nil, nil, nil, nil, nil), systemImage: "exclamationmark.triangle")
+            }
+
+            Toggle(isOn: Binding(get: { formatOnSave }, set: onSetFormatOnSave)) {
+                Label(tr("Tự động Format khi Lưu / Chạy", "Auto-Format on Save / Run", nil, nil, nil, nil, nil), systemImage: "arrow.triangle.2.circlepath")
+            }
+
+            Button(action: onLanguagePicker) {
+                Label(tr("Chọn Ngôn ngữ Code", "Code Language Mode", nil, nil, nil, nil, nil) + " (\(activeLanguageBadge))", systemImage: "chevron.left.forwardslash.chevron.right")
+            }
+
+            Button(action: onFormatDocument) {
+                Label(tr("Format Document theo Ngôn ngữ", "Format Document by Language", nil, nil, nil, nil, nil), systemImage: "text.alignleft")
+            }
+
+            Divider()
+
+            Button(action: onOpenSafari) {
+                Label(tr("Mở localhost:\(liveServerPort) trên Safari", "Open localhost:\(liveServerPort) in Safari", nil, nil, nil, nil, nil), systemImage: "safari")
+            }
+
+            Button(action: onOpenLiveShare) {
+                Label(
+                    isShareLinkEnabled
+                        ? tr("Chia sẻ Live Preview (BẬT • \(sharedViewerCount))", "Share Live Preview (ON • \(sharedViewerCount))", nil, nil, nil, nil, nil)
+                        : tr("Chia sẻ Link Live Preview (:\(liveServerPort))...", "Share Live Preview Link (:\(liveServerPort))...", nil, nil, nil, nil, nil),
+                    systemImage: "dot.radiowaves.left.and.right"
+                )
+            }
+
+            Button(action: onOpenSplitPreview) {
+                Label(tr("Xem Split Preview & Web F12", "Open Split Preview & Web F12", nil, nil, nil, nil, nil), systemImage: "rectangle.split.1x2")
+            }
+
+            Button(action: onToggleTerminal) {
+                Label(
+                    sshConnected
+                        ? tr("Mở SSH PTY Terminal (SwiftTerm)", "Open SSH PTY Terminal (SwiftTerm)", nil, nil, nil, nil, nil)
+                        : tr("Mở Terminal (SwiftTerm)", "Open Terminal (SwiftTerm)", nil, nil, nil, nil, nil),
+                    systemImage: "terminal"
+                )
+            }
+
+            Button(action: onOpenFindBar) {
+                Label(tr("Tìm kiếm & Thay thế", "Find & Replace", nil, nil, nil, nil, nil), systemImage: "magnifyingglass")
+            }
+
+            Divider()
+
+            Button(action: onOpenPCSync) {
+                Label(
+                    pcSyncConnected
+                        ? tr("Đồng bộ PC <-> Mobile (\(pcSyncTransportLabel))", "PC <-> Mobile Sync (\(pcSyncTransportLabel))", nil, nil, nil, nil, nil)
+                        : tr("Đồng bộ 2 chiều PC <-> Mobile (Wi-Fi & 4G/5G)...", "2-Way PC <-> Mobile Sync (Wi-Fi & 4G/5G)...", nil, nil, nil, nil, nil),
+                    systemImage: "desktopcomputer"
+                )
+            }
+
+            Button(action: onOpenPowerTools) {
+                Label(tr("Bộ Công Cụ Developer (CP Judge / API / .env / Color)...", "Developer Power Tools (CP Judge / API / .env / Color)...", nil, nil, nil, nil, nil), systemImage: "wrench.and.screwdriver.fill")
+            }
+
+            Menu {
+                Button { onScaffoldStarter(.modernWebLanding) } label: {
+                    Label("Web HTML/CSS/JS Live", systemImage: "globe")
+                }
+                Button { onScaffoldStarter(.cppCompetitive) } label: {
+                    Label("C++20 Competitive", systemImage: "cpu")
+                }
+                Button { onScaffoldStarter(.pythonAutomation) } label: {
+                    Label("Python 3.12 Automation", systemImage: "terminal")
+                }
+                Button { onScaffoldStarter(.markdownDocs) } label: {
+                    Label("Markdown + Mermaid Docs", systemImage: "doc.richtext")
+                }
+            } label: {
+                Label(tr("Tạo Dự Án Mẫu (Starter Templates)", "Starter Templates", nil, nil, nil, nil, nil), systemImage: "rectangle.stack.badge.plus")
+            }
+
+            Divider()
+
+            Button(action: onOpenDaemonManager) {
+                Label(
+                    tr(
+                        "Treo Bot & Chạy Ngầm Terminal (24/7 Trên Máy)",
+                        "24/7 Background Terminal & Bot Runner (On-Device)",
+                        "24/7 本机后台终端与 Bot 运行器",
+                        "24/7 端末内バックグラウンド＆Bot",
+                        "24/7 기기 내 백그라운드 & 봇 실행",
+                        "Локальный 24/7 терминал и боты",
+                        "Terminal y Bots 24/7 (Local)"
+                    ),
+                    systemImage: "waveform.path.ecg"
+                )
+            }
+
+            Button(action: onOpenTheos) {
+                Label(tr("Tạo & Build Theos Tweak / Mod Menu (.deb / .dylib)", "Build Theos Tweak / Mod Menu (.deb / .dylib)", nil, nil, nil, nil, nil), systemImage: "hammer.fill")
+            }
+
+            Button(action: onOpenXtool) {
+                Label(tr("xtool Studio (Build SwiftUI .ipa & Nhúng .dylib)", "xtool Studio (Build SwiftUI .ipa & Inject .dylib)", nil, nil, nil, nil, nil), systemImage: "cube.transparent.fill")
+            }
+
+            Button(action: onPickFile) {
+                Label(tr("Mở File lẻ trên máy (File)...", "Open File on Device (File)...", nil, nil, nil, nil, nil), systemImage: "doc.badge.arrow.up")
+            }
+
+            Button(action: onPickFolder) {
+                Label(tr("Mở Thư mục trên máy (Folder)...", "Open Folder on Device (Folder)...", nil, nil, nil, nil, nil), systemImage: "folder.badge.gearshape")
+            }
+
+            Button(action: onPickZip) {
+                Label(tr("Nhập & Tự giải nén File .zip...", "Import & Auto-Extract .zip File...", nil, nil, nil, nil, nil), systemImage: "doc.zipper")
+            }
+
+            Button(action: onExportZip) {
+                Label(tr("Xuất Dự án ra File .zip", "Export Project Workspace as .zip", nil, nil, nil, nil, nil), systemImage: "square.and.arrow.up")
+            }
+
+            Button(action: onOpenThemeStudio) {
+                Label(tr("Theme Studio (Tự chỉnh màu Code & App)", "Theme Studio (Customize Code & App Colors)", nil, nil, nil, nil, nil), systemImage: "slider.horizontal.below.square.filled.and.square")
+            }
+
+            Menu {
+                ForEach(AppLanguage.allCases) { lang in
+                    Button {
+                        onSelectLanguage(lang)
+                    } label: {
+                        if appLanguage == lang {
+                            Label("\(lang.shortBadge) — \(langDisplayName(lang))", systemImage: "checkmark")
+                        } else {
+                            Text("\(lang.shortBadge) — \(langDisplayName(lang))")
+                        }
+                    }
+                }
+            } label: {
+                Label(
+                    tr("Ngôn ngữ App", "App Language", "应用语言", "アプリ言語", "앱 언어", "Язык приложения", "Idioma de la app") + " (\(appLanguage.shortBadge))",
+                    systemImage: "globe"
+                )
+            }
+
+            Button(action: onOpenSettings) {
+                Label(tr("Theme, Font & Cài đặt", "Themes, Fonts & Settings", nil, nil, nil, nil, nil), systemImage: "slider.horizontal.3")
+            }
+        } label: {
+            Image(systemName: liveServerRunning ? "antenna.radiowaves.left.and.right" : "ellipsis.circle")
+                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(liveServerRunning ? .green : Color(hex: foregroundHex))
+                .frame(width: 28, height: 30)
+        }
     }
 }
 

@@ -155,8 +155,10 @@ public final class ExtensionStoreService: ObservableObject {
                             else if let bArr = obj["body"] as? [String] { bodyStr = bArr.joined(separator: "\n") }
                             else { continue }
 
-                            let cleanedBody = bodyStr.replacingOccurrences(of: #"\$\{\d+:([^}]+)\}"#, with: "$1", options: .regularExpression)
-                                .replacingOccurrences(of: #"\$\d+"#, with: "", options: .regularExpression)
+                            let cleanedBody = bodyStr
+                                .replacingOccurrences(of: #"\$\{\d+:([^}]+)\}"#, with: "$1", options: .regularExpression)
+                                .replacingOccurrences(of: #"\$[1-9]\d*"#, with: "", options: .regularExpression)
+                                .replacingOccurrences(of: "$0", with: "")
                             newSnippets.append(CodeSnippetItem(title: title, prefix: prefix, body: cleanedBody, language: lang))
                             importedSnippetsCount += 1
                         }
@@ -187,6 +189,9 @@ public final class ExtensionStoreService: ObservableObject {
 
     // Strip // and /* */ comments from JSONC files common in VS Code themes/snippets
     nonisolated public static func stripJSONComments(from data: Data) -> Data? {
+        if (try? JSONSerialization.jsonObject(with: data)) != nil {
+            return data
+        }
         guard let text = String(data: data, encoding: .utf8) else { return data }
         var out = ""
         var inString = false

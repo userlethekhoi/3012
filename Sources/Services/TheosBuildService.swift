@@ -742,9 +742,11 @@ public final class TheosBuildService: ObservableObject {
                     dlReq.setValue(deviceID, forHTTPHeaderField: "X-Device-ID")
                     let (binData, dlResp) = try await URLSession.shared.data(for: dlReq)
                     if let dHttp = dlResp as? HTTPURLResponse, dHttp.statusCode == 200 {
-                        let outURL = packagesDir.appendingPathComponent(f.name)
+                        let safeName = (f.name as NSString).lastPathComponent
+                        guard !safeName.isEmpty, safeName != ".", safeName != ".." else { continue }
+                        let outURL = packagesDir.appendingPathComponent(safeName)
                         try binData.write(to: outURL, options: .atomic)
-                        savedNames.append(f.name)
+                        savedNames.append(safeName)
                     }
                 }
 

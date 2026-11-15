@@ -4,10 +4,12 @@ import WebKit
 public struct MarkdownMermaidPreviewView: UIViewRepresentable {
     public let markdown: String
     public let palette: IDEColorPalette
+    public let baseDirectoryURL: URL?
 
-    public init(markdown: String, palette: IDEColorPalette) {
+    public init(markdown: String, palette: IDEColorPalette, baseDirectoryURL: URL? = nil) {
         self.markdown = markdown
         self.palette = palette
+        self.baseDirectoryURL = baseDirectoryURL
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -23,7 +25,7 @@ public struct MarkdownMermaidPreviewView: UIViewRepresentable {
         webView.scrollView.backgroundColor = UIColor(hexString: palette.editorBackground)
         let html = Self.buildHTML(markdown: markdown, palette: palette)
         context.coordinator.lastHTML = html
-        webView.loadHTMLString(html, baseURL: nil)
+        webView.loadHTMLString(html, baseURL: baseDirectoryURL)
         return webView
     }
 
@@ -33,7 +35,7 @@ public struct MarkdownMermaidPreviewView: UIViewRepresentable {
         let html = Self.buildHTML(markdown: markdown, palette: palette)
         if context.coordinator.lastHTML != html {
             context.coordinator.lastHTML = html
-            webView.loadHTMLString(html, baseURL: nil)
+            webView.loadHTMLString(html, baseURL: baseDirectoryURL)
         }
     }
 
@@ -182,6 +184,10 @@ public struct MarkdownMermaidPreviewView: UIViewRepresentable {
         // Italic *...*
         if let italicRx = try? NSRegularExpression(pattern: #"(?<!\*)\*([^*]+)\*(?!\*)"#) {
             out = italicRx.stringByReplacingMatches(in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "<em>$1</em>")
+        }
+        // Images ![alt](src) before links [label](url)
+        if let imgRx = try? NSRegularExpression(pattern: #"!\[([^\]]*)\]\(([^)]+)\)"#) {
+            out = imgRx.stringByReplacingMatches(in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "<img src=\"$2\" alt=\"$1\" style=\"max-width:100%;border-radius:8px;margin:6px 0;\" />")
         }
         // Links [label](url)
         if let linkRx = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\(([^)]+)\)"#) {

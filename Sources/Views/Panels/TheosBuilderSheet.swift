@@ -234,7 +234,7 @@ public struct TheosBuilderSheet: View {
                     } label: {
                         Label(
                             preferences.tr("Tự động quét & điền _FILES vào Makefile", "Auto-Scan & Sync _FILES into Makefile"),
-                            systemImage: "wand.and.stars"
+                            systemImage: "arrow.triangle.2.circlepath"
                         )
                         .font(.body.weight(.semibold))
                     }

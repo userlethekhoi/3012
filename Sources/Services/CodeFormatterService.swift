@@ -315,8 +315,8 @@ public enum CodeFormatterService {
                 )
             }
         }
-        // Normalize ") {" spacing when line ends with ") {"
-        result = result.replacingOccurrences(of: #"\)+\{$"#, with: ") {", options: .regularExpression)
+        // Normalize ") {" spacing when line ends with "){"
+        result = result.replacingOccurrences(of: #"\)\{$"#, with: ") {", options: .regularExpression)
         return result
     }
 

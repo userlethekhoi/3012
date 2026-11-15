@@ -662,10 +662,26 @@ public final class ProCodingAccessoryBar: UIInputView {
 
     @MainActor
     private static func moveCursorHorizontally(in tv: TextView, offset: Int, isSelectionMode: Bool) {
-        let totalLen = (tv.text as NSString).length
+        let ns = tv.text as NSString
+        let totalLen = ns.length
         let current = clampRange(tv.selectedRange, maxLength: totalLen)
+
+        func stepComposedLocation(from pos: Int, delta: Int) -> Int {
+            guard delta != 0 else { return pos }
+            if delta > 0 {
+                guard pos < totalLen else { return totalLen }
+                let seq = ns.rangeOfComposedCharacterSequence(at: pos)
+                return min(totalLen, seq.location + max(1, seq.length))
+            } else {
+                guard pos > 0 else { return 0 }
+                let seq = ns.rangeOfComposedCharacterSequence(at: pos - 1)
+                return max(0, seq.location)
+            }
+        }
+
         if isSelectionMode {
-            let newEnd = min(max(0, current.location + current.length + offset), totalLen)
+            let curEnd = current.location + current.length
+            let newEnd = stepComposedLocation(from: curEnd, delta: offset)
             if newEnd >= current.location {
                 tv.selectedRange = NSRange(location: current.location, length: newEnd - current.location)
             } else {
@@ -673,7 +689,7 @@ public final class ProCodingAccessoryBar: UIInputView {
             }
         } else {
             let base = offset > 0 ? (current.location + current.length) : current.location
-            let nextLoc = min(max(0, base + offset), totalLen)
+            let nextLoc = stepComposedLocation(from: base, delta: offset)
             tv.selectedRange = NSRange(location: nextLoc, length: 0)
         }
         tv.scrollRangeToVisible(tv.selectedRange)

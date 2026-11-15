@@ -32,6 +32,19 @@ public struct GitCommitRecord: Codable, Identifiable, Equatable {
     public let snapshotFiles: [String: String]
 }
 
+public struct UnifiedDiffLine: Identifiable, Equatable {
+    public enum Kind: Equatable {
+        case context
+        case added
+        case removed
+    }
+    public let id: Int
+    public let kind: Kind
+    public let oldLineNumber: Int?
+    public let newLineNumber: Int?
+    public let text: String
+}
+
 @MainActor
 public final class GitService: ObservableObject {
     @Published public var changedFiles: [GitChangedFile] = []
@@ -49,17 +62,19 @@ public final class GitService: ObservableObject {
     public init() {}
 
     private func workspaceMetaDirectory(for workspaceRoot: URL) -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let rawKey = workspaceRoot.standardizedFileURL.path.data(using: .utf8)?
-            .base64EncodedString()
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "") ?? "default"
-        let safeKey = String(rawKey.suffix(64))
-        let dir = appSupport
-            .appendingPathComponent("3012WorkspaceMeta", isDirectory: true)
-            .appendingPathComponent(safeKey, isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        WorkspaceManager.metaDirectory(for: workspaceRoot)
+    }
+
+    private func makeGitHubRequest(url: URL, method: String = "GET", pat: String) -> URLRequest {
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.timeoutInterval = 30
+        req.setValue("3012-Mobile-IDE/5.0", forHTTPHeaderField: "User-Agent")
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        if !pat.isEmpty {
+            req.setValue("Bearer \(pat)", forHTTPHeaderField: "Authorization")
+        }
+        return req
     }
 
     private func metaFileURL(for workspaceRoot: URL) -> URL {
@@ -195,15 +210,18 @@ public final class GitService: ObservableObject {
     }
 
     public func discardChanges(for filePath: String, workspaceRoot: URL) async {
+        let metaDir = workspaceMetaDirectory(for: workspaceRoot)
         let fallbackBaseline: [String: String] = {
-            if let data = try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012baseline.json")),
+            if let data = (try? Data(contentsOf: metaDir.appendingPathComponent("baseline.json")))
+                ?? (try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012baseline.json"))),
                let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
                 return decoded
             }
             return [:]
         }()
         let deletedGhosts: [String: String] = {
-            if let data = try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012deleted.json")),
+            if let data = (try? Data(contentsOf: metaDir.appendingPathComponent("deleted.json")))
+                ?? (try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012deleted.json"))),
                let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
                 return decoded
             }
@@ -212,35 +230,118 @@ public final class GitService: ObservableObject {
         let snapshot = commits.first?.snapshotFiles ?? fallbackBaseline
         let targetURL = workspaceRoot.appendingPathComponent(filePath)
         if let oldContent = snapshot[filePath] ?? deletedGhosts[filePath] {
+            if let current = try? String(contentsOf: targetURL, encoding: .utf8) {
+                FileTimelineAndArchiveService.shared.recordSnapshot(for: targetURL, content: current, label: "Before Discard")
+            }
             try? FileManager.default.createDirectory(at: targetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? oldContent.write(to: targetURL, atomically: true, encoding: .utf8)
         } else {
+            if let current = try? String(contentsOf: targetURL, encoding: .utf8) {
+                FileTimelineAndArchiveService.shared.recordSnapshot(for: targetURL, content: current, label: "Before Discard Untracked")
+            }
             try? FileManager.default.removeItem(at: targetURL)
         }
         await refreshStatus(workspaceRoot: workspaceRoot, sshService: nil)
     }
 
-    public func diffPreview(for filePath: String, workspaceRoot: URL) -> String {
-        let targetURL = workspaceRoot.appendingPathComponent(filePath)
-        let newText = (try? String(contentsOf: targetURL, encoding: .utf8)) ?? ""
+    public func diffLines(for filePath: String, workspaceRoot: URL) -> [UnifiedDiffLine] {
+        let metaDir = workspaceMetaDirectory(for: workspaceRoot)
         let fallbackBaseline: [String: String] = {
-            if let data = try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012baseline.json")),
+            if let data = (try? Data(contentsOf: metaDir.appendingPathComponent("baseline.json")))
+                ?? (try? Data(contentsOf: workspaceRoot.appendingPathComponent(".3012baseline.json"))),
                let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
                 return decoded
             }
             return [:]
         }()
         let oldText = commits.first?.snapshotFiles[filePath] ?? fallbackBaseline[filePath] ?? ""
-        let oldSet = Set(oldText.components(separatedBy: "\n"))
-        let newSet = Set(newText.components(separatedBy: "\n"))
-        var lines: [String] = []
-        for l in oldText.components(separatedBy: "\n") where !oldText.isEmpty && !newSet.contains(l) {
-            lines.append("- " + l)
+        let targetURL = workspaceRoot.appendingPathComponent(filePath)
+        let newText = (try? String(contentsOf: targetURL, encoding: .utf8)) ?? ""
+        return computeOrderedUnifiedDiff(oldText: oldText, newText: newText)
+    }
+
+    public func diffPreview(for filePath: String, workspaceRoot: URL) -> String {
+        let items = diffLines(for: filePath, workspaceRoot: workspaceRoot)
+        var out: [String] = []
+        out.append("--- a/\(filePath)")
+        out.append("+++ b/\(filePath)")
+        for item in items.prefix(350) {
+            switch item.kind {
+            case .removed: out.append("- \(item.text)")
+            case .added: out.append("+ \(item.text)")
+            case .context: out.append("  \(item.text)")
+            }
         }
-        for l in newText.components(separatedBy: "\n") where !newText.isEmpty && !oldSet.contains(l) {
-            lines.append("+ " + l)
+        if out.count == 2 {
+            out.append("  (No changes)")
         }
-        return lines.isEmpty ? "(No line changes)" : lines.prefix(80).joined(separator: "\n")
+        return out.joined(separator: "\n")
+    }
+
+    private func computeOrderedUnifiedDiff(oldText: String, newText: String) -> [UnifiedDiffLine] {
+        let oldLines = oldText.isEmpty ? [] : oldText.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        let newLines = newText.isEmpty ? [] : newText.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+
+        if oldLines.count * newLines.count > 1_200_000 {
+            var fast: [UnifiedDiffLine] = []
+            var seq = 0
+            for (idx, line) in oldLines.prefix(250).enumerated() {
+                fast.append(UnifiedDiffLine(id: seq, kind: .removed, oldLineNumber: idx + 1, newLineNumber: nil, text: line))
+                seq += 1
+            }
+            for (idx, line) in newLines.prefix(250).enumerated() {
+                fast.append(UnifiedDiffLine(id: seq, kind: .added, oldLineNumber: nil, newLineNumber: idx + 1, text: line))
+                seq += 1
+            }
+            return fast
+        }
+
+        let m = oldLines.count
+        let n = newLines.count
+        var dp = Array(repeating: Array(repeating: 0, count: n + 1), count: m + 1)
+        if m > 0 && n > 0 {
+            for i in stride(from: m - 1, through: 0, by: -1) {
+                for j in stride(from: n - 1, through: 0, by: -1) {
+                    if oldLines[i] == newLines[j] {
+                        dp[i][j] = dp[i + 1][j + 1] + 1
+                    } else {
+                        dp[i][j] = max(dp[i + 1][j], dp[i][j + 1])
+                    }
+                }
+            }
+        }
+
+        var result: [UnifiedDiffLine] = []
+        var i = 0
+        var j = 0
+        var seq = 0
+        while i < m && j < n {
+            if oldLines[i] == newLines[j] {
+                result.append(UnifiedDiffLine(id: seq, kind: .context, oldLineNumber: i + 1, newLineNumber: j + 1, text: newLines[j]))
+                i += 1
+                j += 1
+                seq += 1
+            } else if dp[i + 1][j] >= dp[i][j + 1] {
+                result.append(UnifiedDiffLine(id: seq, kind: .removed, oldLineNumber: i + 1, newLineNumber: nil, text: oldLines[i]))
+                i += 1
+                seq += 1
+            } else {
+                result.append(UnifiedDiffLine(id: seq, kind: .added, oldLineNumber: nil, newLineNumber: j + 1, text: newLines[j]))
+                j += 1
+                seq += 1
+            }
+        }
+        while i < m {
+            result.append(UnifiedDiffLine(id: seq, kind: .removed, oldLineNumber: i + 1, newLineNumber: nil, text: oldLines[i]))
+            i += 1
+            seq += 1
+        }
+        while j < n {
+            result.append(UnifiedDiffLine(id: seq, kind: .added, oldLineNumber: nil, newLineNumber: j + 1, text: newLines[j]))
+            j += 1
+            seq += 1
+        }
+        return result
     }
 
     // MARK: - Clone GitHub Repository Directly on iOS (No external git binary needed!)
@@ -254,11 +355,8 @@ public final class GitService: ObservableObject {
         defer { isBusy = false }
 
         do {
-            var metaReq = URLRequest(url: URL(string: "https://api.github.com/repos/\(owner)/\(repo)")!)
             let pat = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !pat.isEmpty {
-                metaReq.setValue("Bearer \(pat)", forHTTPHeaderField: "Authorization")
-            }
+            let metaReq = makeGitHubRequest(url: URL(string: "https://api.github.com/repos/\(owner)/\(repo)")!, pat: pat)
             let (metaData, _) = try await URLSession.shared.data(for: metaReq)
             var defaultBranch = "main"
             if let json = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any],
@@ -267,10 +365,7 @@ public final class GitService: ObservableObject {
             }
 
             let zipEndpoint = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/zipball/\(defaultBranch)")!
-            var zipReq = URLRequest(url: zipEndpoint)
-            if !pat.isEmpty {
-                zipReq.setValue("Bearer \(pat)", forHTTPHeaderField: "Authorization")
-            }
+            let zipReq = makeGitHubRequest(url: zipEndpoint, pat: pat)
             let (tempZipURL, response) = try await URLSession.shared.download(for: zipReq)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 statusBanner = "Không tải được repo (kiểm tra tên repo hoặc GitHub Token nếu Private)."
@@ -330,23 +425,22 @@ public final class GitService: ObservableObject {
         statusBanner = "Đang đẩy các file thay đổi lên \(owner)/\(repo)..."
         defer { isBusy = false }
 
-        let filesToPush = changedFiles.filter { $0.statusBadge != "D" }
-        guard !filesToPush.isEmpty else {
-            statusBanner = "Không có file mới/sửa nào cần Push."
+        let filesToUpsert = changedFiles.filter { $0.statusBadge != "D" }
+        let filesToDelete = changedFiles.filter { $0.statusBadge == "D" }
+        guard !filesToUpsert.isEmpty || !filesToDelete.isEmpty else {
+            statusBanner = "Không có thay đổi nào cần Push."
             return
         }
 
         var pushedCount = 0
-        for item in filesToPush {
+        for item in filesToUpsert {
             let fileURL = workspaceRoot.appendingPathComponent(item.relativePath)
             guard let fileData = try? Data(contentsOf: fileURL) else { continue }
             let encodedPath = item.relativePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? item.relativePath
             guard let apiURL = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/contents/\(encodedPath)") else { continue }
 
-            // Fetch existing blob SHA if file already exists on remote
             var existingSHA: String?
-            var getReq = URLRequest(url: URL(string: "\(apiURL.absoluteString)?ref=\(currentBranch)")!)
-            getReq.setValue("Bearer \(pat)", forHTTPHeaderField: "Authorization")
+            let getReq = makeGitHubRequest(url: URL(string: "\(apiURL.absoluteString)?ref=\(currentBranch)")!, pat: pat)
             if let (getData, getResp) = try? await URLSession.shared.data(for: getReq),
                let http = getResp as? HTTPURLResponse, http.statusCode == 200,
                let json = try? JSONSerialization.jsonObject(with: getData) as? [String: Any] {
@@ -362,9 +456,7 @@ public final class GitService: ObservableObject {
                 putBody["sha"] = existingSHA
             }
 
-            var putReq = URLRequest(url: apiURL)
-            putReq.httpMethod = "PUT"
-            putReq.setValue("Bearer \(pat)", forHTTPHeaderField: "Authorization")
+            var putReq = makeGitHubRequest(url: apiURL, method: "PUT", pat: pat)
             putReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
             putReq.httpBody = try? JSONSerialization.data(withJSONObject: putBody)
 
@@ -374,8 +466,116 @@ public final class GitService: ObservableObject {
             }
         }
 
+        var deletedCount = 0
+        for item in filesToDelete {
+            let encodedPath = item.relativePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? item.relativePath
+            guard let apiURL = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/contents/\(encodedPath)") else { continue }
+            let getReq = makeGitHubRequest(url: URL(string: "\(apiURL.absoluteString)?ref=\(currentBranch)")!, pat: pat)
+            guard let (getData, getResp) = try? await URLSession.shared.data(for: getReq),
+                  let http = getResp as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: getData) as? [String: Any],
+                  let sha = json["sha"] as? String else { continue }
+
+            let delBody: [String: Any] = [
+                "message": commitMessage.isEmpty ? "Delete \(item.relativePath) from 3012 Mobile IDE" : commitMessage,
+                "sha": sha,
+                "branch": currentBranch
+            ]
+            var delReq = makeGitHubRequest(url: apiURL, method: "DELETE", pat: pat)
+            delReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            delReq.httpBody = try? JSONSerialization.data(withJSONObject: delBody)
+            if let (_, delResp) = try? await URLSession.shared.data(for: delReq),
+               let dHttp = delResp as? HTTPURLResponse, (200...204).contains(dHttp.statusCode) {
+                deletedCount += 1
+            }
+        }
+
         await commitAll(message: commitMessage.isEmpty ? "Sync to GitHub" : commitMessage, workspaceRoot: workspaceRoot, sshService: nil)
-        statusBanner = "Đã Push \(pushedCount)/\(filesToPush.count) file lên GitHub (\(owner)/\(repo))."
+        let totalOps = filesToUpsert.count + filesToDelete.count
+        statusBanner = "Đã Push +\(pushedCount) / -\(deletedCount) (tổng \(totalOps) thay đổi) lên GitHub (\(owner)/\(repo))."
+    }
+
+    public func fetchRemoteBranches() async -> [String] {
+        guard let (owner, repo) = parseGitHubOwnerRepo(remoteOriginURL) else { return [currentBranch] }
+        let pat = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/branches?per_page=50") else { return [currentBranch] }
+        let req = makeGitHubRequest(url: url, pat: pat)
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return [currentBranch]
+        }
+        let names = arr.compactMap { $0["name"] as? String }
+        return names.isEmpty ? [currentBranch] : names
+    }
+
+    @discardableResult
+    public func pullFromGitHub(into workspaceRoot: URL, branchOverride: String? = nil) async -> Bool {
+        guard let (owner, repo) = parseGitHubOwnerRepo(remoteOriginURL) else {
+            statusBanner = "Chưa có Remote GitHub URL (owner/repo)."
+            return false
+        }
+        let targetBranch = (branchOverride?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? branchOverride!
+            : currentBranch
+
+        isBusy = true
+        statusBanner = "Đang kéo dữ liệu nhánh '\(targetBranch)' từ \(owner)/\(repo)..."
+        defer { isBusy = false }
+
+        do {
+            let pat = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            let safeBranch = targetBranch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? targetBranch
+            guard let zipEndpoint = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/zipball/\(safeBranch)") else {
+                statusBanner = "URL nhánh không hợp lệ."
+                return false
+            }
+            let zipReq = makeGitHubRequest(url: zipEndpoint, pat: pat)
+            let (tempZipURL, response) = try await URLSession.shared.download(for: zipReq)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                statusBanner = "Pull thất bại (mã lỗi HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0))."
+                return false
+            }
+
+            let fm = FileManager.default
+            let extractTemp = fm.temporaryDirectory.appendingPathComponent("gh_pull_\(UUID().uuidString)", isDirectory: true)
+            try fm.createDirectory(at: extractTemp, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: extractTemp) }
+            try fm.unzipItem(at: tempZipURL, to: extractTemp)
+            let innerItems = (try? fm.contentsOfDirectory(at: extractTemp, includingPropertiesForKeys: nil)) ?? []
+            let extractedRoot = innerItems.first ?? extractTemp
+
+            let remoteTextFiles = collectWorkspaceTextFiles(at: extractedRoot)
+            var updatedCount = 0
+            for (rel, newContent) in remoteTextFiles {
+                let dstURL = workspaceRoot.appendingPathComponent(rel)
+                if let existing = try? String(contentsOf: dstURL, encoding: .utf8) {
+                    if existing == newContent { continue }
+                    FileTimelineAndArchiveService.shared.recordSnapshot(for: dstURL, content: existing, label: "Before Git Pull")
+                }
+                try fm.createDirectory(at: dstURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try newContent.write(to: dstURL, atomically: true, encoding: .utf8)
+                updatedCount += 1
+            }
+
+            self.currentBranch = targetBranch
+            let latestCommit = GitCommitRecord(
+                id: String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(7)),
+                message: "Pulled \(owner)/\(repo) (\(targetBranch))",
+                author: owner,
+                timestamp: Date(),
+                snapshotFiles: collectWorkspaceTextFiles(at: workspaceRoot)
+            )
+            commits.insert(latestCommit, at: 0)
+            if commits.count > 30 { commits = Array(commits.prefix(30)) }
+            saveLocalRepoMeta(workspaceRoot: workspaceRoot)
+            await refreshStatus(workspaceRoot: workspaceRoot, sshService: nil)
+            statusBanner = "Đã Pull nhánh '\(targetBranch)' (+/\(updatedCount) file cập nhật)."
+            return true
+        } catch {
+            statusBanner = "Lỗi Git Pull: \(error.localizedDescription)"
+            return false
+        }
     }
 
     private func parseGitHubOwnerRepo(_ raw: String) -> (String, String)? {

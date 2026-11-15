@@ -74,6 +74,8 @@ public struct BottomConsolePreviewPanel: View {
     var onJumpToLine: (Int) -> Void
     var onFixDiagnosticWithAgent: (EditorDiagnostic) -> Void
     var onOpenDaemonManager: () -> Void
+    var onOpenShareSheet: () -> Void = {}
+    var onFixRawErrorWithAgent: (String) -> Void = { _ in }
     var onClose: () -> Void
 
     @State private var selectedPreviewPort: UInt16? = nil
@@ -99,6 +101,8 @@ public struct BottomConsolePreviewPanel: View {
         onJumpToLine: @escaping (Int) -> Void,
         onFixDiagnosticWithAgent: @escaping (EditorDiagnostic) -> Void,
         onOpenDaemonManager: @escaping () -> Void = {},
+        onOpenShareSheet: @escaping () -> Void = {},
+        onFixRawErrorWithAgent: @escaping (String) -> Void = { _ in },
         onClose: @escaping () -> Void
     ) {
         self._selectedTab = selectedTab
@@ -116,6 +120,8 @@ public struct BottomConsolePreviewPanel: View {
         self.onJumpToLine = onJumpToLine
         self.onFixDiagnosticWithAgent = onFixDiagnosticWithAgent
         self.onOpenDaemonManager = onOpenDaemonManager
+        self.onOpenShareSheet = onOpenShareSheet
+        self.onFixRawErrorWithAgent = onFixRawErrorWithAgent
         self.onClose = onClose
     }
 
@@ -194,6 +200,31 @@ public struct BottomConsolePreviewPanel: View {
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(.cyan)
                         }
+                    }
+
+                    Button {
+                        if !liveServer.isRunning {
+                            liveServer.start(
+                                serving: workspace.rootURL,
+                                keepAliveInBackground: preferences.keepServerInBackground
+                            )
+                        }
+                        liveServer.refreshLANAddress()
+                        onOpenShareSheet()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: liveServer.isShareLinkEnabled ? "dot.radiowaves.left.and.right" : "link.badge.plus")
+                                .font(.system(size: 10.5, weight: .semibold))
+                            Text(liveServer.isShareLinkEnabled
+                                 ? (preferences.tr("Share", "Share") + " (\(liveServer.sharedViewerCount))")
+                                 : preferences.tr("Share", "Share"))
+                                .font(.system(size: 10.5, weight: .bold))
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(liveServer.isShareLinkEnabled ? Color.green.opacity(0.85) : Color(hex: palette.currentLineBackground))
+                        .foregroundColor(liveServer.isShareLinkEnabled ? .black : Color(hex: palette.foreground))
+                        .cornerRadius(6)
                     }
 
                     Button {
@@ -432,6 +463,38 @@ public struct BottomConsolePreviewPanel: View {
                     .textSelection(.enabled)
             }
 
+            if runner.lastExecutionFailed && !runner.isRunning && !runner.lastErrorSummary.isEmpty {
+                Divider().overlay(Color.white.opacity(0.08))
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.octagon.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.red)
+                    Text(runner.lastErrorSummary)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button {
+                        onFixRawErrorWithAgent(runner.lastErrorSummary)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "cpu")
+                                .font(.system(size: 10.5, weight: .semibold))
+                            Text(preferences.tr("Sửa lỗi bằng AI Agent", "Fix Error with AI Agent"))
+                                .font(.system(size: 10.5, weight: .bold))
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color(hex: palette.accent))
+                        .foregroundColor(.white)
+                        .cornerRadius(6)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.red.opacity(0.12))
+            }
+
             Divider().overlay(Color.white.opacity(0.08))
 
             HStack(spacing: 6) {
@@ -515,6 +578,28 @@ public struct BottomConsolePreviewPanel: View {
                                 .font(.system(size: 10.5, weight: .bold))
                                 .foregroundColor(Color(hex: palette.accent))
                             Spacer()
+                            if webConsoleLogs.contains(where: { $0.level == "error" }) {
+                                Button {
+                                    let joinedErrors = webConsoleLogs
+                                        .filter { $0.level == "error" }
+                                        .suffix(5)
+                                        .map(\.message)
+                                        .joined(separator: "\n")
+                                    onFixRawErrorWithAgent("Web Console JS Error:\n\(joinedErrors)")
+                                } label: {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "cpu")
+                                            .font(.system(size: 10, weight: .semibold))
+                                        Text(preferences.tr("Sửa lỗi JS (AI)", "Fix JS Error (AI)"))
+                                            .font(.system(size: 10, weight: .bold))
+                                    }
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(Color.red.opacity(0.22))
+                                    .foregroundColor(.red)
+                                    .cornerRadius(5)
+                                }
+                            }
                             Button {
                                 webConsoleLogs.removeAll()
                             } label: {

@@ -1327,7 +1327,11 @@ public final class CodeIntelligenceService: ObservableObject {
         }
 
         if language == .javascript {
-            if let ctx = JSContext() {
+            let trimmedLines = lines.map { $0.trimmingCharacters(in: .whitespaces) }
+            let usesESModuleOrTopLevelAwait = trimmedLines.contains {
+                $0.hasPrefix("import ") || $0.hasPrefix("export ") || $0.contains("await ")
+            }
+            if !usesESModuleOrTopLevelAwait, let ctx = JSContext() {
                 var jsSyntaxDiag: EditorDiagnostic?
                 ctx.exceptionHandler = { _, exc in
                     guard let exc else { return }
@@ -1554,6 +1558,8 @@ public final class CodeIntelligenceService: ObservableObject {
             cmd = "echo '\(b64)' | base64 -d | php -l 2>&1"
         case .ruby:
             cmd = "echo '\(b64)' | base64 -d | ruby -c 2>&1"
+        case .rust:
+            cmd = "mkdir -p /tmp/3012_diag && echo '\(b64)' | base64 -d > /tmp/3012_diag/live.rs && rustc --emit=metadata -o /tmp/3012_diag/live.rmeta /tmp/3012_diag/live.rs 2>&1"
         case .shell:
             cmd = "echo '\(b64)' | base64 -d | bash -n 2>&1"
         default:

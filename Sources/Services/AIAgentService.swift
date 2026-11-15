@@ -1,7 +1,100 @@
 import Foundation
 
-public struct AgentProposedEdit: Identifiable, Equatable {
-    public enum DecisionState: String, Equatable {
+public struct AgentSkill: Identifiable, Codable, Equatable {
+    public let id: String
+    public var slashCommand: String
+    public var title: String
+    public var summary: String
+    public var instruction: String
+    public let isBuiltIn: Bool
+
+    public init(
+        id: String = UUID().uuidString,
+        slashCommand: String,
+        title: String,
+        summary: String,
+        instruction: String,
+        isBuiltIn: Bool = false
+    ) {
+        let normalized = slashCommand.hasPrefix("/") ? slashCommand : "/\(slashCommand)"
+        self.id = id
+        self.slashCommand = normalized.lowercased()
+        self.title = title
+        self.summary = summary
+        self.instruction = instruction
+        self.isBuiltIn = isBuiltIn
+    }
+
+    public static let builtInSkills: [AgentSkill] = [
+        AgentSkill(
+            id: "skill.fix",
+            slashCommand: "/fix",
+            title: "Fix Compile & Runtime Bugs",
+            summary: "Tự chẩn đoán lỗi syntax/runtime từ console & @problems rồi vá sạch.",
+            instruction: "Focus on finding and fixing all compiler errors, runtime crashes, edge cases, and warnings. Output complete fixed <file_edit> blocks.",
+            isBuiltIn: true
+        ),
+        AgentSkill(
+            id: "skill.ui",
+            slashCommand: "/ui",
+            title: "Pro UI / Vision Clone",
+            summary: "Thiết kế giao diện HTML/CSS/SwiftUI đẹp chuẩn từ mô tả hoặc ảnh.",
+            instruction: "Act as a senior UI/UX engineer. Match layout, spacing, typography, dark/light contrast, responsive design, and visual polish accurately. If images are attached, inspect every visual element closely.",
+            isBuiltIn: true
+        ),
+        AgentSkill(
+            id: "skill.refactor",
+            slashCommand: "/refactor",
+            title: "Clean Refactor",
+            summary: "Tách hàm gọn gàng, bỏ trùng lặp, giữ nguyên hành vi.",
+            instruction: "Refactor for readability, modularity, zero duplicated logic, and strong error handling while preserving existing public APIs and behavior.",
+            isBuiltIn: true
+        ),
+        AgentSkill(
+            id: "skill.test",
+            slashCommand: "/test",
+            title: "Write Unit Tests & Edge Cases",
+            summary: "Sinh test case kiểm thử đầy đủ cả happy-path & biên.",
+            instruction: "Generate thorough, deterministic test cases covering boundary conditions, empty inputs, and error handling.",
+            isBuiltIn: true
+        ),
+        AgentSkill(
+            id: "skill.explain",
+            slashCommand: "/explain",
+            title: "Deep Code Walkthrough",
+            summary: "Giải thích luồng chạy, độ phức tạp và điểm nghẽn.",
+            instruction: "Explain architecture, control flow, state transitions, complexity, and potential pitfalls clearly and concisely.",
+            isBuiltIn: true
+        ),
+        AgentSkill(
+            id: "skill.security",
+            slashCommand: "/security",
+            title: "Security & Privacy Audit",
+            summary: "Quét lỗ hổng XSS, injection, path traversal, rò rỉ token.",
+            instruction: "Audit code thoroughly for injection, XSS, path traversal, insecure secrets, auth bypasses, and race conditions; provide hardened fixes.",
+            isBuiltIn: true
+        ),
+        AgentSkill(
+            id: "skill.mermaid",
+            slashCommand: "/mermaid",
+            title: "Architecture Mermaid Diagram",
+            summary: "Vẽ sơ đồ flowchart/sequence Mermaid cho code hiện tại.",
+            instruction: "Produce clear, syntactically valid Mermaid diagrams (flowchart LR / sequenceDiagram) documenting the system or active file.",
+            isBuiltIn: true
+        ),
+        AgentSkill(
+            id: "skill.commit",
+            slashCommand: "/commit",
+            title: "Draft Git Commit Message",
+            summary: "Tóm tắt các thay đổi @git thành commit message chuẩn.",
+            instruction: "Review @git changes and produce a concise Conventional Commit message with a bulleted summary of key changes.",
+            isBuiltIn: true
+        )
+    ]
+}
+
+public struct AgentProposedEdit: Identifiable, Codable, Equatable {
+    public enum DecisionState: String, Codable, Equatable {
         case pending
         case applied
         case rejected
@@ -9,42 +102,92 @@ public struct AgentProposedEdit: Identifiable, Equatable {
 
     public let id: UUID
     public let relativePath: String
+    public let previousContent: String?
     public let newContent: String
     public let diffPreviewLines: [String]
+    public let addedCount: Int
+    public let removedCount: Int
     public var state: DecisionState
 
     public init(relativePath: String, oldContent: String?, newContent: String) {
         self.id = UUID()
         self.relativePath = relativePath
+        self.previousContent = oldContent
         self.newContent = newContent
-        self.diffPreviewLines = Self.computeSimpleDiff(oldText: oldContent ?? "", newText: newContent)
+        let (lines, added, removed) = Self.computeOrderedDiff(oldText: oldContent ?? "", newText: newContent)
+        self.diffPreviewLines = lines
+        self.addedCount = added
+        self.removedCount = removed
         self.state = .pending
     }
 
-    private static func computeSimpleDiff(oldText: String, newText: String) -> [String] {
-        let oldLines = oldText.isEmpty ? [] : oldText.components(separatedBy: "\n")
-        let newLines = newText.components(separatedBy: "\n")
-        let oldSet = Set(oldLines)
-        let newSet = Set(newLines)
-        var preview: [String] = []
+    private static func computeOrderedDiff(oldText: String, newText: String) -> ([String], Int, Int) {
+        let oldLines = oldText.isEmpty ? [] : oldText.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        let newLines = newText.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
 
-        for line in oldLines where !newSet.contains(line) {
-            preview.append("- " + line)
-            if preview.count >= 18 { break }
+        if oldLines.isEmpty {
+            let addLines = newLines.prefix(40).map { "+ " + $0 }
+            return (addLines, newLines.count, 0)
         }
-        for line in newLines where !oldSet.contains(line) {
-            preview.append("+ " + line)
-            if preview.count >= 40 { break }
+
+        if oldLines.count * newLines.count > 800_000 {
+            var preview: [String] = []
+            for l in oldLines.prefix(15) { preview.append("- " + l) }
+            for l in newLines.prefix(25) { preview.append("+ " + l) }
+            return (preview, newLines.count, oldLines.count)
+        }
+
+        let m = oldLines.count
+        let n = newLines.count
+        var dp = Array(repeating: Array(repeating: 0, count: n + 1), count: m + 1)
+        for i in stride(from: m - 1, through: 0, by: -1) {
+            for j in stride(from: n - 1, through: 0, by: -1) {
+                if oldLines[i] == newLines[j] {
+                    dp[i][j] = dp[i + 1][j + 1] + 1
+                } else {
+                    dp[i][j] = max(dp[i + 1][j], dp[i][j + 1])
+                }
+            }
+        }
+
+        var preview: [String] = []
+        var added = 0
+        var removed = 0
+        var i = 0
+        var j = 0
+        while i < m && j < n {
+            if oldLines[i] == newLines[j] {
+                i += 1
+                j += 1
+            } else if dp[i + 1][j] >= dp[i][j + 1] {
+                removed += 1
+                if preview.count < 55 { preview.append("- " + oldLines[i]) }
+                i += 1
+            } else {
+                added += 1
+                if preview.count < 55 { preview.append("+ " + newLines[j]) }
+                j += 1
+            }
+        }
+        while i < m {
+            removed += 1
+            if preview.count < 55 { preview.append("- " + oldLines[i]) }
+            i += 1
+        }
+        while j < n {
+            added += 1
+            if preview.count < 55 { preview.append("+ " + newLines[j]) }
+            j += 1
         }
         if preview.isEmpty {
-            preview = newLines.prefix(12).map { "  " + $0 }
+            preview = newLines.prefix(10).map { "  " + $0 }
         }
-        return preview
+        return (preview, added, removed)
     }
 }
 
-public struct AIChatMessage: Identifiable, Equatable {
-    public enum Role: String, Equatable {
+public struct AIChatMessage: Identifiable, Codable, Equatable {
+    public enum Role: String, Codable, Equatable {
         case user
         case assistant
         case system
@@ -53,25 +196,46 @@ public struct AIChatMessage: Identifiable, Equatable {
     public let id: UUID
     public let role: Role
     public var text: String
+    public var attachedImages: [AIAttachmentImage]
     public var proposedEdits: [AgentProposedEdit]
     public var isStreaming: Bool
     public var modelLabel: String?
     public let timestamp: Date
 
     public init(
+        id: UUID = UUID(),
         role: Role,
         text: String,
+        attachedImages: [AIAttachmentImage] = [],
         proposedEdits: [AgentProposedEdit] = [],
         isStreaming: Bool = false,
-        modelLabel: String? = nil
+        modelLabel: String? = nil,
+        timestamp: Date = Date()
     ) {
-        self.id = UUID()
+        self.id = id
         self.role = role
         self.text = text
+        self.attachedImages = attachedImages
         self.proposedEdits = proposedEdits
         self.isStreaming = isStreaming
         self.modelLabel = modelLabel
-        self.timestamp = Date()
+        self.timestamp = timestamp
+    }
+}
+
+public struct AIChatSession: Identifiable, Codable, Equatable {
+    public let id: UUID
+    public var title: String
+    public let createdAt: Date
+    public var updatedAt: Date
+    public var messages: [AIChatMessage]
+
+    public init(id: UUID = UUID(), title: String, messages: [AIChatMessage]) {
+        self.id = id
+        self.title = title
+        self.createdAt = Date()
+        self.updatedAt = Date()
+        self.messages = messages
     }
 }
 
@@ -81,19 +245,25 @@ public struct AIChatMessage: Identifiable, Equatable {
 public final class AIAgentService: ObservableObject {
     private static let profilesKey = "3012.ai.profiles.v2"
     private static let activeProfileKey = "3012.ai.activeProfileID"
+    private static let customSkillsKey = "3012.ai.customSkills.v1"
     /// How often the model catalogue is re-fetched to pick up newly released models.
     private static let modelRefreshInterval: TimeInterval = 6 * 3600
+
+    private static let defaultWelcomeMessage = AIChatMessage(
+        role: .assistant,
+        text: "Xin chào! Mình là **3012 Coding Agent**.\n\nGõ `/` để gọi Skill (`/fix`, `/ui`, `/refactor`, `/test`...), `@` để gắn file hoặc context (`@problems`, `@terminal`, `@git`), hoặc đính kèm ảnh chụp giao diện / lỗi để mình sửa trực tiếp."
+    )
 
     @Published public private(set) var profiles: [AIProviderProfile] = []
     @Published public var activeProfileID: UUID? {
         didSet { UserDefaults.standard.set(activeProfileID?.uuidString, forKey: Self.activeProfileKey) }
     }
-    @Published public var messages: [AIChatMessage] = [
-        AIChatMessage(
-            role: .assistant,
-            text: "Xin chào! Mình là **3012 Coding Agent**.\n\nMình đọc được toàn bộ file trong Workspace, sửa lỗi biên dịch và tạo/sửa file trực tiếp kèm bảng **Diff (Accept / Reject)**. Bạn có thể tự kết nối bất kỳ nhà cung cấp AI nào (online hoặc offline) trong phần cấu hình."
-        )
-    ]
+    @Published public private(set) var customSkills: [AgentSkill] = []
+    @Published public private(set) var sessions: [AIChatSession] = []
+    @Published public var activeSessionID: UUID?
+    @Published public var messages: [AIChatMessage] = [AIAgentService.defaultWelcomeMessage] {
+        didSet { syncMessagesToActiveSession() }
+    }
     @Published public private(set) var isThinking: Bool = false
     @Published public private(set) var refreshingProfileIDs: Set<UUID> = []
     @Published public var lastRefreshMessage: [UUID: String] = [:]
@@ -102,8 +272,134 @@ public final class AIAgentService: ObservableObject {
 
     private var generationTask: Task<Void, Never>?
 
+    public var allSkills: [AgentSkill] {
+        AgentSkill.builtInSkills + customSkills
+    }
+
     public init() {
         loadProfiles()
+        loadCustomSkills()
+        loadSessions()
+    }
+
+    // MARK: - Slash Skills
+    public func addCustomSkill(slashCommand: String, title: String, instruction: String) {
+        let cleanCmd = slashCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanInst = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanCmd.isEmpty, !cleanInst.isEmpty else { return }
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let skill = AgentSkill(
+            slashCommand: cleanCmd,
+            title: cleanTitle.isEmpty ? cleanCmd : cleanTitle,
+            summary: String(cleanInst.prefix(64)),
+            instruction: cleanInst,
+            isBuiltIn: false
+        )
+        customSkills.removeAll { $0.slashCommand == skill.slashCommand }
+        customSkills.append(skill)
+        persistCustomSkills()
+    }
+
+    public func deleteCustomSkill(id: String) {
+        customSkills.removeAll { $0.id == id }
+        persistCustomSkills()
+    }
+
+    private func loadCustomSkills() {
+        if let data = UserDefaults.standard.data(forKey: Self.customSkillsKey),
+           let decoded = try? JSONDecoder().decode([AgentSkill].self, from: data) {
+            customSkills = decoded
+        }
+    }
+
+    private func persistCustomSkills() {
+        if let data = try? JSONEncoder().encode(customSkills) {
+            UserDefaults.standard.set(data, forKey: Self.customSkillsKey)
+        }
+    }
+
+    // MARK: - Multi-Session Chat History
+    private var sessionsFileURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let dir = appSupport.appendingPathComponent("3012AIAgent", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("sessions.json")
+    }
+
+    private func loadSessions() {
+        if let data = try? Data(contentsOf: sessionsFileURL),
+           let decoded = try? JSONDecoder().decode([AIChatSession].self, from: data),
+           !decoded.isEmpty {
+            sessions = decoded
+            activeSessionID = decoded.first?.id
+            messages = decoded.first?.messages ?? [Self.defaultWelcomeMessage]
+            return
+        }
+        let initial = AIChatSession(title: "Phiên mới", messages: [Self.defaultWelcomeMessage])
+        sessions = [initial]
+        activeSessionID = initial.id
+        messages = initial.messages
+    }
+
+    private func syncMessagesToActiveSession() {
+        guard !sessions.isEmpty else { return }
+        if let activeSessionID, let idx = sessions.firstIndex(where: { $0.id == activeSessionID }) {
+            sessions[idx].messages = messages
+            sessions[idx].updatedAt = Date()
+            if sessions[idx].title == "Phiên mới",
+               let firstUser = messages.first(where: { $0.role == .user && !$0.text.isEmpty }) {
+                sessions[idx].title = String(firstUser.text.prefix(34))
+            }
+            if !(messages.last?.isStreaming ?? false) {
+                persistSessions()
+            }
+        }
+    }
+
+    private func persistSessions() {
+        let trimmed = Array(sessions.prefix(15)).map { session -> AIChatSession in
+            var copy = session
+            copy.messages = session.messages.map { msg in
+                var m = msg
+                m.isStreaming = false
+                return m
+            }
+            return copy
+        }
+        if let data = try? JSONEncoder().encode(trimmed) {
+            try? data.write(to: sessionsFileURL, options: .atomic)
+        }
+    }
+
+    public func createNewSession() {
+        stopGenerating()
+        let fresh = AIChatSession(title: "Phiên mới", messages: [Self.defaultWelcomeMessage])
+        sessions.insert(fresh, at: 0)
+        if sessions.count > 15 {
+            sessions = Array(sessions.prefix(15))
+        }
+        activeSessionID = fresh.id
+        messages = fresh.messages
+        persistSessions()
+    }
+
+    public func switchSession(to id: UUID) {
+        guard let target = sessions.first(where: { $0.id == id }) else { return }
+        stopGenerating()
+        activeSessionID = id
+        messages = target.messages
+    }
+
+    public func deleteSession(id: UUID) {
+        stopGenerating()
+        sessions.removeAll { $0.id == id }
+        if sessions.isEmpty {
+            createNewSession()
+        } else if activeSessionID == id {
+            activeSessionID = sessions.first?.id
+            messages = sessions.first?.messages ?? [Self.defaultWelcomeMessage]
+        }
+        persistSessions()
     }
 
     // MARK: - Profile Accessors
@@ -251,6 +547,31 @@ public final class AIAgentService: ObservableObject {
         messages[mIdx].proposedEdits[eIdx].state = newState
     }
 
+    public func acceptAllEdits(in messageID: UUID, applyHandler: (String, String) -> Void) {
+        guard let mIdx = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        for eIdx in messages[mIdx].proposedEdits.indices where messages[mIdx].proposedEdits[eIdx].state == .pending {
+            let edit = messages[mIdx].proposedEdits[eIdx]
+            applyHandler(edit.relativePath, edit.newContent)
+            messages[mIdx].proposedEdits[eIdx].state = .applied
+        }
+    }
+
+    public func rejectAllEdits(in messageID: UUID) {
+        guard let mIdx = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        for eIdx in messages[mIdx].proposedEdits.indices where messages[mIdx].proposedEdits[eIdx].state == .pending {
+            messages[mIdx].proposedEdits[eIdx].state = .rejected
+        }
+    }
+
+    public func revertAppliedEdit(messageID: UUID, editID: UUID, restoreHandler: (String, String) -> Void) {
+        guard let mIdx = messages.firstIndex(where: { $0.id == messageID }),
+              let eIdx = messages[mIdx].proposedEdits.firstIndex(where: { $0.id == editID }) else { return }
+        if let prev = messages[mIdx].proposedEdits[eIdx].previousContent {
+            restoreHandler(messages[mIdx].proposedEdits[eIdx].relativePath, prev)
+            messages[mIdx].proposedEdits[eIdx].state = .pending
+        }
+    }
+
     public func sendPrompt(
         userPrompt: String,
         workspaceTree: String,
@@ -258,12 +579,16 @@ public final class AIAgentService: ObservableObject {
         activeFileContent: String?,
         selectedSnippet: String?,
         lastConsoleOutput: String,
+        attachedImages: [AIAttachmentImage] = [],
+        diagnosticsSummary: String = "",
+        gitDiffSummary: String = "",
         existingFileReader: @escaping (String) -> String?
     ) async {
         let cleanPrompt = userPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanPrompt.isEmpty, !isThinking else { return }
+        guard (!cleanPrompt.isEmpty || !attachedImages.isEmpty), !isThinking else { return }
 
-        messages.append(AIChatMessage(role: .user, text: cleanPrompt))
+        let userText = cleanPrompt.isEmpty ? "Hãy phân tích hình ảnh đính kèm và đề xuất chỉnh sửa." : cleanPrompt
+        messages.append(AIChatMessage(role: .user, text: userText, attachedImages: attachedImages))
 
         guard let profile = activeProfile else {
             messages.append(AIChatMessage(
@@ -281,13 +606,21 @@ public final class AIAgentService: ObservableObject {
             return
         }
 
+        // Resolve @mentions & /skills cleanly before invoking provider
+        let activeSkillInstructions = resolveActiveSkills(in: userText)
+        let mentionedFilesBlock = resolveMentionedFiles(in: userText, activeFilePath: activeFilePath, existingFileReader: existingFileReader)
+
         isThinking = true
         let context = PromptContext(
             workspaceTree: workspaceTree,
             activeFilePath: activeFilePath,
             activeFileContent: activeFileContent,
             selectedSnippet: selectedSnippet,
-            lastConsoleOutput: lastConsoleOutput
+            lastConsoleOutput: lastConsoleOutput,
+            diagnosticsSummary: diagnosticsSummary,
+            gitDiffSummary: gitDiffSummary,
+            mentionedFilesBlock: mentionedFilesBlock,
+            activeSkillInstructions: activeSkillInstructions
         )
         let task = Task { [weak self] () -> Void in
             guard let self else { return }
@@ -297,6 +630,39 @@ public final class AIAgentService: ObservableObject {
         await task.value
         generationTask = nil
         isThinking = false
+    }
+
+    private func resolveActiveSkills(in prompt: String) -> String {
+        let lower = prompt.lowercased()
+        let matched = allSkills.filter { lower.contains($0.slashCommand) }
+        guard !matched.isEmpty else { return "" }
+        return matched.map { "Skill \($0.slashCommand) (\($0.title)): \($0.instruction)" }.joined(separator: "\n")
+    }
+
+    private func resolveMentionedFiles(
+        in prompt: String,
+        activeFilePath: String?,
+        existingFileReader: (String) -> String?
+    ) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"@([A-Za-z0-9_\-./]+)"#) else { return "" }
+        let ns = prompt as NSString
+        let matches = regex.matches(in: prompt, range: NSRange(location: 0, length: ns.length))
+        var seen: Set<String> = []
+        var sections: [String] = []
+        let reserved: Set<String> = ["active", "selection", "problems", "terminal", "git"]
+
+        for m in matches where sections.count < 5 {
+            let token = ns.substring(with: m.range(at: 1))
+            let low = token.lowercased()
+            if reserved.contains(low) || seen.contains(token) { continue }
+            if token == activeFilePath { continue }
+            seen.insert(token)
+            if let body = existingFileReader(token) {
+                let clipped = String(body.prefix(4500))
+                sections.append("=== @\(token) ===\n\(clipped)")
+            }
+        }
+        return sections.joined(separator: "\n\n")
     }
 
     // MARK: - Terminal Coding Agent CLI (claude / opencode / ai)
@@ -433,7 +799,11 @@ public final class AIAgentService: ObservableObject {
             activeFilePath: workspace.activeTab.map { workspace.relativePath(for: $0.fileURL) },
             activeFileContent: scannedSnapshot + (workspace.activeTab.map { "\n--- ACTIVE TAB ---\n\($0.content)" } ?? ""),
             selectedSnippet: nil,
-            lastConsoleOutput: lastConsoleOutput
+            lastConsoleOutput: lastConsoleOutput,
+            diagnosticsSummary: "",
+            gitDiffSummary: "",
+            mentionedFilesBlock: "",
+            activeSkillInstructions: resolveActiveSkills(in: promptText)
         )
         let systemPrompt = active.format == .appleOnDevice
             ? buildCompactSystemPrompt(cliContext)
@@ -592,6 +962,10 @@ public final class AIAgentService: ObservableObject {
         let activeFileContent: String?
         let selectedSnippet: String?
         let lastConsoleOutput: String
+        let diagnosticsSummary: String
+        let gitDiffSummary: String
+        let mentionedFilesBlock: String
+        let activeSkillInstructions: String
     }
 
     private func runGeneration(
@@ -715,12 +1089,16 @@ public final class AIAgentService: ObservableObject {
         var turns: [AIChatTurn] = []
         for msg in messages where msg.role != .system && !msg.isStreaming {
             let text = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { continue }
+            guard !text.isEmpty || !msg.attachedImages.isEmpty else { continue }
             let role: AIChatTurn.Role = msg.role == .user ? .user : .assistant
             if let last = turns.last, last.role == role {
-                turns[turns.count - 1] = AIChatTurn(role: role, text: last.text + "\n\n" + text)
+                turns[turns.count - 1] = AIChatTurn(
+                    role: role,
+                    text: last.text + (text.isEmpty ? "" : "\n\n" + text),
+                    attachments: last.attachments + msg.attachedImages
+                )
             } else {
-                turns.append(AIChatTurn(role: role, text: text))
+                turns.append(AIChatTurn(role: role, text: text, attachments: msg.attachedImages))
             }
         }
         var recent = Array(turns.suffix(12))
@@ -731,26 +1109,39 @@ public final class AIAgentService: ObservableObject {
     }
 
     private func buildSystemPrompt(_ ctx: PromptContext) -> String {
-        """
-        You are the built-in Coding Agent inside '3012', a native iOS / iPadOS code editor (similar to Cursor, VS Code Copilot and Antigravity).
-        Reply in the user's language. Keep explanations concise and mobile-friendly.
-        Whenever you create a new file or modify an existing file in the user's project, you MUST output the COMPLETE updated file content wrapped in this exact XML block:
-        <file_edit path="relative/path/to/file.ext">
-        ...full file content...
-        </file_edit>
-        Do NOT wrap <file_edit> inside markdown code fences. You may output multiple <file_edit> blocks in one reply.
+        var sections: [String] = [
+            """
+            You are the built-in Coding Agent inside '3012', a native iOS / iPadOS code editor (similar to Cursor, VS Code Copilot and Antigravity).
+            Reply in the user's language. Keep explanations concise and mobile-friendly.
+            Whenever you create a new file or modify an existing file in the user's project, you MUST output the COMPLETE updated file content wrapped in this exact XML block:
+            <file_edit path="relative/path/to/file.ext">
+            ...full file content...
+            </file_edit>
+            Do NOT wrap <file_edit> inside markdown code fences. You may output multiple <file_edit> blocks in one reply.
+            """
+        ]
 
-        Workspace files:
-        \(ctx.workspaceTree)
+        if !ctx.activeSkillInstructions.isEmpty {
+            sections.append("Active Slash Skills:\n\(ctx.activeSkillInstructions)")
+        }
+        sections.append("Workspace files:\n\(ctx.workspaceTree)")
+        sections.append("Active file: \(ctx.activeFilePath ?? "None")")
+        if let snippet = ctx.selectedSnippet, !snippet.isEmpty {
+            sections.append("Selected snippet:\n\(snippet)")
+        }
+        sections.append("Active file content:\n\(ctx.activeFileContent ?? "(No open file)")")
+        if !ctx.mentionedFilesBlock.isEmpty {
+            sections.append("Referenced @files:\n\(ctx.mentionedFilesBlock)")
+        }
+        if !ctx.diagnosticsSummary.isEmpty {
+            sections.append("Current @problems diagnostics:\n\(ctx.diagnosticsSummary)")
+        }
+        if !ctx.gitDiffSummary.isEmpty {
+            sections.append("Current @git status/diff:\n\(ctx.gitDiffSummary)")
+        }
+        sections.append("Latest @terminal / console output:\n\(String(ctx.lastConsoleOutput.suffix(1800)))")
 
-        Active file: \(ctx.activeFilePath ?? "None")
-        \(ctx.selectedSnippet.map { "Selected snippet:\n\($0)\n" } ?? "")
-        Active file content:
-        \(ctx.activeFileContent ?? "(No open file)")
-
-        Latest console / compiler output:
-        \(String(ctx.lastConsoleOutput.suffix(1500)))
-        """
+        return sections.joined(separator: "\n\n")
     }
 
     /// The on-device model has a small context window, so the context is trimmed aggressively.
@@ -843,7 +1234,7 @@ public final class AIAgentService: ObservableObject {
         from rawText: String,
         existingFileReader: (String) -> String?
     ) -> (String, [AgentProposedEdit]) {
-        let pattern = #"<file_edit\s+path="([^"]+)"\s*>\s*([\s\S]*?)\s*</file_edit>"#
+        let pattern = #"<file_edit\b[^>]*path\s*=\s*["']([^"']+)["'][^>]*>\s*([\s\S]*?)\s*</file_edit>"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
             return (rawText, [])
         }
@@ -857,8 +1248,15 @@ public final class AIAgentService: ObservableObject {
         var stripped = rawText
 
         for match in matches.reversed() {
-            let path = nsText.substring(with: match.range(at: 1))
-            let code = nsText.substring(with: match.range(at: 2))
+            let path = nsText.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            var code = nsText.substring(with: match.range(at: 2))
+            // Unwrap accidental outer markdown code fence inside <file_edit>
+            if code.hasPrefix("```") {
+                var lines = code.components(separatedBy: "\n")
+                if lines.first?.hasPrefix("```") == true { lines.removeFirst() }
+                if lines.last?.trimmingCharacters(in: .whitespaces) == "```" { lines.removeLast() }
+                code = lines.joined(separator: "\n")
+            }
             let existing = existingFileReader(path)
             edits.insert(AgentProposedEdit(relativePath: path, oldContent: existing, newContent: code), at: 0)
             if let swiftRange = Range(match.range, in: stripped) {

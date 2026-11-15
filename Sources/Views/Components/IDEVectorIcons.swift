@@ -359,7 +359,7 @@ public struct FileLanguageIconView: View {
         case .svelte:
             return .monogram("S", Color(red: 0.98, green: 0.34, blue: 0.14))
         case .astro:
-            return .symbol("sparkles", Color(red: 0.98, green: 0.42, blue: 0.24))
+            return .monogram("As", Color(red: 0.98, green: 0.42, blue: 0.24))
         case .graphql:
             return .monogram("GQ", Color(red: 0.90, green: 0.30, blue: 0.64))
         case .c:

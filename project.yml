@@ -45,8 +45,8 @@ targets:
         PRODUCT_NAME: "3012"
         PRODUCT_MODULE_NAME: App3012
         PRODUCT_BUNDLE_IDENTIFIER: com.dev.app3012
-        MARKETING_VERSION: "4.0.1"
-        CURRENT_PROJECT_VERSION: "20"
+        MARKETING_VERSION: "5.0.0"
+        CURRENT_PROJECT_VERSION: "21"
         SWIFT_VERSION: "5.10"
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
@@ -82,7 +82,9 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        NSLocalNetworkUsageDescription: "3012 kết nối tới máy chủ AI offline (Ollama, LM Studio), VPS và Live Server trong mạng Wi-Fi của bạn."
+        NSLocalNetworkUsageDescription: "3012 kết nối tới PC VS Code Sync, máy chủ AI offline (Ollama, LM Studio), VPS và Live Server trong mạng Wi-Fi của bạn."
+        NSPhotoLibraryUsageDescription: "3012 cho phép đính kèm ảnh chụp màn hình giao diện hoặc log lỗi vào AI Coding Agent để phân tích trực quan."
+        NSCameraUsageDescription: "3012 cho phép chụp ảnh sơ đồ hoặc màn hình lỗi để gửi trực tiếp cho AI Coding Agent."
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UISupportsDocumentBrowser: false
@@ -105,6 +107,11 @@ targets:
               - public.xml
               - public.data
               - public.folder
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: com.dev.app3012.pcsync
+            CFBundleURLSchemes:
+              - 3012sync
         UIBackgroundModes:
           - audio
         NSAppTransportSecurity:

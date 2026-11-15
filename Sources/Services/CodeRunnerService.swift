@@ -1,11 +1,14 @@
 import Foundation
 import JavaScriptCore
+import CryptoKit
 
 @MainActor
 public final class CodeRunnerService: ObservableObject {
     @Published public var consoleOutput: String = "Ready. Tap Run to execute any file without configuring PATH or compilers.\n"
     @Published public var stdinInput: String = ""
     @Published public private(set) var isRunning: Bool = false
+    @Published public private(set) var lastExecutionFailed: Bool = false
+    @Published public private(set) var lastErrorSummary: String = ""
     @Published public var shellHistory: [String] = [
         "3012 Local Workspace Shell v1.0 — type 'help' for commands."
     ]
@@ -19,6 +22,14 @@ public final class CodeRunnerService: ObservableObject {
         didSet { UserDefaults.standard.set(vpsAuthToken, forKey: "3012.vpsAuthToken") }
     }
 
+    private struct CachedExecutionResult {
+        let output: String
+        let backend: String
+        let failed: Bool
+        let timestamp: Date
+    }
+    private var executionCache: [String: CachedExecutionResult] = [:]
+
     public init() {
         self.vpsEndpointURL = UserDefaults.standard.string(forKey: "3012.vpsEndpointURL") ?? ""
         self.vpsAuthToken = UserDefaults.standard.string(forKey: "3012.vpsAuthToken") ?? ""
@@ -28,45 +39,204 @@ public final class CodeRunnerService: ObservableObject {
     sudo apt-get update && sudo apt-get install -y build-essential gcc g++ gdb clang clangd cmake python3 python3-pip nodejs npm git ripgrep && echo "[OK] 3012 VPS Toolchain Installed"
     """
 
-    public func runCode(code: String, language: CodeLanguage, fileName: String, sshService: SSHWorkspaceService? = nil) async {
+    public func runCode(
+        code: String,
+        language: CodeLanguage,
+        fileName: String,
+        sshService: SSHWorkspaceService? = nil,
+        bypassCache: Bool = false
+    ) async {
         isRunning = true
         let startTime = Date()
         consoleOutput = "[Run] \(fileName) (\(language.rawValue))...\n"
+        lastExecutionFailed = false
+        lastErrorSummary = ""
 
         defer {
             isRunning = false
         }
 
-        // 0. If connected to SSH VPS (Phase 3), compile & run directly on the user's VPS!
+        let res = await executeCodeSnapshot(
+            code: code,
+            language: language,
+            fileName: fileName,
+            stdin: stdinInput,
+            sshService: sshService,
+            bypassCache: bypassCache
+        )
+        let elapsed = max(res.durationMs, Int(Date().timeIntervalSince(startTime) * 1000))
+        lastExecutionFailed = res.failed
+        lastErrorSummary = res.failed ? String(res.output.prefix(600)) : ""
+        consoleOutput += res.output + "\n\n[Done in \(elapsed) ms — \(res.backend)]"
+    }
+
+    public func executeCodeSnapshot(
+        code: String,
+        language: CodeLanguage,
+        fileName: String = "main",
+        stdin: String,
+        sshService: SSHWorkspaceService? = nil,
+        bypassCache: Bool = false
+    ) async -> (output: String, failed: Bool, durationMs: Int, backend: String) {
+        let startTime = Date()
+
+        // 0. SSH VPS if connected
         if let ssh = sshService, ssh.isConnected {
-            let vpsOut = await ssh.compileAndRunOnVPS(code: code, language: language, fileName: fileName, stdin: stdinInput)
+            let vpsOut = await ssh.compileAndRunOnVPS(code: code, language: language, fileName: fileName, stdin: stdin)
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            consoleOutput += vpsOut + "\n\n[Done in \(elapsed) ms — SSH VPS: \(ssh.connectedProfile?.host ?? "Remote")]"
-            return
+            let failed = Self.detectErrorInOutput(vpsOut)
+            return (vpsOut, failed, elapsed, "SSH VPS: \(ssh.connectedProfile?.host ?? "Remote")")
         }
 
+        // 1. Local JavaScriptCore for plain JS
         if language == .javascript {
             let output = executeJavaScriptLocally(code)
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            consoleOutput += output + "\n\n[Done in \(elapsed) ms — Local JavaScriptCore]"
-            return
+            let failed = Self.detectErrorInOutput(output)
+            return (output, failed, elapsed, "Local JavaScriptCore")
         }
 
-        // 1. If user configured their private VPS Runner endpoint, prioritize VPS execution
+        // 2. Private VPS Runner URL
         let trimmedVPS = vpsEndpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedVPS.isEmpty, let vpsResult = await executeOnCustomVPS(endpoint: trimmedVPS, code: code, language: language, fileName: fileName, stdin: stdinInput) {
+        if !trimmedVPS.isEmpty, let vpsResult = await executeOnCustomVPS(endpoint: trimmedVPS, code: code, language: language, fileName: fileName, stdin: stdin) {
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            consoleOutput += vpsResult + "\n\n[Done in \(elapsed) ms — Remote VPS]"
-            return
+            return (vpsResult, Self.detectErrorInOutput(vpsResult), elapsed, "Remote VPS")
         }
 
-        // 2. Zero-Config Instant Compiler Sandbox (Wandbox API — works immediately without API keys or MinGW setup)
-        if let compilerName = wandboxCompiler(for: language) {
-            let result = await executeViaZeroConfigSandbox(compiler: compilerName, code: code, stdin: stdinInput)
+        // 3. SHA-256 Instant Cache hit for identical code+stdin
+        let cacheKey = Self.computeCacheKey(language: language, code: code, stdin: stdin)
+        if !bypassCache, let cached = executionCache[cacheKey], Date().timeIntervalSince(cached.timestamp) < 300 {
+            return (cached.output, cached.failed, 0, "\(cached.backend) [Cached]")
+        }
+
+        // 4. Tier A: Fast Godbolt Compiler Explorer (~1.3s Python, ~2.0s C++20 -O1, zero pid1 bug)
+        if let fastResult = await executeViaFastGodbolt(language: language, code: code, stdin: stdin) {
             let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
-            consoleOutput += result + "\n\n[Done in \(elapsed) ms — Zero-Config Toolchain: \(compilerName)]"
-        } else {
-            consoleOutput += "Direct execution is not required for \(language.rawValue). For HTML/CSS, Live Server (:5500) handles instant preview."
+            storeCache(key: cacheKey, output: fastResult.output, backend: fastResult.backend, failed: fastResult.failed)
+            return (fastResult.output, fastResult.failed, elapsed, fastResult.backend)
+        }
+
+        // 5. Tier B: Wandbox Pinned Stable Compilers (zero broken '-head' images)
+        if let compilerName = wandboxCompiler(for: language) {
+            let result = await executeViaZeroConfigSandbox(compiler: compilerName, code: code, stdin: stdin)
+            let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
+            let failed = Self.detectErrorInOutput(result)
+            if !result.hasPrefix("[Network Error]") {
+                storeCache(key: cacheKey, output: result, backend: "Zero-Config: \(compilerName)", failed: failed)
+            }
+            return (result, failed, elapsed, "Zero-Config: \(compilerName)")
+        }
+
+        return (
+            "Direct execution is not required for \(language.rawValue). For HTML/CSS, Live Server (:5500) handles instant preview.",
+            false,
+            0,
+            "Static Preview"
+        )
+    }
+
+    private func storeCache(key: String, output: String, backend: String, failed: Bool) {
+        if executionCache.count >= 32 {
+            if let oldest = executionCache.min(by: { $0.value.timestamp < $1.value.timestamp })?.key {
+                executionCache.removeValue(forKey: oldest)
+            }
+        }
+        executionCache[key] = CachedExecutionResult(output: output, backend: backend, failed: failed, timestamp: Date())
+    }
+
+    private static func computeCacheKey(language: CodeLanguage, code: String, stdin: String) -> String {
+        let material = "\(language.rawValue)|\(stdin)|\(code)"
+        let digest = SHA256.hash(data: Data(material.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func detectErrorInOutput(_ output: String) -> Bool {
+        let low = output.lowercased()
+        return low.contains("[compiler diagnostics]")
+            || low.contains("[runtime error]")
+            || low.contains("[js exception]")
+            || low.contains("[network error]")
+            || low.contains("traceback (most recent call last)")
+            || low.contains("syntaxerror:")
+            || low.contains("error:")
+            || (low.contains("[exit code:") && !low.contains("[exit code: 0]"))
+    }
+
+    private func executeViaFastGodbolt(language: CodeLanguage, code: String, stdin: String) async -> (output: String, failed: Bool, backend: String)? {
+        let compilerID: String
+        let userArgs: String
+        switch language {
+        case .cpp:
+            compilerID = "g132"
+            userArgs = "-std=c++20 -O1"
+        case .python:
+            compilerID = "python312"
+            userArgs = ""
+        default:
+            return nil
+        }
+
+        guard let url = URL(string: "https://godbolt.org/api/compiler/\(compilerID)/compile") else { return nil }
+        let payload: [String: Any] = [
+            "source": code,
+            "options": [
+                "userArguments": userArgs,
+                "compilerOptions": ["executorRequest": true],
+                "filters": ["execute": true],
+                "executeParameters": ["args": "", "stdin": stdin]
+            ]
+        ]
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 12
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("3012-Mobile-IDE/5.0", forHTTPHeaderField: "User-Agent")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return nil
+            }
+
+            func flattenText(_ items: [[String: Any]]?) -> String {
+                (items ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n")
+            }
+
+            let buildRes = json["buildResult"] as? [String: Any]
+            let buildCode = buildRes?["code"] as? Int ?? 0
+            let compErr = flattenText(buildRes?["stderr"] as? [[String: Any]])
+            let execStdout = flattenText(json["stdout"] as? [[String: Any]])
+            let execStderr = flattenText(json["stderr"] as? [[String: Any]])
+            let exitCode = json["code"] as? Int ?? 0
+
+            // Check that execution actually ran if required
+            if let didExecute = json["didExecute"] as? Bool, !didExecute, buildCode == 0 {
+                return nil
+            }
+
+            var pieces: [String] = []
+            if !compErr.isEmpty {
+                pieces.append("[Compiler Diagnostics]\n" + compErr)
+            }
+            if !execStdout.isEmpty {
+                pieces.append(execStdout)
+            }
+            if !execStderr.isEmpty {
+                pieces.append("[Runtime Error]\n" + execStderr)
+            }
+            if buildCode != 0 || exitCode != 0 {
+                let codeNum = buildCode != 0 ? buildCode : exitCode
+                pieces.append("[Exit code: \(codeNum)]")
+            }
+            let outText = pieces.isEmpty ? "(Program exited with 0 — no output)" : pieces.joined(separator: "\n")
+            let failed = (buildCode != 0 || exitCode != 0 || !execStderr.isEmpty)
+            return (outText, failed, "Fast Engine (\(compilerID))")
+        } catch {
+            return nil
         }
     }
 
@@ -110,20 +280,20 @@ public final class CodeRunnerService: ObservableObject {
 
     private func wandboxCompiler(for language: CodeLanguage) -> String? {
         switch language {
-        case .cpp: return "gcc-head"
-        case .c: return "gcc-head-c"
-        case .objectiveC: return "clang-head-c"
+        case .cpp: return "gcc-13.2.0"
+        case .c: return "gcc-13.2.0-c"
+        case .objectiveC: return "gcc-13.2.0-c"
         case .csharp: return "mono-6.12.0.199"
         case .go: return "go-1.23.2"
         case .rust: return "rust-1.82.0"
-        case .zig: return "zig-head"
+        case .zig: return "zig-0.13.0"
         case .dlang: return "dmd-2.109.1"
         case .nim: return "nim-2.2.10"
         case .crystal: return "crystal-1.13.3"
         case .java: return "openjdk-jdk-22+36"
         case .scala: return "scala-3.5.1"
         case .groovy: return "groovy-4.0.23"
-        case .python: return "cpython-head"
+        case .python: return "cpython-3.12.7"
         case .swift: return "swift-6.0.1"
         case .typescript, .tsx: return "typescript-5.6.2"
         case .php: return "php-8.3.12"
@@ -153,15 +323,16 @@ public final class CodeRunnerService: ObservableObject {
             "code": code,
             "stdin": stdin
         ]
-        if compiler == "gcc-head" {
+        if compiler == "gcc-13.2.0" || compiler == "gcc-head" {
             payload["options"] = "warning,gnu++20"
-            payload["compiler-option-raw"] = "-O2"
+            payload["compiler-option-raw"] = "-O1"
         }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.timeoutInterval = 25
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("3012-Mobile-IDE/5.0", forHTTPHeaderField: "User-Agent")
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
         do {

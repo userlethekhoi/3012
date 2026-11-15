@@ -120,12 +120,17 @@ public struct LeftExplorerDrawer: View {
     @ObservedObject var sshService: SSHWorkspaceService
     @ObservedObject var extStore: ExtensionStoreService
     @ObservedObject var timelineService: FileTimelineAndArchiveService
+    var pcSync: PCSyncService? = nil
     var onInsertSnippet: (String) -> Void
     var onOpenTheosBuilder: () -> Void
     var onOpenXtoolBuilder: () -> Void
     var onRequestOpenSingleFile: (() -> Void)?
     var onRequestOpenFolder: (() -> Void)?
     var onRequestImportZip: (() -> Void)?
+    var onOpenPCSyncSheet: () -> Void = {}
+    var onOpenLiveShareSheet: () -> Void = {}
+    var onOpenPowerToolsSheet: () -> Void = {}
+    var onJumpToSearchHit: ((URL, Int) -> Void)? = nil
     var onOpenSettings: () -> Void
     var onCloseDrawer: () -> Void
 
@@ -138,14 +143,20 @@ public struct LeftExplorerDrawer: View {
     @State private var targetParentDir: URL?
     @State private var renameTargetURL: URL?
     @State private var renameText: String = ""
-    @State private var fallbackPickerMode: WorkspaceDocumentPickerMode? = nil
     @State private var exportedZipURL: URL? = nil
+
+    // Search & Replace UI state
+    @State private var showSearchReplaceInput: Bool = false
+    @State private var workspaceReplaceText: String = ""
+    @State private var searchCaseSensitive: Bool = false
 
     // Git UI state
     @State private var commitMessageInput: String = ""
     @State private var cloneRepoInput: String = ""
     @State private var githubTokenInput: String = ""
     @State private var selectedGitDiffText: String? = nil
+    @State private var remoteBranches: [String] = []
+    @State private var isLoadingBranches: Bool = false
 
     // SSH UI state
     @State private var showAddVPSSheet: Bool = false
@@ -169,12 +180,17 @@ public struct LeftExplorerDrawer: View {
         sshService: SSHWorkspaceService,
         extStore: ExtensionStoreService,
         timelineService: FileTimelineAndArchiveService,
+        pcSync: PCSyncService? = nil,
         onInsertSnippet: @escaping (String) -> Void,
         onOpenTheosBuilder: @escaping () -> Void = {},
         onOpenXtoolBuilder: @escaping () -> Void = {},
         onRequestOpenSingleFile: (() -> Void)? = nil,
         onRequestOpenFolder: (() -> Void)? = nil,
         onRequestImportZip: (() -> Void)? = nil,
+        onOpenPCSyncSheet: @escaping () -> Void = {},
+        onOpenLiveShareSheet: @escaping () -> Void = {},
+        onOpenPowerToolsSheet: @escaping () -> Void = {},
+        onJumpToSearchHit: ((URL, Int) -> Void)? = nil,
         onOpenSettings: @escaping () -> Void,
         onCloseDrawer: @escaping () -> Void
     ) {
@@ -185,21 +201,54 @@ public struct LeftExplorerDrawer: View {
         self.sshService = sshService
         self.extStore = extStore
         self.timelineService = timelineService
+        self.pcSync = pcSync
         self.onInsertSnippet = onInsertSnippet
         self.onOpenTheosBuilder = onOpenTheosBuilder
         self.onOpenXtoolBuilder = onOpenXtoolBuilder
         self.onRequestOpenSingleFile = onRequestOpenSingleFile
         self.onRequestOpenFolder = onRequestOpenFolder
         self.onRequestImportZip = onRequestImportZip
+        self.onOpenPCSyncSheet = onOpenPCSyncSheet
+        self.onOpenLiveShareSheet = onOpenLiveShareSheet
+        self.onOpenPowerToolsSheet = onOpenPowerToolsSheet
+        self.onJumpToSearchHit = onJumpToSearchHit
         self.onOpenSettings = onOpenSettings
         self.onCloseDrawer = onCloseDrawer
+    }
+
+    private func presentLocalPicker(_ mode: WorkspaceDocumentPickerMode) {
+        NativeDocumentPickerPresenter.shared.presentPicker(
+            mode: mode,
+            onPickURL: { pickedURL in
+                switch mode {
+                case .singleFile:
+                    workspace.openExternalSingleFile(from: pickedURL)
+                    liveServer.updateRootDirectory(workspace.rootURL)
+                case .folder:
+                    workspace.switchWorkspaceFolder(to: pickedURL)
+                    liveServer.updateRootDirectory(workspace.rootURL)
+                case .zip:
+                    if workspace.importAndOpenZip(from: pickedURL) {
+                        liveServer.updateRootDirectory(workspace.rootURL)
+                    }
+                case .themeJSON:
+                    break
+                }
+            },
+            onPickURLs: mode == .singleFile ? { pickedURLs in
+                for url in pickedURLs {
+                    workspace.openExternalSingleFile(from: url)
+                }
+                liveServer.updateRootDirectory(workspace.rootURL)
+            } : nil
+        )
     }
 
     private func triggerOpenSingleFile() {
         if let onRequestOpenSingleFile {
             onRequestOpenSingleFile()
         } else {
-            fallbackPickerMode = .singleFile
+            presentLocalPicker(.singleFile)
         }
     }
 
@@ -207,7 +256,7 @@ public struct LeftExplorerDrawer: View {
         if let onRequestOpenFolder {
             onRequestOpenFolder()
         } else {
-            fallbackPickerMode = .folder
+            presentLocalPicker(.folder)
         }
     }
 
@@ -215,7 +264,39 @@ public struct LeftExplorerDrawer: View {
         if let onRequestImportZip {
             onRequestImportZip()
         } else {
-            fallbackPickerMode = .zip
+            presentLocalPicker(.zip)
+        }
+    }
+
+    @ViewBuilder
+    private func starterTemplatesSubmenu() -> some View {
+        Menu {
+            Button {
+                _ = workspace.scaffoldStarterTemplate(kind: .modernWebLanding)
+                liveServer.updateRootDirectory(workspace.rootURL)
+            } label: {
+                Label("Web HTML/CSS/JS Live", systemImage: "globe")
+            }
+            Button {
+                _ = workspace.scaffoldStarterTemplate(kind: .cppCompetitive)
+                liveServer.updateRootDirectory(workspace.rootURL)
+            } label: {
+                Label("C++20 Competitive", systemImage: "cpu")
+            }
+            Button {
+                _ = workspace.scaffoldStarterTemplate(kind: .pythonAutomation)
+                liveServer.updateRootDirectory(workspace.rootURL)
+            } label: {
+                Label("Python 3.12 Automation", systemImage: "terminal")
+            }
+            Button {
+                _ = workspace.scaffoldStarterTemplate(kind: .markdownDocs)
+                liveServer.updateRootDirectory(workspace.rootURL)
+            } label: {
+                Label("Markdown + Mermaid Docs", systemImage: "doc.richtext")
+            }
+        } label: {
+            Label(preferences.tr("Tạo từ Mẫu (Starter Templates)", "Starter Templates"), systemImage: "rectangle.stack.badge.plus")
         }
     }
 
@@ -328,7 +409,7 @@ public struct LeftExplorerDrawer: View {
                         Button {
                             triggerOpenFolder()
                         } label: {
-                            Label(preferences.tr("Mở Thư mục trên máy (Files)", "Open Device Folder (Files)"), systemImage: "folder")
+                            Label(preferences.tr("Mở Thư mục trên máy (Folder)", "Open Device Folder (Folder)"), systemImage: "folder")
                         }
                         Button {
                             triggerImportZip()
@@ -341,6 +422,7 @@ public struct LeftExplorerDrawer: View {
                         } label: {
                             Label(preferences.tr("Tạo Project Mới...", "New Project Workspace..."), systemImage: "folder.badge.plus")
                         }
+                        starterTemplatesSubmenu()
                         Button {
                             exportedZipURL = timelineService.exportProjectZip(workspaceRoot: workspace.rootURL)
                         } label: {
@@ -478,33 +560,6 @@ public struct LeftExplorerDrawer: View {
             }
             Button(preferences.tr("Hủy", "Cancel"), role: .cancel) { newProjectName = "" }
         }
-        .sheet(item: $fallbackPickerMode) { mode in
-            SystemDocumentPickerSheet(
-                mode: mode,
-                onPickURL: { pickedURL in
-                    switch mode {
-                    case .singleFile:
-                        workspace.openExternalSingleFile(from: pickedURL)
-                        liveServer.updateRootDirectory(workspace.rootURL)
-                    case .folder:
-                        workspace.switchWorkspaceFolder(to: pickedURL)
-                        liveServer.updateRootDirectory(workspace.rootURL)
-                    case .zip:
-                        if workspace.importAndOpenZip(from: pickedURL) {
-                            liveServer.updateRootDirectory(workspace.rootURL)
-                        }
-                    case .themeJSON:
-                        break
-                    }
-                },
-                onPickURLs: mode == .singleFile ? { pickedURLs in
-                    for url in pickedURLs {
-                        workspace.openExternalSingleFile(from: url)
-                    }
-                    liveServer.updateRootDirectory(workspace.rootURL)
-                } : nil
-            )
-        }
         .sheet(isPresented: $showAddVPSSheet) {
             vpsEditorSheet()
         }
@@ -537,12 +592,12 @@ public struct LeftExplorerDrawer: View {
                     Button {
                         triggerOpenSingleFile()
                     } label: {
-                        Label(preferences.tr("Mở File lẻ trên máy (Files)...", "Open File(s) from Files..."), systemImage: "doc.badge.arrow.up")
+                        Label(preferences.tr("Mở File lẻ trên máy (File)...", "Open File on Device (File)..."), systemImage: "doc.badge.arrow.up")
                     }
                     Button {
                         triggerOpenFolder()
                     } label: {
-                        Label(preferences.tr("Mở Thư mục trên máy (Files)...", "Open Folder from Files..."), systemImage: "folder.badge.gearshape")
+                        Label(preferences.tr("Mở Thư mục trên máy (Folder)...", "Open Folder on Device (Folder)..."), systemImage: "folder.badge.gearshape")
                     }
                     Button {
                         triggerImportZip()
@@ -555,12 +610,13 @@ public struct LeftExplorerDrawer: View {
                     } label: {
                         Label(preferences.tr("Tạo Project Mới...", "Create New Project..."), systemImage: "plus.rectangle.on.folder")
                     }
+                    starterTemplatesSubmenu()
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "folder.fill")
                             .font(.system(size: 10))
                             .foregroundColor(Color(hex: palette.accent))
-                        Text(workspace.rootURL.lastPathComponent.uppercased())
+                        Text(workspace.workspaceDisplayName.uppercased())
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(Color(hex: palette.accent))
                             .lineLimit(1)
@@ -674,6 +730,71 @@ public struct LeftExplorerDrawer: View {
                 }
             }
             .padding(.horizontal, 10)
+            .padding(.bottom, 5)
+
+            // Quick Strip: PC Sync (Wi-Fi/4G) + Share :5500 + Developer Power Tools
+            HStack(spacing: 5) {
+                Button {
+                    onCloseDrawer()
+                    onOpenPCSyncSheet()
+                } label: {
+                    HStack(spacing: 4) {
+                        if pcSync?.isConnected == true {
+                            Circle().fill(Color.green).frame(width: 5.5, height: 5.5)
+                        } else {
+                            Image(systemName: "desktopcomputer")
+                                .font(.system(size: 9.5, weight: .semibold))
+                        }
+                        Text(pcSync?.isConnected == true
+                             ? (pcSync?.transportMode == .wifiLAN ? "Wi-Fi" : "4G/5G")
+                             : "PC Sync")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4.5)
+                    .background((pcSync?.isConnected == true) ? Color.green.opacity(0.18) : Color(hex: palette.currentLineBackground))
+                    .foregroundColor((pcSync?.isConnected == true) ? .green : Color(hex: palette.foreground))
+                    .cornerRadius(6)
+                }
+
+                Button {
+                    onCloseDrawer()
+                    onOpenLiveShareSheet()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text(liveServer.isShareLinkEnabled ? "Share (\(liveServer.sharedViewerCount))" : "Share :\(liveServer.port)")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4.5)
+                    .background(liveServer.isShareLinkEnabled ? Color.green.opacity(0.18) : Color(hex: palette.currentLineBackground))
+                    .foregroundColor(liveServer.isShareLinkEnabled ? .green : Color(hex: palette.foreground))
+                    .cornerRadius(6)
+                }
+
+                Button {
+                    onCloseDrawer()
+                    onOpenPowerToolsSheet()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "wrench.and.screwdriver")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text("Tools")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4.5)
+                    .background(Color(hex: palette.currentLineBackground))
+                    .foregroundColor(Color(hex: palette.accent))
+                    .cornerRadius(6)
+                }
+            }
+            .padding(.horizontal, 10)
             .padding(.bottom, 6)
 
             if let banner = workspace.statusBannerMessage, !banner.isEmpty {
@@ -754,21 +875,46 @@ public struct LeftExplorerDrawer: View {
         }
     }
 
-    // MARK: - 2. Search Section
+    // MARK: - 2. Search & Replace Section
     @ViewBuilder
     private func searchSection(palette: IDEColorPalette) -> some View {
         VStack(spacing: 8) {
-            HStack {
+            HStack(spacing: 5) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(Color(hex: palette.gutterForeground))
-                TextField("Tìm nội dung toàn dự án...", text: $workspace.searchQuery)
+                TextField(preferences.tr("Tìm nội dung toàn dự án...", "Search across workspace..."), text: $workspace.searchQuery)
                     .font(.system(size: 12.5))
                     .foregroundColor(Color(hex: palette.foreground))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .onChange(of: workspace.searchQuery) { q in
-                        workspace.performWorkspaceSearch(q)
+                        workspace.performWorkspaceSearch(q, caseSensitive: searchCaseSensitive)
                     }
+
+                Button {
+                    searchCaseSensitive.toggle()
+                    workspace.performWorkspaceSearch(workspace.searchQuery, caseSensitive: searchCaseSensitive)
+                } label: {
+                    Text("Aa")
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(searchCaseSensitive ? Color(hex: palette.accent) : Color(hex: palette.currentLineBackground))
+                        .foregroundColor(searchCaseSensitive ? .white : Color(hex: palette.gutterForeground))
+                        .cornerRadius(4)
+                }
+
+                Button {
+                    showSearchReplaceInput.toggle()
+                } label: {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 4)
+                        .background(showSearchReplaceInput ? Color(hex: palette.accent).opacity(0.22) : Color(hex: palette.currentLineBackground))
+                        .foregroundColor(showSearchReplaceInput ? Color(hex: palette.accent) : Color(hex: palette.gutterForeground))
+                        .cornerRadius(4)
+                }
             }
             .padding(7)
             .background(Color(hex: palette.editorBackground))
@@ -776,12 +922,51 @@ public struct LeftExplorerDrawer: View {
             .padding(.horizontal, 10)
             .padding(.top, 8)
 
+            if showSearchReplaceInput {
+                VStack(spacing: 6) {
+                    TextField(preferences.tr("Thay thế bằng...", "Replace with..."), text: $workspaceReplaceText)
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(hex: palette.foreground))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .padding(7)
+                        .background(Color(hex: palette.editorBackground))
+                        .cornerRadius(7)
+
+                    Button {
+                        let res = workspace.performWorkspaceReplace(
+                            query: workspace.searchQuery,
+                            replacement: workspaceReplaceText,
+                            caseSensitive: searchCaseSensitive
+                        )
+                        workspace.statusBannerMessage = preferences.tr(
+                            "Đã thay thế \(res.replacements) vị trí trong \(res.filesUpdated) file",
+                            "Replaced \(res.replacements) occurrences in \(res.filesUpdated) file(s)"
+                        )
+                    } label: {
+                        Label(preferences.tr("Thay thế toàn dự án", "Replace All in Workspace"), systemImage: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 11, weight: .bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(Color(hex: palette.accent))
+                            .foregroundColor(.white)
+                            .cornerRadius(6)
+                    }
+                    .disabled(workspace.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(.horizontal, 10)
+            }
+
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 5) {
                     ForEach(Array(workspace.searchResults.enumerated()), id: \.offset) { _, hit in
                         Button {
-                            workspace.openFile(at: hit.url)
-                            onCloseDrawer()
+                            if let onJumpToSearchHit {
+                                onJumpToSearchHit(hit.url, hit.line)
+                            } else {
+                                workspace.openFile(at: hit.url)
+                                onCloseDrawer()
+                            }
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("\(workspace.relativePath(for: hit.url)):\(hit.line)")
@@ -819,13 +1004,52 @@ public struct LeftExplorerDrawer: View {
                         .cornerRadius(6)
                 }
 
-                // Commit & Push Box
+                // Commit, Pull & Push Box
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Label("Branch: \(gitService.currentBranch)", systemImage: "arrow.triangle.branch")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: palette.foreground))
+                        Menu {
+                            if !remoteBranches.isEmpty {
+                                Section(preferences.tr("Nhánh GitHub Remote", "GitHub Remote Branches")) {
+                                    ForEach(remoteBranches, id: \.self) { branch in
+                                        Button {
+                                            gitService.currentBranch = branch
+                                        } label: {
+                                            if branch == gitService.currentBranch {
+                                                Label(branch, systemImage: "checkmark")
+                                            } else {
+                                                Text(branch)
+                                            }
+                                        }
+                                    }
+                                }
+                                Divider()
+                            }
+                            Button {
+                                isLoadingBranches = true
+                                Task {
+                                    remoteBranches = await gitService.fetchRemoteBranches()
+                                    isLoadingBranches = false
+                                }
+                            } label: {
+                                Label(preferences.tr("Tải danh sách Branch từ GitHub", "Fetch Branches from GitHub"), systemImage: "arrow.clockwise")
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Label("Branch: \(gitService.currentBranch)", systemImage: "arrow.triangle.branch")
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .foregroundColor(Color(hex: palette.foreground))
+                                if isLoadingBranches {
+                                    ProgressView().scaleEffect(0.6)
+                                } else {
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 8.5, weight: .bold))
+                                        .foregroundColor(Color(hex: palette.gutterForeground))
+                                }
+                            }
+                        }
+
                         Spacer()
+
                         Button {
                             Task { await gitService.refreshStatus(workspaceRoot: workspace.rootURL, sshService: sshService) }
                         } label: {
@@ -840,7 +1064,7 @@ public struct LeftExplorerDrawer: View {
                         .foregroundColor(Color(hex: palette.foreground))
                         .cornerRadius(6)
 
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Button {
                             let msg = commitMessageInput
                             commitMessageInput = ""
@@ -850,11 +1074,35 @@ public struct LeftExplorerDrawer: View {
                             }
                         } label: {
                             Label("Commit All", systemImage: "checkmark.circle.fill")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.system(size: 10.5, weight: .bold))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 6)
                                 .background(Color(hex: palette.accent))
                                 .foregroundColor(.white)
+                                .cornerRadius(6)
+                        }
+
+                        Button {
+                            gitService.githubToken = githubTokenInput
+                            Task {
+                                if sshService.isConnected {
+                                    let res = await sshService.executeCommandOnVPS("cd '\(sshService.currentRemoteDirectory)' && git pull --rebase 2>&1")
+                                    gitService.statusBanner = res
+                                } else {
+                                    let ok = await gitService.pullFromGitHub(into: workspace.rootURL)
+                                    if ok {
+                                        workspace.reloadTree()
+                                        workspace.resetDiffBaselineToCurrentDisk(with: gitService.commits.first?.snapshotFiles)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Label("Pull", systemImage: "icloud.and.arrow.down")
+                                .font(.system(size: 10.5, weight: .bold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                                .background(Color(hex: palette.currentLineBackground))
+                                .foregroundColor(Color(hex: palette.foreground))
                                 .cornerRadius(6)
                         }
 
@@ -872,8 +1120,8 @@ public struct LeftExplorerDrawer: View {
                             }
                         } label: {
                             Label("Push", systemImage: "arrow.up.to.line")
-                                .font(.system(size: 11, weight: .bold))
-                                .padding(.horizontal, 10)
+                                .font(.system(size: 10.5, weight: .bold))
+                                .padding(.horizontal, 9)
                                 .padding(.vertical, 6)
                                 .background(Color.green.opacity(0.85))
                                 .foregroundColor(.black)

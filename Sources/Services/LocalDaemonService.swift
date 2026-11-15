@@ -136,10 +136,10 @@ public final class LocalDaemonService: ObservableObject {
         syncKeepAliveState()
     }
 
-    // MARK: - 24/7 Screen-Off Background Keep-Alive
+    // MARK: - 24/7 Screen-Off Background Keep-Alive (Lazy audio session only when bots/jobs are active)
     public func syncKeepAliveState() {
-        let shouldStayAlive = keepTerminalAliveInBackground || runningJobsCount > 0
-        if shouldStayAlive && keepTerminalAliveInBackground {
+        let shouldStayAlive = runningJobsCount > 0 && keepTerminalAliveInBackground
+        if shouldStayAlive {
             startSilentAudioLoopIfNeeded()
         } else {
             stopSilentAudioLoop()
