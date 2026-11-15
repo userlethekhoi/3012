@@ -112,6 +112,8 @@ jobs:
 
       - name: Build Release App (Unsigned)
         run: |
+          mkdir -p build
+          set +e
           xcodebuild build \
             -project App3012.xcodeproj \
             -scheme App3012 \
@@ -124,7 +126,46 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES
+            AD_HOC_CODE_SIGNING_ALLOWED=YES 2>&1 | tee build/xcodebuild.log
+          BUILD_RC=${PIPESTATUS[0]}
+          set -e
+          BUILD_RC="$BUILD_RC" python3 - << 'PY'
+          import os, re
+          log_path = "build/xcodebuild.log"
+          if os.path.exists(log_path):
+              workspace = os.getcwd()
+              seen = set()
+              pattern = re.compile(r'^(?P<file>.+?\.swift):(?P<line>\d+):(?P<col>\d+):\s*(?P<kind>error|warning):\s*(?P<msg>.+)$')
+              with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                  lines = f.readlines()
+              for raw in lines:
+                  m = pattern.match(raw.strip())
+                  if not m:
+                      continue
+                  rel = m.group("file")
+                  if rel.startswith(workspace + "/"):
+                      rel = rel[len(workspace) + 1:]
+                  if "Sources/" in rel:
+                      rel = "Sources/" + rel.split("Sources/", 1)[1]
+                  elif "/SourcePackages/" in rel or "/DerivedData/" in rel:
+                      continue
+                  kind = m.group("kind")
+                  line_no = m.group("line")
+                  col_no = m.group("col")
+                  msg = m.group("msg").replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+                  key = (kind, rel, line_no, col_no, msg)
+                  if key in seen:
+                      continue
+                  seen.add(key)
+                  print(f"::{kind} file={rel},line={line_no},col={col_no}::{msg}")
+              if not seen and os.environ.get("BUILD_RC", "0") != "0":
+                  for raw in lines[-80:]:
+                      s = raw.strip()
+                      if "error:" in s or "fatal error:" in s:
+                          msg = s.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+                          print(f"::error::{msg}")
+          PY
+          exit "$BUILD_RC"
 
       - name: Package Unsigned .ipa
         run: |

@@ -2288,7 +2288,7 @@ public struct MainIDEWorkspaceView: View {
                                     if preferences.appLanguage == lang {
                                         Label("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))", systemImage: "checkmark")
                                     } else {
-                                        Text("\(lang.shortBadge) — \(langDisplayName(lang))")
+                                        Text("\(lang.shortBadge) — \(lang.displayName(in: preferences.appLanguage))")
                                     }
                                 }
                             }

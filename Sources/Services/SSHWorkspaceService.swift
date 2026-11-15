@@ -457,6 +457,10 @@ public final class SSHWorkspaceService: ObservableObject {
         }
     }
 
+    private func shellSingleQuote(_ raw: String) -> String {
+        "'" + raw.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     /// Runs `git` on the connected SSH VPS with an ephemeral 0700 `GIT_ASKPASS` script deleted cleanly on shell exit.
     public func executeGitCommandOnVPS(_ gitArgs: [String], in remoteDir: String, githubToken: String? = nil) async -> (exitCode: Int, output: String) {
         guard let client = sshClient else {

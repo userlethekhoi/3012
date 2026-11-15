@@ -246,9 +246,12 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
                         withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
                     )
                 } else if let label = item.label {
-                    var titleAttr = AttributedString(label)
-                    titleAttr.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-                    config.attributedTitle = titleAttr
+                    config.title = label
+                    config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+                        var outgoing = incoming
+                        outgoing.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+                        return outgoing
+                    }
                 }
                 let btn = UIButton(configuration: config)
                 let seq = item.seq
@@ -1532,6 +1535,7 @@ public struct SwiftTermTerminalContainer: UIViewRepresentable {
             }
         }
 
+        @MainActor
         private func handleGitHubCLICommand(
             args: [String],
             cwd: URL,
