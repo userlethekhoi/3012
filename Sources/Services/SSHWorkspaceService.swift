@@ -542,10 +542,16 @@ public final class SSHWorkspaceService: ObservableObject {
                     let fname = comp.filename
                     guard fname != "." && fname != ".." && !fname.contains("/") && !fname.contains("\\") else { continue }
 
-                    let perms = comp.attributes.permissions
-                    let isSymlink = perms.map { ($0 & 0o170000) == 0o120000 } ?? comp.longname.hasPrefix("l")
+                    let isSymlink: Bool
+                    let isDir: Bool
+                    if let perms = comp.attributes.permissions {
+                        isSymlink = (perms & 0o170000) == 0o120000
+                        isDir = (perms & 0o170000) == 0o040000
+                    } else {
+                        isSymlink = comp.longname.hasPrefix("l")
+                        isDir = comp.longname.hasPrefix("d")
+                    }
                     if isSymlink { continue }
-                    let isDir = perms.map { ($0 & 0o170000) == 0o040000 } ?? comp.longname.hasPrefix("d")
 
                     let childRemote = item.remoteDir == "/" ? "/\(fname)" : "\(item.remoteDir)/\(fname)"
                     let childLocal = item.localDir.appendingPathComponent(fname, isDirectory: isDir)
