@@ -143,8 +143,11 @@ public struct DeveloperPowerToolsSheet: View {
                     IDEPillButton(prominence: .secondary, tint: .accentColor) {
                         testCases.append(CPTestCaseItem(input: "", expectedOutput: ""))
                     } label: {
-                        Label(preferences.tr("+ Thêm Test", "+ Add Test"), systemImage: "plus.circle")
-                            .font(.system(size: 12, weight: .semibold))
+                        HStack(spacing: 5) {
+                            Image(systemName: "plus.circle")
+                            Text(preferences.tr("+ Thêm Test", "+ Add Test"))
+                        }
+                        .font(.system(size: 12, weight: .semibold))
                     }
 
                     Spacer()

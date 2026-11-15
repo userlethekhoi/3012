@@ -40,15 +40,21 @@ public struct OpenFolderHubSheet: View {
                                 IDEPillButton(prominence: .prominent, tint: .blue) {
                                     startFolderFilesImport()
                                 } label: {
-                                    Label(L10n.tr("Chọn File vào Dự án", "Pick Folder Files"), systemImage: "doc.on.doc.fill")
-                                        .font(.system(size: 12, weight: .semibold))
+                                    HStack(spacing: 5) {
+                                        Image(systemName: "doc.on.doc.fill")
+                                        Text(L10n.tr("Chọn File vào Dự án", "Pick Folder Files"))
+                                    }
+                                    .font(.system(size: 12, weight: .semibold))
                                 }
 
                                 IDEPillButton(prominence: .secondary, tint: .accentColor) {
                                     startZipImport()
                                 } label: {
-                                    Label(L10n.tr("Nhập .zip", "Import .zip"), systemImage: "archivebox.fill")
-                                        .font(.system(size: 12, weight: .semibold))
+                                    HStack(spacing: 5) {
+                                        Image(systemName: "archivebox.fill")
+                                        Text(L10n.tr("Nhập .zip", "Import .zip"))
+                                    }
+                                    .font(.system(size: 12, weight: .semibold))
                                 }
                             }
                         }

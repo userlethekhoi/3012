@@ -191,8 +191,11 @@ public struct FileTimelineSheet: View {
                                     onRestoreContent(snap.content)
                                     dismiss()
                                 } label: {
-                                    Label("Khôi phục bản này", systemImage: "arrow.counterclockwise")
-                                        .font(.system(size: 12, weight: .semibold))
+                                    HStack(spacing: 5) {
+                                        Image(systemName: "arrow.counterclockwise")
+                                        Text("Khôi phục bản này")
+                                    }
+                                    .font(.system(size: 12, weight: .semibold))
                                 }
                             }
                         }

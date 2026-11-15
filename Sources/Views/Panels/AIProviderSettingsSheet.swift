@@ -374,7 +374,10 @@ struct AIProviderProfileEditor: View {
                 aiService.setActiveProfile(profileID)
                 dismiss()
             } label: {
-                Label("Dùng cấu hình này", systemImage: "checkmark.circle")
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle")
+                    Text("Dùng cấu hình này")
+                }
             }
             .padding(.vertical, 2)
 
@@ -382,7 +385,10 @@ struct AIProviderProfileEditor: View {
                 aiService.deleteProfile(id: profileID)
                 dismiss()
             } label: {
-                Label("Xoá cấu hình", systemImage: "trash")
+                HStack(spacing: 6) {
+                    Image(systemName: "trash")
+                    Text("Xoá cấu hình")
+                }
             }
         }
     }
@@ -409,13 +415,19 @@ struct AIProviderProfileEditor: View {
                     curlImportError = nil
                     showCurlImportSheet = true
                 } label: {
-                    Label("Import cURL / HTTP", systemImage: "arrow.down.doc")
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.down.doc")
+                        Text("Import cURL / HTTP")
+                    }
                 }
 
                 IDEActionButton(prominence: .prominent, tint: .green, fullWidth: true, compact: true) {
                     showCustomPostInspector = true
                 } label: {
-                    Label("Test & Inspect", systemImage: "play.fill")
+                    HStack(spacing: 5) {
+                        Image(systemName: "play.fill")
+                        Text("Test & Inspect")
+                    }
                 }
             }
             .padding(.vertical, 2)
@@ -480,15 +492,21 @@ struct AIProviderProfileEditor: View {
                     copy.headers.append(AICustomHeaderItem(key: "X-Custom-Header", value: "", isSecret: false, isEnabled: true))
                     cfg.wrappedValue = copy
                 } label: {
-                    Label("Thêm Header", systemImage: "plus")
+                    HStack(spacing: 5) {
+                        Image(systemName: "plus")
+                        Text("Thêm Header")
+                    }
                 }
 
                 Spacer()
 
                 if cfg.wrappedValue.headers.contains(where: { $0.isSecret }) {
-                    Label("Secret lưu Keychain", systemImage: "lock.shield")
-                        .font(.caption2)
-                        .foregroundColor(.green)
+                    HStack(spacing: 4) {
+                        Image(systemName: "lock.shield")
+                        Text("Secret lưu Keychain")
+                    }
+                    .font(.caption2)
+                    .foregroundColor(.green)
                 }
             }
         } header: {
@@ -517,7 +535,10 @@ struct AIProviderProfileEditor: View {
                         }
                         templateNotice = "Đã tự gắn biến {{...}} vào JSON Body."
                     } label: {
-                        Label("Tự gắn biến {{...}}", systemImage: "curlybraces")
+                        HStack(spacing: 5) {
+                            Image(systemName: "curlybraces")
+                            Text("Tự gắn biến {{...}}")
+                        }
                     }
 
                     ForEach(templateTokens, id: \.self) { token in
@@ -559,7 +580,10 @@ struct AIProviderProfileEditor: View {
                     cfg.wrappedValue = copy
                     templateNotice = "Đã khôi phục Body JSON mặc định."
                 } label: {
-                    Label("Mẫu mặc định", systemImage: "arrow.uturn.backward")
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.uturn.backward")
+                        Text("Mẫu mặc định")
+                    }
                 }
                 Spacer()
             }
@@ -761,7 +785,10 @@ struct AIProviderProfileEditor: View {
                     IDEActionButton(prominence: .prominent, tint: .blue, fullWidth: true) {
                         applyCurlImport()
                     } label: {
-                        Label("Phân tích & Áp dụng Request", systemImage: "curlybraces")
+                        HStack(spacing: 6) {
+                            Image(systemName: "curlybraces")
+                            Text("Phân tích & Áp dụng Request")
+                        }
                     }
                     .disabled(curlImportText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }

@@ -257,12 +257,12 @@ public struct PCSyncCompanionSheet: View {
                             await pcSync.connectAuto()
                         }
                     } label: {
-                        Label(
-                            pcSync.isConnected
-                                ? preferences.tr("Kết nối lại", "Reconnect")
-                                : preferences.tr("Kết nối ngay", "Connect Now"),
-                            systemImage: "bolt.fill"
-                        )
+                        HStack(spacing: 6) {
+                            Image(systemName: "bolt.fill")
+                            Text(pcSync.isConnected
+                                 ? preferences.tr("Kết nối lại", "Reconnect")
+                                 : preferences.tr("Kết nối ngay", "Connect Now"))
+                        }
                     }
                     .disabled(pcSync.isConnecting)
 
@@ -270,7 +270,10 @@ public struct PCSyncCompanionSheet: View {
                         IDEPillButton(prominence: .destructive, tint: .red) {
                             pcSync.disconnect()
                         } label: {
-                            Label(preferences.tr("Ngắt", "Disconnect"), systemImage: "xmark.circle.fill")
+                            HStack(spacing: 5) {
+                                Image(systemName: "xmark.circle.fill")
+                                Text(preferences.tr("Ngắt", "Disconnect"))
+                            }
                         }
                     }
                 }
@@ -337,10 +340,10 @@ public struct PCSyncCompanionSheet: View {
                                 : preferences.tr("Đã copy lệnh macOS/Linux", "Copied macOS/Linux command")
                         )
                     } label: {
-                        Label(
-                            cliPlatform == 0 ? preferences.tr("Copy PowerShell", "Copy PowerShell") : preferences.tr("Copy Bash/Zsh", "Copy Bash/Zsh"),
-                            systemImage: "doc.on.clipboard"
-                        )
+                        HStack(spacing: 5) {
+                            Image(systemName: "doc.on.clipboard")
+                            Text(cliPlatform == 0 ? preferences.tr("Copy PowerShell", "Copy PowerShell") : preferences.tr("Copy Bash/Zsh", "Copy Bash/Zsh"))
+                        }
                     }
 
                     IDEActionButton(prominence: .secondary, tint: .accentColor, fullWidth: true, compact: true) {
@@ -350,7 +353,10 @@ public struct PCSyncCompanionSheet: View {
                         )
                         copyToClipboard(script, notice: preferences.tr("Đã copy hướng dẫn & Script", "Copied setup script"))
                     } label: {
-                        Label(preferences.tr("Script đầy đủ", "Full Script"), systemImage: "doc.on.doc")
+                        HStack(spacing: 5) {
+                            Image(systemName: "doc.on.doc")
+                            Text(preferences.tr("Script đầy đủ", "Full Script"))
+                        }
                     }
                 }
             }
@@ -410,7 +416,10 @@ public struct PCSyncCompanionSheet: View {
                     await pcSync.pullSnapshotFromPC()
                 }
             } label: {
-                Label(preferences.tr("Kéo từ PC", "Pull from PC"), systemImage: "arrow.down.doc")
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.down.doc")
+                    Text(preferences.tr("Kéo từ PC", "Pull from PC"))
+                }
             }
             .disabled(!pcSync.isConnected)
 
@@ -419,7 +428,10 @@ public struct PCSyncCompanionSheet: View {
                     await pcSync.pushFullWorkspaceToPC()
                 }
             } label: {
-                Label(preferences.tr("Đẩy lên PC", "Push to PC"), systemImage: "arrow.up.doc")
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.up.doc")
+                    Text(preferences.tr("Đẩy lên PC", "Push to PC"))
+                }
             }
             .disabled(!pcSync.isConnected)
         }
