@@ -95,7 +95,7 @@ public final class NativeDocumentPickerPresenter: NSObject, UIDocumentPickerDele
         picker.shouldShowFileExtensions = true
         picker.delegate = self
 
-        let launch = { [weak self] in
+        let launch: () -> Void = { [weak self] in
             self?.presentWhenReady(picker)
         }
         if initialDelay > 0 {
@@ -185,12 +185,14 @@ public final class NativeDocumentPickerPresenter: NSObject, UIDocumentPickerDele
         }
 
         group.notify(queue: .main) { [weak self] in
-            guard let self else { return }
             let sorted = loaded.sorted { $0.0 < $1.0 }.map { $0.1 }
-            let cb = self.activePickImages
-            self.activePickImages = nil
-            if !sorted.isEmpty {
-                cb?(sorted)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let cb = self.activePickImages
+                self.activePickImages = nil
+                if !sorted.isEmpty {
+                    cb?(sorted)
+                }
             }
         }
     }

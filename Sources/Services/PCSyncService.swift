@@ -514,7 +514,7 @@ public final class PCSyncService: NSObject, ObservableObject {
             return (-1, "Không gửi được lệnh tới PC.")
         }
 
-        return await withCheckedContinuation { continuation in
+        let raw: (Int, String) = await withCheckedContinuation { continuation in
             pendingCommandContinuations[reqID] = continuation
             Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
@@ -525,6 +525,7 @@ public final class PCSyncService: NSObject, ObservableObject {
                 }
             }
         }
+        return (exitCode: raw.0, output: raw.1)
     }
 
     private func enqueueOrSend(_ item: SyncOutboxItem) async {

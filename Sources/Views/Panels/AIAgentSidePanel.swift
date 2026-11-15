@@ -358,8 +358,10 @@ public struct AIAgentSidePanel: View {
             HStack(alignment: .bottom, spacing: 6) {
                 Menu {
                     Button {
-                        NativeDocumentPickerPresenter.shared.presentPhotoPicker { image in
-                            attachUIImage(image)
+                        NativeDocumentPickerPresenter.shared.presentPhotoLibraryPicker(maxCount: 4) { images in
+                            for image in images {
+                                attachUIImage(image)
+                            }
                         }
                     } label: {
                         Label(preferences.tr("Chọn ảnh từ Thư viện", "Choose Photo from Library"), systemImage: "photo.on.rectangle")
