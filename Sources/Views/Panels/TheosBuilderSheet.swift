@@ -32,8 +32,16 @@ public struct TheosBuilderSheet: View {
         self.preferences = preferences
     }
 
+    private var effectiveProjectRoot: URL {
+        theosService.resolveTheosProjectRoot(
+            activeFileURL: workspace.activeTab?.fileURL,
+            workspaceRoot: workspace.rootURL
+        ) ?? workspace.rootURL
+    }
+
     public var body: some View {
-        let hasTheosProject = theosService.isTheosWorkspace(workspace.rootURL)
+        let projectRoot = effectiveProjectRoot
+        let hasTheosProject = theosService.isTheosWorkspace(projectRoot)
 
         CompatibleNavigationContainer {
             Form {
@@ -121,7 +129,7 @@ public struct TheosBuilderSheet: View {
                                     "Đã tạo bộ khung \(tweakNameInput) trong \(workspace.rootURL.lastPathComponent).",
                                     "Created \(tweakNameInput) scaffold in \(workspace.rootURL.lastPathComponent)."
                                 )
-                                theosService.refreshLocalPackages(in: workspace.rootURL)
+                                theosService.refreshLocalPackages(in: effectiveProjectRoot)
                             }
                         } label: {
                             Label(preferences.tr("Khởi Tạo Dự Án Theos 1 Chạm", "1-Tap Scaffold Theos Project"), systemImage: "doc.badge.plus")
@@ -239,6 +247,7 @@ public struct TheosBuilderSheet: View {
                     Button {
                         makefileSyncNotice = theosService.syncMakefileSourceFiles(
                             in: workspace,
+                            projectRoot: projectRoot,
                             isEnglish: preferences.appLanguage != .vietnamese
                         )
                     } label: {
@@ -253,7 +262,7 @@ public struct TheosBuilderSheet: View {
                     Button {
                         let fm = FileManager.default
                         let targetURL = ["Makefile", "GNUmakefile"]
-                            .map { workspace.rootURL.appendingPathComponent($0) }
+                            .map { projectRoot.appendingPathComponent($0) }
                             .first(where: { fm.fileExists(atPath: $0.path) })
                         if let targetURL {
                             workspace.openFile(at: targetURL)
@@ -328,7 +337,7 @@ public struct TheosBuilderSheet: View {
                 }
             }
             .onAppear {
-                theosService.refreshLocalPackages(in: workspace.rootURL)
+                theosService.refreshLocalPackages(in: effectiveProjectRoot)
             }
             .alert(preferences.tr("Quyền Riêng Tư Khi Build Từ Xa", "Remote Build Privacy Notice"), isPresented: $showPrivacyAlert) {
                 Button(preferences.tr("Đồng ý & Build", "Agree & Build")) {
@@ -358,7 +367,7 @@ public struct TheosBuilderSheet: View {
     private func executeBuild() {
         workspace.saveAllTabs()
         theosService.startBuild(
-            workspaceRoot: workspace.rootURL,
+            workspaceRoot: effectiveProjectRoot,
             sshService: sshService,
             runner: runner,
             onWorkspaceChanged: { [weak workspace] in

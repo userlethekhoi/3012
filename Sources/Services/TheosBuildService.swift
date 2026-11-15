@@ -154,7 +154,9 @@ public final class TheosBuildService: ObservableObject {
     private var activeTask: Task<Void, Never>?
     private var buildGeneration: Int = 0
     private var activeJobID: String?
+    private var activeBuildBaseURL: URL?
     private let deviceID: String
+    nonisolated private static let maxCommunityUploadBytes = 20 * 1024 * 1024
 
     public init() {
         if let rawMode = UserDefaults.standard.string(forKey: "3012.theos.buildMode"),
@@ -188,20 +190,69 @@ public final class TheosBuildService: ObservableObject {
     // MARK: - Workspace Detection
     public func isTheosWorkspace(_ rootURL: URL) -> Bool {
         let fm = FileManager.default
-        let makefileURL = rootURL.appendingPathComponent("Makefile")
-        let controlURL = rootURL.appendingPathComponent("control")
-        if fm.fileExists(atPath: makefileURL.path) && fm.fileExists(atPath: controlURL.path) {
-            return true
-        }
-        if let makefileText = try? String(contentsOf: makefileURL, encoding: .utf8),
-           makefileText.contains("THEOS") {
-            return true
-        }
         let entries = (try? fm.contentsOfDirectory(atPath: rootURL.path)) ?? []
+        let makefileName = entries.first {
+            let lower = $0.lowercased()
+            return lower == "makefile" || lower == "gnumakefile"
+        }
+        let hasControl = entries.contains { $0.lowercased() == "control" }
+        if makefileName != nil && hasControl {
+            return true
+        }
+        if let makefileName {
+            let mfURL = rootURL.appendingPathComponent(makefileName)
+            if let makefileText = try? String(contentsOf: mfURL, encoding: .utf8) {
+                let markers = ["THEOS", "tweak.mk", "application.mk", "tool.mk", "TWEAK_NAME"]
+                if markers.contains(where: { makefileText.contains($0) }) {
+                    return true
+                }
+            }
+        }
         return entries.contains { name in
             let lower = name.lowercased()
-            return lower.hasSuffix(".x") || lower.hasSuffix(".xm")
+            return lower.hasSuffix(".x") || lower.hasSuffix(".xm") || lower.hasSuffix(".xi") || lower.hasSuffix(".xmi")
         }
+    }
+
+    public func resolveTheosProjectRoot(activeFileURL: URL?, workspaceRoot: URL) -> URL? {
+        let fm = FileManager.default
+        let rootStd = workspaceRoot.standardizedFileURL
+        let rootCanon = WorkspaceManager.canonicalPath(rootStd)
+        let rootPrefix = rootCanon == "/" ? "/" : rootCanon + "/"
+
+        var ancestorDirs: [URL] = []
+        if let activeFileURL {
+            var currentDir = activeFileURL.deletingLastPathComponent().standardizedFileURL
+            for _ in 0..<12 {
+                let currentCanon = WorkspaceManager.canonicalPath(currentDir)
+                guard currentCanon == rootCanon || currentCanon.hasPrefix(rootPrefix) else { break }
+                ancestorDirs.append(currentDir)
+                if currentCanon == rootCanon { break }
+                let parent = currentDir.deletingLastPathComponent().standardizedFileURL
+                if WorkspaceManager.canonicalPath(parent) == currentCanon { break }
+                currentDir = parent
+            }
+        }
+
+        // First prefer an ancestor that explicitly holds a Makefile/GNUmakefile + Theos structure
+        for dir in ancestorDirs {
+            let entries = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+            let hasMakefile = entries.contains {
+                let lower = $0.lowercased()
+                return lower == "makefile" || lower == "gnumakefile"
+            }
+            if hasMakefile && isTheosWorkspace(dir) {
+                return dir
+            }
+        }
+
+        if isTheosWorkspace(rootStd) {
+            return rootStd
+        }
+        for dir in ancestorDirs where isTheosWorkspace(dir) {
+            return dir
+        }
+        return nil
     }
 
     public func refreshLocalPackages(in workspaceRoot: URL) {
@@ -563,18 +614,23 @@ public final class TheosBuildService: ObservableObject {
 
     // MARK: - Server Health Check
     public func checkServerHealth() async {
-        guard let endpoint = normalizedBaseURL()?.appendingPathComponent("v1/health") else {
+        guard let primaryBase = normalizedBaseURL() else {
             serverHealthSummary = "URL máy chủ không hợp lệ."
             return
         }
-        var req = URLRequest(url: endpoint)
-        req.timeoutInterval = 10
         do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
-                  let health = try? JSONDecoder().decode(TheosHealthResponse.self, from: data),
+            let result = try await performTheosRequest(
+                primaryBaseURL: primaryBase,
+                escapedPath: "v1/health",
+                method: "GET",
+                requestTimeout: 12,
+                resourceTimeout: 30,
+                maxAttempts: 3
+            )
+            let code = result.response.statusCode
+            guard (200...299).contains(code),
+                  let health = try? JSONDecoder().decode(TheosHealthResponse.self, from: result.data),
                   health.ok else {
-                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                 serverHealthSummary = "Máy chủ phản hồi lỗi HTTP \(code)."
                 return
             }
@@ -582,7 +638,8 @@ public final class TheosBuildService: ObservableObject {
             let capacity = health.capacity ?? 2
             let queued = health.queued ?? 0
             let ver = health.version ?? "1.0"
-            serverHealthSummary = "Online v\(ver) — Đang chạy \(running)/\(capacity) • Hàng đợi: \(queued)"
+            let hostNote = (result.usedBaseURL.host == primaryBase.host) ? "" : " • \(result.usedBaseURL.host ?? "")"
+            serverHealthSummary = "Online v\(ver) — Đang chạy \(running)/\(capacity) • Hàng đợi: \(queued)\(hostNote)"
         } catch {
             serverHealthSummary = "Không kết nối được: \(error.localizedDescription)"
         }
@@ -601,6 +658,7 @@ public final class TheosBuildService: ObservableObject {
         let gen = buildGeneration
 
         isBuilding = true
+        activeBuildBaseURL = nil
         buildLog = "[3012 Theos] Chuẩn bị đóng gói dự án từ \(workspaceRoot.lastPathComponent)...\n"
         buildStatusText = "Đang đóng gói mã nguồn..."
         runner.consoleOutput = buildLog
@@ -611,6 +669,7 @@ public final class TheosBuildService: ObservableObject {
                 if self.buildGeneration == gen {
                     self.isBuilding = false
                     self.activeJobID = nil
+                    self.activeBuildBaseURL = nil
                     self.refreshLocalPackages(in: workspaceRoot)
                     onWorkspaceChanged()
                 }
@@ -642,20 +701,27 @@ public final class TheosBuildService: ObservableObject {
 
     public func cancelBuild() {
         let jobToCancel = activeJobID
+        let cancelBase = activeBuildBaseURL ?? normalizedBaseURL()
         activeTask?.cancel()
         activeTask = nil
+        activeBuildBaseURL = nil
         isBuilding = false
         buildStatusText = "Đã huỷ build."
         appendLog("\n[3012] Người dùng đã huỷ tiến trình build.\n", runner: nil)
 
-        if let jobID = jobToCancel, let base = normalizedBaseURL() {
+        if let jobID = jobToCancel, let base = cancelBase {
             let deleteURL = base.appendingPathComponent("v1/builds/\(jobID)")
             let dev = deviceID
-            Task {
+            Task.detached {
+                let session = Self.makeEphemeralTheosSession(requestTimeout: 10, resourceTimeout: 15)
+                defer { session.finishTasksAndInvalidate() }
                 var req = URLRequest(url: deleteURL)
                 req.httpMethod = "DELETE"
+                req.timeoutInterval = 10
+                req.assumesHTTP3Capable = false
                 req.setValue(dev, forHTTPHeaderField: "X-Device-ID")
-                _ = try? await URLSession.shared.data(for: req)
+                req.setValue("close", forHTTPHeaderField: "Connection")
+                _ = try? await session.data(for: req)
             }
         }
     }
@@ -672,7 +738,7 @@ public final class TheosBuildService: ObservableObject {
             buildStatusText = "Thiếu Makefile Theos"
             return
         }
-        guard let baseURL = normalizedBaseURL() else {
+        guard let primaryBase = normalizedBaseURL() else {
             appendLog("[3012] URL Build Server không hợp lệ.\n", runner: runner)
             buildStatusText = "Sai URL máy chủ"
             return
@@ -686,79 +752,133 @@ public final class TheosBuildService: ObservableObject {
             return
         }
 
-        let sizeKB = max(1, zipData.count / 1024)
-        appendLog("[3012] Đã nén sạch dự án (\(sizeKB) KB). Đang gửi lên \(baseURL.absoluteString) (scheme: \(packageScheme.rawValue))...\n", runner: runner)
+        let zipSize = zipData.count
+        if zipSize > Self.maxCommunityUploadBytes {
+            let sizeMB = String(format: "%.1f", Double(zipSize) / (1024.0 * 1024.0))
+            appendLog(
+                "[3012] Dự án sau khi nén (\(sizeMB) MB) vượt giới hạn 20 MB của Máy chủ Cộng đồng.\n" +
+                "[3012] Gợi ý: Xoá bớt file nhị phân nặng trong dự án hoặc chuyển sang chế độ VPS SSH Cá nhân / Ngoại tuyến (.zip + GitHub Actions).\n",
+                runner: runner
+            )
+            buildStatusText = "Vượt giới hạn 20 MB"
+            return
+        }
+
+        let sizeKB = max(1, zipSize / 1024)
+        appendLog("[3012] Đã nén sạch dự án (\(sizeKB) KB). Đang gửi lên \(primaryBase.absoluteString) (scheme: \(packageScheme.rawValue))...\n", runner: runner)
         buildStatusText = "Đang tải lên máy chủ build..."
 
-        var postReq = URLRequest(url: baseURL.appendingPathComponent("v1/builds"))
-        postReq.httpMethod = "POST"
-        postReq.timeoutInterval = 45
-        postReq.setValue("application/zip", forHTTPHeaderField: "Content-Type")
-        postReq.setValue(deviceID, forHTTPHeaderField: "X-Device-ID")
-        postReq.setValue(packageScheme.rawValue, forHTTPHeaderField: "X-Package-Scheme")
-        postReq.httpBody = zipData
-
         do {
-            let (postData, postResp) = try await URLSession.shared.data(for: postReq)
-            guard let http = postResp as? HTTPURLResponse else {
-                appendLog("[3012] Phản hồi không hợp lệ từ máy chủ.\n", runner: runner)
-                buildStatusText = "Lỗi kết nối"
-                return
-            }
+            let uploadResult = try await performTheosRequest(
+                primaryBaseURL: primaryBase,
+                escapedPath: "v1/builds",
+                method: "POST",
+                headers: [
+                    "Content-Type": "application/zip",
+                    "X-Device-ID": deviceID,
+                    "X-Package-Scheme": packageScheme.rawValue
+                ],
+                body: zipData,
+                requestTimeout: 90,
+                resourceTimeout: 120,
+                maxAttempts: 4,
+                onRetry: { [weak self] attempt, nextHost in
+                    self?.appendLog("[3012] Kết nối gián đoạn khi tải lên, đang tự thử lại (lần \(attempt + 1)/4 -> \(nextHost))...\n", runner: runner)
+                    self?.buildStatusText = "Đang kết nối lại máy chủ build (\(attempt + 1)/4)..."
+                }
+            )
+            activeBuildBaseURL = uploadResult.usedBaseURL
 
+            let http = uploadResult.response
             if !(200...299).contains(http.statusCode) {
-                let apiErr = try? JSONDecoder().decode(TheosServerErrorResponse.self, from: postData)
+                let apiErr = try? JSONDecoder().decode(TheosServerErrorResponse.self, from: uploadResult.data)
                 let msg = apiErr?.message ?? "HTTP \(http.statusCode)"
                 appendLog("[3012] Máy chủ từ chối build: \(msg)\n", runner: runner)
                 buildStatusText = msg
                 return
             }
 
-            var job = try JSONDecoder().decode(TheosBuildJobResponse.self, from: postData)
+            var job = try JSONDecoder().decode(TheosBuildJobResponse.self, from: uploadResult.data)
             activeJobID = job.id
             var logOffset = job.logOffset ?? 0
             if let initialLog = job.log, !initialLog.isEmpty {
                 appendLog(initialLog, runner: runner)
             }
 
-            // Poll job logs & status
+            // Poll job logs & status with resilient retry across transient drops
+            var consecutivePollFailures = 0
+            let maxConsecutivePollFailures = 8
+
             while !Task.isCancelled && (job.state == "queued" || job.state == "running") {
-                if job.state == "queued" {
-                    let pos = job.position ?? 1
-                    buildStatusText = "Đang xếp hàng vị trí #\(pos)..."
-                } else {
-                    buildStatusText = "Đang biên dịch Theos (.deb / .dylib)..."
+                if consecutivePollFailures == 0 {
+                    if job.state == "queued" {
+                        let pos = job.position ?? 1
+                        buildStatusText = "Đang xếp hàng vị trí #\(pos)..."
+                    } else {
+                        buildStatusText = "Đang biên dịch Theos (.deb / .dylib)..."
+                    }
                 }
 
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 if Task.isCancelled { return }
 
-                var comps = URLComponents(url: baseURL.appendingPathComponent("v1/builds/\(job.id)"), resolvingAgainstBaseURL: false)
-                comps?.queryItems = [URLQueryItem(name: "since", value: "\(logOffset)")]
-                guard let pollURL = comps?.url else { break }
+                let pollBase = activeBuildBaseURL ?? primaryBase
+                do {
+                    let pollResult = try await performTheosRequest(
+                        primaryBaseURL: pollBase,
+                        escapedPath: "v1/builds/\(job.id)",
+                        queryItems: [URLQueryItem(name: "since", value: "\(logOffset)")],
+                        method: "GET",
+                        headers: ["X-Device-ID": deviceID],
+                        requestTimeout: 20,
+                        resourceTimeout: 35,
+                        maxAttempts: 2
+                    )
+                    activeBuildBaseURL = pollResult.usedBaseURL
 
-                var pollReq = URLRequest(url: pollURL)
-                pollReq.timeoutInterval = 20
-                pollReq.setValue(deviceID, forHTTPHeaderField: "X-Device-ID")
-                let (pollData, pollResp) = try await URLSession.shared.data(for: pollReq)
-                if let pHttp = pollResp as? HTTPURLResponse, !(200...299).contains(pHttp.statusCode) {
-                    if pHttp.statusCode == 404 {
-                        appendLog("\n[3012] Phiên build đã hết hạn trên máy chủ.\n", runner: runner)
-                        buildStatusText = "Build hết hạn"
-                    } else {
-                        let apiErr = try? JSONDecoder().decode(TheosServerErrorResponse.self, from: pollData)
-                        let msg = apiErr?.message ?? "HTTP \(pHttp.statusCode)"
-                        appendLog("\n[3012] Lỗi máy chủ khi theo dõi build: \(msg)\n", runner: runner)
-                        buildStatusText = msg
+                    let pHttp = pollResult.response
+                    if !(200...299).contains(pHttp.statusCode) {
+                        if Self.isTransientGatewayStatus(pHttp.statusCode) && consecutivePollFailures < maxConsecutivePollFailures {
+                            consecutivePollFailures += 1
+                            buildStatusText = "Mạng chập chờn — đang giữ phiên build (\(consecutivePollFailures)/\(maxConsecutivePollFailures))..."
+                            try? await Task.sleep(nanoseconds: 1_500_000_000)
+                            continue
+                        }
+                        if pHttp.statusCode == 404 {
+                            appendLog("\n[3012] Phiên build đã hết hạn trên máy chủ.\n", runner: runner)
+                            buildStatusText = "Build hết hạn"
+                        } else {
+                            let apiErr = try? JSONDecoder().decode(TheosServerErrorResponse.self, from: pollResult.data)
+                            let msg = apiErr?.message ?? "HTTP \(pHttp.statusCode)"
+                            appendLog("\n[3012] Lỗi máy chủ khi theo dõi build: \(msg)\n", runner: runner)
+                            buildStatusText = msg
+                        }
+                        return
                     }
-                    return
-                }
-                job = try JSONDecoder().decode(TheosBuildJobResponse.self, from: pollData)
-                if let nextOff = job.logOffset {
-                    logOffset = nextOff
-                }
-                if let chunk = job.log, !chunk.isEmpty {
-                    appendLog(chunk, runner: runner)
+
+                    job = try JSONDecoder().decode(TheosBuildJobResponse.self, from: pollResult.data)
+                    if consecutivePollFailures > 0 {
+                        appendLog("\n[3012] Đã khôi phục kết nối theo dõi build.\n", runner: runner)
+                    }
+                    consecutivePollFailures = 0
+                    if let nextOff = job.logOffset {
+                        logOffset = nextOff
+                    }
+                    if let chunk = job.log, !chunk.isEmpty {
+                        appendLog(chunk, runner: runner)
+                    }
+                } catch {
+                    if Task.isCancelled { return }
+                    if Self.isTransientNetworkError(error) && consecutivePollFailures < maxConsecutivePollFailures {
+                        consecutivePollFailures += 1
+                        if consecutivePollFailures == 1 {
+                            appendLog("\n[3012] Mạng tạm gián đoạn, đang giữ phiên build và kết nối lại...\n", runner: runner)
+                        }
+                        buildStatusText = "Mạng chập chờn — đang giữ phiên build (\(consecutivePollFailures)/\(maxConsecutivePollFailures))..."
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        continue
+                    }
+                    throw error
                 }
             }
 
@@ -771,16 +891,28 @@ public final class TheosBuildService: ObservableObject {
 
                 var savedNames: [String] = []
                 for f in files {
-                    var dlReq = URLRequest(url: baseURL.appendingPathComponent("v1/builds/\(job.id)/files/\(f.name)"))
-                    dlReq.timeoutInterval = 60
-                    dlReq.setValue(deviceID, forHTTPHeaderField: "X-Device-ID")
-                    let (binData, dlResp) = try await URLSession.shared.data(for: dlReq)
-                    if let dHttp = dlResp as? HTTPURLResponse, dHttp.statusCode == 200 {
+                    let dlBase = activeBuildBaseURL ?? primaryBase
+                    let encodedFile = f.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? f.name
+                    let dlResult = try await performTheosRequest(
+                        primaryBaseURL: dlBase,
+                        escapedPath: "v1/builds/\(job.id)/files/\(encodedFile)",
+                        method: "GET",
+                        headers: ["X-Device-ID": deviceID],
+                        requestTimeout: 75,
+                        resourceTimeout: 120,
+                        maxAttempts: 4,
+                        onRetry: { [weak self] attempt, _ in
+                            self?.buildStatusText = "Đang thử tải lại \(f.name) (\(attempt + 1)/4)..."
+                        }
+                    )
+                    if dlResult.response.statusCode == 200 {
                         let safeName = (f.name as NSString).lastPathComponent
                         guard !safeName.isEmpty, safeName != ".", safeName != ".." else { continue }
                         let outURL = packagesDir.appendingPathComponent(safeName)
-                        try binData.write(to: outURL, options: .atomic)
+                        try dlResult.data.write(to: outURL, options: .atomic)
                         savedNames.append(safeName)
+                    } else {
+                        appendLog("\n[3012] Không tải được \(f.name) (HTTP \(dlResult.response.statusCode)).\n", runner: runner)
                     }
                 }
 
@@ -930,9 +1062,13 @@ public final class TheosBuildService: ObservableObject {
 
     @MainActor
     @discardableResult
-    public func syncMakefileSourceFiles(in workspace: WorkspaceManager, isEnglish: Bool = false) -> String {
+    public func syncMakefileSourceFiles(
+        in workspace: WorkspaceManager,
+        projectRoot: URL? = nil,
+        isEnglish: Bool = false
+    ) -> String {
         let fm = FileManager.default
-        let rootURL = workspace.rootURL.standardizedFileURL
+        let rootURL = (projectRoot ?? workspace.rootURL).standardizedFileURL
         let makefileURL = ["Makefile", "GNUmakefile"]
             .map { rootURL.appendingPathComponent($0) }
             .first(where: { fm.fileExists(atPath: $0.path) })
@@ -1100,6 +1236,150 @@ public final class TheosBuildService: ObservableObject {
         }
     }
 
+    // MARK: - Resilient Networking Helpers
+    nonisolated private static func makeEphemeralTheosSession(
+        requestTimeout: TimeInterval,
+        resourceTimeout: TimeInterval
+    ) -> URLSession {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.waitsForConnectivity = false
+        cfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        cfg.urlCache = nil
+        cfg.httpMaximumConnectionsPerHost = 2
+        cfg.timeoutIntervalForRequest = requestTimeout
+        cfg.timeoutIntervalForResource = resourceTimeout
+        let appVer = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "5.3.2"
+        cfg.httpAdditionalHeaders = [
+            "User-Agent": "3012/\(appVer) (iOS)",
+            "Accept": "application/json, application/octet-stream;q=0.9, */*;q=0.8"
+        ]
+        return URLSession(configuration: cfg)
+    }
+
+    nonisolated private static func isTransientNetworkError(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        let nsErr = error as NSError
+        if nsErr.domain == NSURLErrorDomain {
+            switch URLError.Code(rawValue: nsErr.code) {
+            case .networkConnectionLost,
+                 .timedOut,
+                 .cannotConnectToHost,
+                 .cannotFindHost,
+                 .dnsLookupFailed,
+                 .notConnectedToInternet,
+                 .secureConnectionFailed,
+                 .cannotLoadFromNetwork:
+                return true
+            default:
+                break
+            }
+        }
+        return false
+    }
+
+    nonisolated private static func isTransientGatewayStatus(_ statusCode: Int) -> Bool {
+        statusCode == 502 || statusCode == 504 || (520...524).contains(statusCode)
+    }
+
+    private func candidateBaseURLs(for primary: URL) -> [URL] {
+        let host = primary.host?.lowercased() ?? ""
+        if host == "build.kaydus.xyz", let alt = URL(string: Self.alternateServerURL) {
+            return [primary, alt]
+        }
+        if host == "kaydus.xyz", let alt = URL(string: Self.defaultServerURL) {
+            return [primary, alt]
+        }
+        return [primary]
+    }
+
+    private func performTheosRequest(
+        primaryBaseURL: URL,
+        escapedPath: String,
+        queryItems: [URLQueryItem] = [],
+        method: String,
+        headers: [String: String] = [:],
+        body: Data? = nil,
+        requestTimeout: TimeInterval,
+        resourceTimeout: TimeInterval,
+        maxAttempts: Int,
+        onRetry: ((Int, String) -> Void)? = nil
+    ) async throws -> (data: Data, response: HTTPURLResponse, usedBaseURL: URL) {
+        let candidates = candidateBaseURLs(for: primaryBaseURL)
+        let totalAttempts = max(1, maxAttempts)
+        var lastError: Error = URLError(.cannotConnectToHost)
+
+        for attempt in 1...totalAttempts {
+            try Task.checkCancellation()
+            let base = candidates[(attempt - 1) % candidates.count]
+            var rawBase = base.absoluteString
+            while rawBase.hasSuffix("/") { rawBase.removeLast() }
+            let cleanPath = escapedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let joined = cleanPath.isEmpty ? rawBase : "\(rawBase)/\(cleanPath)"
+
+            let finalURL: URL
+            if queryItems.isEmpty {
+                guard let url = URL(string: joined) else {
+                    throw URLError(.badURL)
+                }
+                finalURL = url
+            } else {
+                var comps = URLComponents(string: joined)
+                comps?.queryItems = queryItems
+                guard let url = comps?.url else {
+                    throw URLError(.badURL)
+                }
+                finalURL = url
+            }
+
+            var req = URLRequest(url: finalURL)
+            req.httpMethod = method
+            req.timeoutInterval = requestTimeout
+            req.assumesHTTP3Capable = false
+            for (k, v) in headers {
+                req.setValue(v, forHTTPHeaderField: k)
+            }
+            if attempt > 1 {
+                req.setValue("close", forHTTPHeaderField: "Connection")
+            }
+            if let body {
+                req.httpBody = body
+            }
+
+            let session = Self.makeEphemeralTheosSession(
+                requestTimeout: requestTimeout,
+                resourceTimeout: resourceTimeout
+            )
+            defer { session.finishTasksAndInvalidate() }
+
+            do {
+                let (data, resp) = try await session.data(for: req)
+                guard let http = resp as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
+                }
+                if Self.isTransientGatewayStatus(http.statusCode) && attempt < totalAttempts {
+                    let nextBase = candidates[attempt % candidates.count]
+                    onRetry?(attempt, nextBase.host ?? nextBase.absoluteString)
+                    try? await Task.sleep(nanoseconds: UInt64(attempt) * 650_000_000)
+                    continue
+                }
+                return (data, http, base)
+            } catch {
+                if error is CancellationError || Task.isCancelled {
+                    throw error
+                }
+                lastError = error
+                if Self.isTransientNetworkError(error) && attempt < totalAttempts {
+                    let nextBase = candidates[attempt % candidates.count]
+                    onRetry?(attempt, nextBase.host ?? nextBase.absoluteString)
+                    try? await Task.sleep(nanoseconds: UInt64(attempt) * 650_000_000)
+                    continue
+                }
+                throw error
+            }
+        }
+        throw lastError
+    }
+
     // MARK: - Helpers
     private func appendLog(_ text: String, runner: CodeRunnerService?) {
         buildLog += text
@@ -1133,7 +1413,12 @@ public final class TheosBuildService: ObservableObject {
 
         do {
             try fm.createDirectory(at: projectStage, withIntermediateDirectories: true)
-            let excludedDirs: Set<String> = [".git", ".theos", "packages", ".build", "node_modules", "__MACOSX"]
+            let excludedDirs: Set<String> = [
+                ".git", ".theos", "packages", ".build", "build",
+                "node_modules", "__MACOSX", ".swiftpm", "DerivedData", "__pycache__"
+            ]
+            let excludedDirSuffixes = [".dsym", ".xcarchive"]
+            let excludedFileExts: Set<String> = ["ipa", "tipa", "deb", "dmg", "iso"]
             let canonicalRoot = WorkspaceManager.canonicalPath(workspaceRoot)
             let rootPrefix = canonicalRoot == "/" ? "/" : canonicalRoot + "/"
             if let enumerator = fm.enumerator(
@@ -1143,7 +1428,11 @@ public final class TheosBuildService: ObservableObject {
             ) {
                 for case let url as URL in enumerator {
                     let name = url.lastPathComponent
-                    if excludedDirs.contains(name) || name.hasPrefix(".3012") || name == ".DS_Store" {
+                    let lowerName = name.lowercased()
+                    if excludedDirs.contains(name)
+                        || excludedDirSuffixes.contains(where: { lowerName.hasSuffix($0) })
+                        || name.hasPrefix(".3012")
+                        || name == ".DS_Store" {
                         enumerator.skipDescendants()
                         continue
                     }
@@ -1152,6 +1441,12 @@ public final class TheosBuildService: ObservableObject {
                     if rv?.isSymbolicLink == true {
                         if isDir { enumerator.skipDescendants() }
                         continue
+                    }
+                    if !isDir {
+                        let ext = url.pathExtension.lowercased()
+                        if excludedFileExts.contains(ext) || lowerName.hasSuffix("-theos.zip") {
+                            continue
+                        }
                     }
                     let canonicalItem = WorkspaceManager.canonicalPath(url)
                     guard canonicalItem.hasPrefix(rootPrefix) else {

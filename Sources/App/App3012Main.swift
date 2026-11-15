@@ -2776,11 +2776,13 @@ public struct MainIDEWorkspaceView: View {
 
     private func isTheosBuildContext(activeTab: OpenTab) -> Bool {
         let ext = activeTab.fileURL.pathExtension.lowercased()
-        let lowerName = activeTab.fileURL.lastPathComponent.lowercased()
-        if ["x", "xm", "xi", "xmi"].contains(ext) || lowerName == "control" || lowerName == "makefile" {
-            return theosService.isTheosWorkspace(workspace.rootURL) || ["x", "xm", "xi", "xmi"].contains(ext)
+        if ["x", "xm", "xi", "xmi"].contains(ext) {
+            return true
         }
-        return theosService.isTheosWorkspace(workspace.rootURL)
+        return theosService.resolveTheosProjectRoot(
+            activeFileURL: activeTab.fileURL,
+            workspaceRoot: workspace.rootURL
+        ) != nil
     }
 
     private func isXtoolBuildContext(activeTab: OpenTab) -> Bool {
@@ -2806,11 +2808,15 @@ public struct MainIDEWorkspaceView: View {
                 showTheosBuilderSheet = true
                 return
             }
+            let targetTheosRoot = theosService.resolveTheosProjectRoot(
+                activeFileURL: active.fileURL,
+                workspaceRoot: workspace.rootURL
+            ) ?? workspace.rootURL
             workspace.saveAllTabs()
             bottomTab = .output
             withAnimation { showBottomPanel = true }
             theosService.startBuild(
-                workspaceRoot: workspace.rootURL,
+                workspaceRoot: targetTheosRoot,
                 sshService: sshService,
                 runner: runner,
                 onWorkspaceChanged: { [weak workspace] in

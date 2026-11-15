@@ -1168,7 +1168,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "3012-build/" + VERSION
     sys_version = ""
     protocol_version = "HTTP/1.1"
-    timeout = 25
+    timeout = 65
 
     def log_message(self, fmt, *args):  # quiet: no IPs or payloads in logs
         pass
