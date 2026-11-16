@@ -170,25 +170,26 @@ case "$scheme" in
     *) ;;
 esac
 
-rm -f /tmp/make.log
-make "${args[@]}" 2>&1 | tee /tmp/make.log >&2
-code=${PIPESTATUS[0]}
+run_make_clean_log() {
+    rm -f /tmp/make.log
+    make "$@" 2>&1 | sed -u -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | tee /tmp/make.log >&2
+    code=${PIPESTATUS[0]}
+}
+
+run_make_clean_log "${args[@]}"
 
 if [ "$code" -ne 0 ] && [ "${BUILD_MODE:-zip}" = "incremental" ] && [ "${CLEAN_BUILD:-0}" != "1" ]; then
     if grep -qE "No rule to make target|missing separator" /tmp/make.log 2>/dev/null && grep -q "\.theos/" /tmp/make.log 2>/dev/null; then
         say "Phát hiện cache .theos lệch đường dẫn header cũ — tự động làm mới cache và build lại..."
         rm -rf .theos packages
-        rm -f /tmp/make.log
-        make "${args[@]}" 2>&1 | tee /tmp/make.log >&2
-        code=${PIPESTATUS[0]}
+        run_make_clean_log "${args[@]}"
     fi
 fi
 
 if [ "$code" -ne 0 ] && grep -qiE "You do not have an SDK|SDK .* does not exist|Could not find .*SDK|no .*\.sdk found" /tmp/make.log 2>/dev/null; then
     say "SDK khai báo trong Makefile không có trên máy chủ — tự động chuyển sang iOS SDK mới nhất..."
     rm -rf .theos packages
-    make "${args[@]}" "TARGET=iphone:clang:latest:${min_ios}" SDKVERSION=latest
-    code=$?
+    run_make_clean_log "${args[@]}" "TARGET=iphone:clang:latest:${min_ios}" SDKVERSION=latest
 fi
 
 rm -f /tmp/make.log
