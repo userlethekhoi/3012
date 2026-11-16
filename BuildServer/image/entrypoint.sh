@@ -14,6 +14,8 @@ export HOME=/work/home
 export USER="${USER:-builder}"
 export LOGNAME="${LOGNAME:-$USER}"
 export THEOS=/opt/theos
+export THEOS_MAKE_PATH="$THEOS/makefiles"
+export GO_EASY_ON_ME=1
 export PATH="$THEOS/bin:$PATH"
 mkdir -p "$HOME" /work/src /work/out
 
@@ -60,10 +62,22 @@ strip_cr_if_needed() {
     fi
 }
 
-strip_cr_if_needed "$mf_file"
-while IFS= read -r -d '' mkf; do
+normalize_makefile_if_needed() {
+    local mkf="$1"
+    [ -n "$mkf" ] && [ -f "$mkf" ] || return 0
     strip_cr_if_needed "$mkf"
-done < <(find . -maxdepth 2 -type f -name '*.mk' -print0 2>/dev/null)
+    if grep -qE '^[[:space:]]*[-s]?include[[:space:]]+[^$#[:space:]][^#[:space:]]*/makefiles/|^[[:space:]]*override[[:space:]]+(export[[:space:]]+)?THEOS(_MAKE_PATH)?[[:space:]:+?]*=' "$mkf" 2>/dev/null; then
+        sed -i -E \
+            -e 's#^([[:space:]]*[-s]?include[[:space:]]+)[^$#[:space:]][^#[:space:]]*/makefiles/#\1$(THEOS)/makefiles/#' \
+            -e 's#^([[:space:]]*)override[[:space:]]+((export[[:space:]]+)?THEOS(_MAKE_PATH)?[[:space:]:+?]*=)#\1\2#' \
+            "$mkf"
+    fi
+}
+
+normalize_makefile_if_needed "$mf_file"
+while IFS= read -r -d '' mkf; do
+    normalize_makefile_if_needed "$mkf"
+done < <(find . -maxdepth 3 -type f \( -iname Makefile -o -iname GNUmakefile -o -name '*.mk' \) ! -path '*/.theos/*' -print0 2>/dev/null)
 for cf in control layout/DEBIAN/control layout/DEBIAN/preinst layout/DEBIAN/postinst layout/DEBIAN/prerm layout/DEBIAN/postrm; do
     strip_cr_if_needed "$cf"
 done
@@ -72,12 +86,6 @@ for cf in control layout/DEBIAN/control; do
         printf '\n' >> "$cf"
     fi
 done
-
-if [ -n "$mf_file" ] && [ -f "$mf_file" ]; then
-    if grep -qE '^[^#]*(include[[:space:]].*(/Users/[^/[:space:]]+/theos|/var/theos|~/theos)|^[[:space:]]*override[[:space:]]+THEOS[[:space:]:+?]*=)' "$mf_file" 2>/dev/null; then
-        sed -i -E 's#(/Users/[^/[:space:]]+/theos|/var/theos|~/theos)#$(THEOS)#g; s/^([[:space:]]*)override([[:space:]]+THEOS)/\1\2/' "$mf_file"
-    fi
-fi
 
 scheme="${PACKAGE_SCHEME:-rootless}"
 min_ios="15.0"
@@ -155,7 +163,7 @@ case "$jobs_n" in
     *) jobs_n=2 ;;
 esac
 
-args=("-j${jobs_n}" package FINALPACKAGE=1 "THEOS=$THEOS")
+args=("-j${jobs_n}" package FINALPACKAGE=1 "THEOS=$THEOS" "THEOS_MAKE_PATH=$THEOS/makefiles" COLOR=0)
 case "$scheme" in
     rootless) args+=(THEOS_PACKAGE_SCHEME=rootless) ;;
     roothide) args+=(THEOS_PACKAGE_SCHEME=roothide) ;;

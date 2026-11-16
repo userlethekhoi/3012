@@ -234,16 +234,17 @@ jobs:
           assert "Compiling Helper.c" not in log2, "Expected Helper.c object to be reused from .theos cache!\n" + log2
           print("CAS incremental delta + .theos cache verified OK!")
 
-          # Build 3: Broken macOS Makefile (hardcoded /Users/0211/theos, CRLF, missing TARGET, missing control)
+          # Build 3: Universal broken Makefile auto-heal (arbitrary THEOS/THEOS_MAKE_PATH paths, hardcoded include, CRLF, missing TARGET/control/plist, deprecated keyWindow, clean non-ANSI log)
           broken_makefile = (
-              "export THEOS=/Users/0211/theos\r\n"
+              "override export THEOS=/custom/dev_machine/any_user/theos\r\n"
+              "export THEOS_MAKE_PATH=/another/wrong/path/makefiles\r\n"
               "ARCHS = arm64\r\n"
               "\r\n"
               "DEBUG = 0\r\n"
               "FINALPACKAGE = 1\r\n"
               "FOR_RELEASE = 1\r\n"
               "\r\n"
-              "include $(THEOS)/makefiles/common.mk\r\n"
+              "include /home/example_dev/sdk_tools/theos/makefiles/common.mk\r\n"
               "\r\n"
               "TWEAK_NAME = Alert\r\n"
               "$(TWEAK_NAME)_FRAMEWORKS = UIKit\r\n"
@@ -256,8 +257,8 @@ jobs:
           alert_mm = (
               "#import <UIKit/UIKit.h>\n"
               "__attribute__((constructor)) static void AlertInit(void) {\n"
-              "    Class cls = [UIAlertController class];\n"
-              "    (void)cls;\n"
+              "    UIWindow *win = [UIApplication sharedApplication].keyWindow;\n"
+              "    (void)win;\n"
               "}\n"
           ).encode("utf-8")
           files_v3 = {"Makefile": broken_makefile, "Alert.mm": alert_mm}
@@ -274,9 +275,10 @@ jobs:
           })
           st3, log3 = poll_job(job3["id"])
           assert st3["state"] == "succeeded", (st3, log3)
+          assert "\x1b[" not in log3 and "[1;31m" not in log3, "Expected COLOR=0 clean plain-text log!\n" + log3
           names3 = [f["name"] for f in st3["files"]]
           assert any(n.endswith(".deb") for n in names3) and "Alert.dylib" in names3, (names3, log3)
-          print("Broken macOS Makefile auto-heal verified OK:", names3)
+          print("Universal Makefile auto-heal verified OK:", names3)
           PY
 
       - name: Verify /sync.mjs & Zero-Knowledge WebSocket Relay (/v1/sync)
