@@ -69,7 +69,15 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib, json, struct, time, urllib.error, urllib.request
+          import hashlib, json, struct, sys, time, traceback, urllib.error, urllib.request
+
+          def _ci_excepthook(exc_type, exc, tb):
+              msg = "".join(traceback.format_exception(exc_type, exc, tb))[-3500:]
+              esc = msg.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::error::{esc}", flush=True)
+              sys.__excepthook__(exc_type, exc, tb)
+
+          sys.excepthook = _ci_excepthook
 
           BASE = "http://127.0.0.1:8787"
           DEVICE = "ci-cas-device-12345678"

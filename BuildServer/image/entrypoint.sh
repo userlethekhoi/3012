@@ -118,6 +118,30 @@ EOF
     say "Dự án chưa có file control — tự động tạo cấu hình đóng gói mặc định (${safe_display})."
 fi
 
+auto_plist=0
+if [ -n "$mf_file" ] && [ -f "$mf_file" ] && grep -q 'tweak\.mk' "$mf_file" 2>/dev/null; then
+    inst_name=$(grep -E '^[[:space:]]*TWEAK_NAME[[:space:]:+?]*=' "$mf_file" 2>/dev/null | head -n 1 | cut -d= -f2- | sed 's/#.*//' | awk '{print $1}' || true)
+    if [ ! -f Filter.plist ] && { [ -z "$inst_name" ] || [ ! -f "${inst_name}.plist" ]; }; then
+        cat > Filter.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Filter</key>
+	<dict>
+		<key>Bundles</key>
+		<array>
+			<string>com.apple.UIKit</string>
+		</array>
+	</dict>
+</dict>
+</plist>
+EOF
+        auto_plist=1
+        say "Dự án chưa có file .plist bộ lọc — tự động tạo Filter.plist mặc định."
+    fi
+fi
+
 proj_rel="${project_dir#/work/src}"
 proj_rel="${proj_rel#/}"
 [ -z "$proj_rel" ] && proj_rel="."
@@ -162,6 +186,9 @@ fi
 rm -f /tmp/make.log
 if [ "$auto_control" = "1" ]; then
     rm -f control
+fi
+if [ "$auto_plist" = "1" ]; then
+    rm -f Filter.plist
 fi
 
 if [ -d packages ]; then
