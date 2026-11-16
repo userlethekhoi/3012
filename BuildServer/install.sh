@@ -63,7 +63,7 @@ if ! id "$SVC_USER" >/dev/null 2>&1; then
     useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin "$SVC_USER"
 fi
 usermod -aG docker "$SVC_USER"
-mkdir -p "$DATA_DIR/artifacts" "$DATA_DIR/queue" "$DATA_DIR/.docker"
+mkdir -p "$DATA_DIR/artifacts" "$DATA_DIR/queue" "$DATA_DIR/cas" "$DATA_DIR/cas/tmp" "$DATA_DIR/workspaces" "$DATA_DIR/stages" "$DATA_DIR/.docker"
 chown -R "$SVC_USER:$SVC_USER" "$DATA_DIR"
 chmod 700 "$DATA_DIR"
 

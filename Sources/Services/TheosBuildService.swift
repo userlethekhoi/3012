@@ -4,8 +4,8 @@ import CryptoKit
 import ZIPFoundation
 
 public enum TheosBuildMode: String, CaseIterable, Identifiable, Codable {
-    case directVPSTerminal = "directVPSTerminal"
     case communityServer = "communityServer"
+    case directVPSTerminal = "directVPSTerminal"
     case privateSSHVPS = "privateSSHVPS"
     case offlineExport = "offlineExport"
 
@@ -13,8 +13,8 @@ public enum TheosBuildMode: String, CaseIterable, Identifiable, Codable {
 
     public var title: String {
         switch self {
+        case .communityServer: return L10n.tr("Máy chủ 3012 Nhanh (Không cần VPS • Tới 300MB)", "3012 Fast Build Server (No VPS • Up to 300MB)")
         case .directVPSTerminal: return L10n.tr("Terminal Linux VPS Trực Tiếp (Không Gửi Lại Zip)", "Direct Linux VPS Terminal (Live Make / Zero Zip)")
-        case .communityServer: return L10n.tr("Máy chủ Cộng đồng (Không cần JB / VPS)", "Community Build Server (No JB / VPS Needed)")
         case .privateSSHVPS: return L10n.tr("VPS SSH Nền (Đồng Bộ Delta & Kéo .deb)", "Private SSH VPS (Delta Sync & Auto Pull)")
         case .offlineExport: return L10n.tr("Ngoại tuyến (.zip + GitHub Actions)", "Offline Export (.zip + GitHub Actions)")
         }
@@ -22,8 +22,8 @@ public enum TheosBuildMode: String, CaseIterable, Identifiable, Codable {
 
     public var subtitle: String {
         switch self {
+        case .communityServer: return L10n.tr("Đồng bộ delta SHA-256 (chỉ gửi file vừa sửa, giữ cache .theos, build trong vài giây)", "SHA-256 delta sync (uploads changed chunks only, keeps .theos cache for fast builds)")
         case .directVPSTerminal: return L10n.tr("Chạy make trực tiếp trong Terminal SSH VPS; giữ cache .theos hoặc sửa trực tiếp file trên VPS", "Runs make directly in live VPS SSH Terminal; keeps .theos cache or edits remote files live")
-        case .communityServer: return L10n.tr("Biên dịch cách ly trong container Docker (--network none, không lưu code)", "Isolated Docker sandbox (--network none, ephemeral RAM build)")
         case .privateSSHVPS: return L10n.tr("Chỉ tải file thay đổi qua SSH (SHA-256), giữ cache .theos và tự tải .deb về máy", "Uploads only changed files over SSH, keeps .theos cache and fetches .deb/.dylib")
         case .offlineExport: return L10n.tr("Tạo sẵn GitHub Actions workflow & đóng gói .zip sạch để tự build", "Generates GitHub Actions workflow & clean .zip archive")
         }
@@ -119,16 +119,72 @@ private struct TheosServerErrorResponse: Decodable {
 private struct TheosHealthResponse: Decodable {
     struct Limits: Decodable {
         let maxUploadMB: Int?
+        let maxProjectMB: Int?
+        let casBatchMB: Int?
         let timeoutSec: Int?
         let perDeviceHour: Int?
     }
 
     let ok: Bool
     let version: String?
+    let casDelta: Bool?
     let queued: Int?
     let running: Int?
     let capacity: Int?
     let limits: Limits?
+}
+
+private struct TheosCASCheckResponse: Decodable {
+    let ok: Bool?
+    let missing: [String]
+    let chunkMaxBytes: Int?
+    let batchMaxBytes: Int?
+    let maxProjectMB: Int?
+}
+
+private struct TheosMissingBlobsResponse: Decodable {
+    let error: String?
+    let missing: [String]?
+    let message: String?
+}
+
+private struct CASManifestEntry: Encodable, Sendable {
+    let path: String
+    let size: Int64
+    let chunks: [String]
+    let exec: Bool
+}
+
+private struct CASManifestSubmission: Encodable {
+    let projectName: String
+    let scheme: String
+    let clean: Bool
+    let files: [CASManifestEntry]
+}
+
+private struct CASCachedFileRecord: Codable, Sendable {
+    let size: Int64
+    let mtimeMs: Int64
+    let exec: Bool
+    let chunks: [String]
+}
+
+private struct CASChunkLoc: Sendable {
+    let fileURL: URL
+    let offset: UInt64
+    let length: Int
+    let sha256Hex: String
+    let sha256Raw: Data
+}
+
+private struct CASWorkspaceScan: Sendable {
+    let projectName: String
+    let totalBytes: Int64
+    let files: [CASManifestEntry]
+    let chunksByHash: [String: CASChunkLoc]
+    let orderedUniqueHashes: [String]
+    let cacheHits: Int
+    let truncatedReason: String?
 }
 
 @MainActor
@@ -147,6 +203,7 @@ public final class TheosBuildService: ObservableObject {
     @Published public var hasAcceptedPrivacyConsent: Bool {
         didSet { UserDefaults.standard.set(hasAcceptedPrivacyConsent, forKey: "3012.theos.privacyConsent") }
     }
+    @Published public var cleanBuildOnServer: Bool = false
 
     @Published public private(set) var isBuilding: Bool = false
     @Published public private(set) var buildStatusText: String = "Sẵn sàng build .deb / .dylib"
@@ -164,6 +221,11 @@ public final class TheosBuildService: ObservableObject {
     private var activeBuildBaseURL: URL?
     private let deviceID: String
     nonisolated private static let maxCommunityUploadBytes = 20 * 1024 * 1024
+    nonisolated private static let maxCommunityProjectBytes: Int64 = 300 * 1024 * 1024
+    nonisolated private static let maxCommunityProjectFiles = 4000
+    nonisolated private static let casChunkSize = 8 * 1024 * 1024
+    nonisolated private static let casMaxBatchBytes = 15 * 1024 * 1024
+    nonisolated private static let emptyFileSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
     public init() {
         if let rawMode = UserDefaults.standard.string(forKey: "3012.theos.buildMode"),
@@ -650,8 +712,10 @@ public final class TheosBuildService: ObservableObject {
             let capacity = health.capacity ?? 2
             let queued = health.queued ?? 0
             let ver = health.version ?? "1.0"
+            let maxProj = health.limits?.maxProjectMB ?? health.limits?.maxUploadMB ?? 20
+            let casBadge = (health.casDelta == true) ? " • CAS Delta \(maxProj)MB" : ""
             let hostNote = (result.usedBaseURL.host == primaryBase.host) ? "" : " • \(result.usedBaseURL.host ?? "")"
-            serverHealthSummary = "Online v\(ver) — Đang chạy \(running)/\(capacity) • Hàng đợi: \(queued)\(hostNote)"
+            serverHealthSummary = "Online v\(ver)\(casBadge) — Đang chạy \(running)/\(capacity) • Hàng đợi: \(queued)\(hostNote)"
         } catch {
             serverHealthSummary = "Không kết nối được: \(error.localizedDescription)"
         }
@@ -701,6 +765,7 @@ public final class TheosBuildService: ObservableObject {
                 await self.buildViaCommunityServer(
                     workspaceRoot: workspaceRoot,
                     runner: runner,
+                    workspace: workspace,
                     onWorkspaceChanged: onWorkspaceChanged
                 )
             case .privateSSHVPS:
@@ -748,10 +813,11 @@ public final class TheosBuildService: ObservableObject {
         }
     }
 
-    // MARK: - Mode 1: Community Remote Build Server (build.kaydus.xyz)
+    // MARK: - Mode 1: Community Remote Build Server (CAS Delta + Incremental .theos + Zip Fallback)
     private func buildViaCommunityServer(
         workspaceRoot: URL,
         runner: CodeRunnerService,
+        workspace: WorkspaceManager?,
         onWorkspaceChanged: @escaping () -> Void
     ) async {
         guard isTheosWorkspace(workspaceRoot) else {
@@ -766,6 +832,283 @@ public final class TheosBuildService: ObservableObject {
             return
         }
 
+        workspace?.saveAllTabs()
+        onBeforeRemoteMake?()
+
+        buildStatusText = "Đang quét mã băm SHA-256 dự án..."
+        let scan = await Task.detached(priority: .userInitiated) {
+            Self.scanWorkspaceForCAS(workspaceRoot: workspaceRoot)
+        }.value
+
+        if let errMsg = scan.truncatedReason {
+            appendLog("[3012] \(errMsg)\n", runner: runner)
+            buildStatusText = "Vượt giới hạn dự án"
+            return
+        }
+        if scan.files.isEmpty {
+            appendLog("[3012] Không tìm thấy file nguồn hợp lệ trong dự án.\n", runner: runner)
+            buildStatusText = "Dự án trống"
+            return
+        }
+
+        let totalProjStr = Self.formatByteCount(scan.totalBytes)
+        appendLog("[3012] Dự án \(scan.projectName): \(scan.files.count) file (\(totalProjStr), tái dùng cache hash \(scan.cacheHits) file).\n", runner: runner)
+
+        do {
+            let checkBody = try JSONEncoder().encode(["hashes": scan.orderedUniqueHashes])
+            buildStatusText = "Đang đối chiếu với máy chủ..."
+            let checkResult = try await performTheosRequest(
+                primaryBaseURL: primaryBase,
+                escapedPath: "v1/cas/check",
+                method: "POST",
+                headers: [
+                    "Content-Type": "application/json",
+                    "X-Device-ID": deviceID
+                ],
+                body: checkBody,
+                requestTimeout: 30,
+                resourceTimeout: 45,
+                maxAttempts: 3,
+                onRetry: { [weak self] attempt, nextHost in
+                    self?.appendLog("[3012] Kết nối gián đoạn khi kiểm tra cache, đang thử lại (lần \(attempt + 1)/3 -> \(nextHost))...\n", runner: runner)
+                }
+            )
+
+            let checkCode = checkResult.response.statusCode
+            if checkCode == 404 {
+                if scan.totalBytes <= Int64(Self.maxCommunityUploadBytes) {
+                    appendLog("[3012] Máy chủ đang dùng API cũ — tự động dùng luồng gửi .zip...\n", runner: runner)
+                    await buildViaCommunityServerLegacyZip(
+                        workspaceRoot: workspaceRoot,
+                        primaryBase: primaryBase,
+                        runner: runner,
+                        onWorkspaceChanged: onWorkspaceChanged
+                    )
+                } else {
+                    appendLog("[3012] Máy chủ cần cập nhật BuildServer v2.0 để hỗ trợ dự án lớn > 20 MB (\(totalProjStr)).\n", runner: runner)
+                    buildStatusText = "Server chưa hỗ trợ > 20 MB"
+                }
+                return
+            }
+
+            if !(200...299).contains(checkCode) {
+                let apiErr = try? JSONDecoder().decode(TheosServerErrorResponse.self, from: checkResult.data)
+                let msg = apiErr?.message ?? "HTTP \(checkCode)"
+                appendLog("[3012] Máy chủ từ chối kiểm tra cache: \(msg)\n", runner: runner)
+                buildStatusText = msg
+                return
+            }
+
+            let checkResp = try JSONDecoder().decode(TheosCASCheckResponse.self, from: checkResult.data)
+            if let serverMaxProjMB = checkResp.maxProjectMB,
+               scan.totalBytes > Int64(serverMaxProjMB) * 1024 * 1024 {
+                appendLog("[3012] Dự án (\(totalProjStr)) vượt giới hạn \(serverMaxProjMB) MB trên máy chủ.\n", runner: runner)
+                buildStatusText = "Vượt giới hạn \(serverMaxProjMB) MB"
+                return
+            }
+
+            let effectiveBase = checkResult.usedBaseURL
+            activeBuildBaseURL = effectiveBase
+
+            if !checkResp.missing.isEmpty {
+                let uploaded = try await uploadMissingCASChunks(
+                    hashes: checkResp.missing,
+                    chunksByHash: scan.chunksByHash,
+                    baseURL: effectiveBase,
+                    totalProjectBytes: scan.totalBytes,
+                    batchLimitBytes: min(Self.casMaxBatchBytes, max(1024 * 1024, (checkResp.batchMaxBytes ?? Self.casMaxBatchBytes) - 65536)),
+                    runner: runner
+                )
+                if !uploaded { return }
+            } else {
+                appendLog("[3012] 100% file đã có trên cache máy chủ — gửi 0 KB dữ liệu!\n", runner: runner)
+            }
+
+            buildStatusText = "Đang khởi chạy build trên máy chủ..."
+            let wasCleanRequested = cleanBuildOnServer
+            let manifestObj = CASManifestSubmission(
+                projectName: scan.projectName,
+                scheme: packageScheme.rawValue,
+                clean: wasCleanRequested,
+                files: scan.files
+            )
+            let manifestData = try JSONEncoder().encode(manifestObj)
+
+            var submitResult = try await performTheosRequest(
+                primaryBaseURL: effectiveBase,
+                escapedPath: "v1/builds/cas",
+                method: "POST",
+                headers: [
+                    "Content-Type": "application/json",
+                    "X-Device-ID": deviceID,
+                    "X-Package-Scheme": packageScheme.rawValue,
+                    "X-Clean-Build": wasCleanRequested ? "1" : "0"
+                ],
+                body: manifestData,
+                requestTimeout: 60,
+                resourceTimeout: 90,
+                maxAttempts: 3,
+                onRetry: { [weak self] attempt, nextHost in
+                    self?.appendLog("[3012] Đang thử gửi lại manifest build (lần \(attempt + 1)/3 -> \(nextHost))...\n", runner: runner)
+                }
+            )
+
+            if submitResult.response.statusCode == 409,
+               let missingResp = try? JSONDecoder().decode(TheosMissingBlobsResponse.self, from: submitResult.data),
+               let retryHashes = missingResp.missing, !retryHashes.isEmpty {
+                appendLog("[3012] Máy chủ yêu cầu gửi bổ sung \(retryHashes.count) khối vừa hết hạn...\n", runner: runner)
+                let reuploaded = try await uploadMissingCASChunks(
+                    hashes: retryHashes,
+                    chunksByHash: scan.chunksByHash,
+                    baseURL: effectiveBase,
+                    totalProjectBytes: scan.totalBytes,
+                    batchLimitBytes: Self.casMaxBatchBytes,
+                    runner: runner
+                )
+                if !reuploaded { return }
+                submitResult = try await performTheosRequest(
+                    primaryBaseURL: effectiveBase,
+                    escapedPath: "v1/builds/cas",
+                    method: "POST",
+                    headers: [
+                        "Content-Type": "application/json",
+                        "X-Device-ID": deviceID,
+                        "X-Package-Scheme": packageScheme.rawValue,
+                        "X-Clean-Build": wasCleanRequested ? "1" : "0"
+                    ],
+                    body: manifestData,
+                    requestTimeout: 60,
+                    resourceTimeout: 90,
+                    maxAttempts: 2
+                )
+            }
+
+            if !(200...299).contains(submitResult.response.statusCode) {
+                let apiErr = try? JSONDecoder().decode(TheosServerErrorResponse.self, from: submitResult.data)
+                let msg = apiErr?.message ?? "HTTP \(submitResult.response.statusCode)"
+                appendLog("[3012] Máy chủ từ chối build: \(msg)\n", runner: runner)
+                buildStatusText = msg
+                return
+            }
+
+            if wasCleanRequested {
+                cleanBuildOnServer = false
+            }
+
+            let initialJob = try JSONDecoder().decode(TheosBuildJobResponse.self, from: submitResult.data)
+            await pollAndDownloadCommunityJob(
+                initialJob: initialJob,
+                primaryBase: submitResult.usedBaseURL,
+                workspaceRoot: workspaceRoot,
+                runner: runner,
+                onWorkspaceChanged: onWorkspaceChanged
+            )
+        } catch {
+            if !Task.isCancelled {
+                appendLog("\n[3012] Lỗi kết nối build server: \(error.localizedDescription)\n", runner: runner)
+                buildStatusText = "Lỗi mạng"
+            }
+        }
+    }
+
+    private func uploadMissingCASChunks(
+        hashes: [String],
+        chunksByHash: [String: CASChunkLoc],
+        baseURL: URL,
+        totalProjectBytes: Int64,
+        batchLimitBytes: Int,
+        runner: CodeRunnerService
+    ) async throws -> Bool {
+        var missingLocs: [CASChunkLoc] = []
+        var missingTotalBytes: Int64 = 0
+        for sha in hashes {
+            let low = sha.lowercased()
+            if let loc = chunksByHash[low] {
+                missingLocs.append(loc)
+                missingTotalBytes += Int64(loc.length)
+            }
+        }
+        guard !missingLocs.isEmpty else { return true }
+
+        var batches: [[CASChunkLoc]] = []
+        var currentBatch: [CASChunkLoc] = []
+        var currentBytes = 12
+        for loc in missingLocs {
+            let entrySize = 36 + loc.length
+            if !currentBatch.isEmpty && (currentBytes + entrySize > batchLimitBytes || currentBatch.count >= 2000) {
+                batches.append(currentBatch)
+                currentBatch = []
+                currentBytes = 12
+            }
+            currentBatch.append(loc)
+            currentBytes += entrySize
+        }
+        if !currentBatch.isEmpty {
+            batches.append(currentBatch)
+        }
+
+        let uploadStr = Self.formatByteCount(missingTotalBytes)
+        let projStr = Self.formatByteCount(totalProjectBytes)
+        if totalProjectBytes > 0 {
+            let savedPct = max(0.0, (1.0 - Double(missingTotalBytes) / Double(totalProjectBytes)) * 100.0)
+            let savedStr = String(format: "%.1f%%", savedPct)
+            appendLog("[3012] Chỉ gửi \(missingLocs.count) phần thay đổi (\(uploadStr) / \(projStr) — tiết kiệm \(savedStr)) trong \(batches.count) gói...\n", runner: runner)
+        } else {
+            appendLog("[3012] Đang tải lên \(uploadStr) qua \(batches.count) gói...\n", runner: runner)
+        }
+
+        var sentBytes: Int64 = 0
+        for (idx, batch) in batches.enumerated() {
+            try Task.checkCancellation()
+            let batchBytes = batch.reduce(Int64(0)) { $0 + Int64($1.length) }
+            let batchLabel = "\(idx + 1)/\(batches.count)"
+            let progStr = "\(Self.formatByteCount(sentBytes))/\(uploadStr)"
+            buildStatusText = "Đang tải gói \(batchLabel) (\(progStr))..."
+
+            guard let batchFileURL = await Task.detached(priority: .userInitiated, operation: { () -> URL? in
+                Self.writeCASBatchTempFile(batch: batch)
+            }).value else {
+                appendLog("[3012] Không tạo được gói dữ liệu tạm để tải lên.\n", runner: runner)
+                buildStatusText = "Lỗi đọc file"
+                return false
+            }
+            defer { try? FileManager.default.removeItem(at: batchFileURL) }
+
+            let upResult = try await performTheosRequest(
+                primaryBaseURL: baseURL,
+                escapedPath: "v1/cas/upload",
+                method: "POST",
+                headers: [
+                    "Content-Type": "application/octet-stream",
+                    "X-Device-ID": deviceID
+                ],
+                bodyFileURL: batchFileURL,
+                requestTimeout: 150,
+                resourceTimeout: 240,
+                maxAttempts: 4,
+                onRetry: { [weak self] attempt, nextHost in
+                    self?.appendLog("[3012] Kết nối gián đoạn ở gói \(batchLabel), đang thử lại (lần \(attempt + 1)/4 -> \(nextHost))...\n", runner: runner)
+                    self?.buildStatusText = "Đang thử lại gói \(batchLabel) (\(attempt + 1)/4)..."
+                }
+            )
+            if !(200...299).contains(upResult.response.statusCode) {
+                let apiErr = try? JSONDecoder().decode(TheosServerErrorResponse.self, from: upResult.data)
+                let msg = apiErr?.message ?? "HTTP \(upResult.response.statusCode)"
+                appendLog("[3012] Lỗi tải lên gói \(batchLabel): \(msg)\n", runner: runner)
+                buildStatusText = msg
+                return false
+            }
+            sentBytes += batchBytes
+        }
+        return true
+    }
+
+    private func buildViaCommunityServerLegacyZip(
+        workspaceRoot: URL,
+        primaryBase: URL,
+        runner: CodeRunnerService,
+        onWorkspaceChanged: @escaping () -> Void
+    ) async {
         guard let zipData = await Task.detached(priority: .userInitiated, operation: { () -> Data? in
             Self.createCleanTheosZipData(workspaceRoot: workspaceRoot)
         }).value else {
@@ -779,7 +1122,7 @@ public final class TheosBuildService: ObservableObject {
             let sizeMB = String(format: "%.1f", Double(zipSize) / (1024.0 * 1024.0))
             appendLog(
                 "[3012] Dự án sau khi nén (\(sizeMB) MB) vượt giới hạn 20 MB của Máy chủ Cộng đồng.\n" +
-                "[3012] Gợi ý: Xoá bớt file nhị phân nặng trong dự án hoặc chuyển sang chế độ VPS SSH Cá nhân / Ngoại tuyến (.zip + GitHub Actions).\n",
+                "[3012] Gợi ý: Cập nhật BuildServer v2.0 hoặc chuyển sang chế độ VPS SSH Cá nhân / Ngoại tuyến (.zip + GitHub Actions).\n",
                 runner: runner
             )
             buildStatusText = "Vượt giới hạn 20 MB"
@@ -820,7 +1163,32 @@ public final class TheosBuildService: ObservableObject {
                 return
             }
 
-            var job = try JSONDecoder().decode(TheosBuildJobResponse.self, from: uploadResult.data)
+            let job = try JSONDecoder().decode(TheosBuildJobResponse.self, from: uploadResult.data)
+            await pollAndDownloadCommunityJob(
+                initialJob: job,
+                primaryBase: uploadResult.usedBaseURL,
+                workspaceRoot: workspaceRoot,
+                runner: runner,
+                onWorkspaceChanged: onWorkspaceChanged
+            )
+        } catch {
+            if !Task.isCancelled {
+                appendLog("\n[3012] Lỗi kết nối build server: \(error.localizedDescription)\n", runner: runner)
+                buildStatusText = "Lỗi mạng"
+            }
+        }
+    }
+
+    private func pollAndDownloadCommunityJob(
+        initialJob: TheosBuildJobResponse,
+        primaryBase: URL,
+        workspaceRoot: URL,
+        runner: CodeRunnerService,
+        onWorkspaceChanged: @escaping () -> Void
+    ) async {
+        do {
+            var job = initialJob
+            activeBuildBaseURL = primaryBase
             activeJobID = job.id
             var logOffset = job.logOffset ?? 0
             if let initialLog = job.log, !initialLog.isEmpty {
@@ -914,32 +1282,18 @@ public final class TheosBuildService: ObservableObject {
                 var savedNames: [String] = []
                 for f in files {
                     let dlBase = activeBuildBaseURL ?? primaryBase
-                    let encodedFile = f.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? f.name
-                    let dlResult = try await performTheosRequest(
-                        primaryBaseURL: dlBase,
-                        escapedPath: "v1/builds/\(job.id)/files/\(encodedFile)",
-                        method: "GET",
-                        headers: ["X-Device-ID": deviceID],
-                        requestTimeout: 75,
-                        resourceTimeout: 120,
-                        maxAttempts: 4,
-                        expectJSON: false,
-                        onRetry: { [weak self] attempt, _ in
-                            self?.buildStatusText = "Đang thử tải lại \(f.name) (\(attempt + 1)/4)..."
-                        }
+                    let safeName = (f.name as NSString).lastPathComponent
+                    guard !safeName.isEmpty, safeName != ".", safeName != ".." else { continue }
+                    let outURL = packagesDir.appendingPathComponent(safeName)
+                    let ok = try await downloadTheosArtifactToFile(
+                        baseURL: dlBase,
+                        jobID: job.id,
+                        fileName: f.name,
+                        destinationURL: outURL,
+                        runner: runner
                     )
-                    if dlResult.response.statusCode == 200 {
-                        if Self.looksLikeUnexpectedHTML(data: dlResult.data, response: dlResult.response) {
-                            appendLog("\n[3012] Máy chủ trả về trang HTML thay vì file \(f.name).\n", runner: runner)
-                            continue
-                        }
-                        let safeName = (f.name as NSString).lastPathComponent
-                        guard !safeName.isEmpty, safeName != ".", safeName != ".." else { continue }
-                        let outURL = packagesDir.appendingPathComponent(safeName)
-                        try dlResult.data.write(to: outURL, options: .atomic)
+                    if ok {
                         savedNames.append(safeName)
-                    } else {
-                        appendLog("\n[3012] Không tải được \(f.name) (HTTP \(dlResult.response.statusCode)).\n", runner: runner)
                     }
                 }
 
@@ -1532,6 +1886,7 @@ public final class TheosBuildService: ObservableObject {
         method: String,
         headers: [String: String] = [:],
         body: Data? = nil,
+        bodyFileURL: URL? = nil,
         requestTimeout: TimeInterval,
         resourceTimeout: TimeInterval,
         maxAttempts: Int,
@@ -1575,11 +1930,17 @@ public final class TheosBuildService: ObservableObject {
             }
 
             var tempUploadURL: URL?
-            if let body {
+            let resolvedUploadURL: URL?
+            if let bodyFileURL {
+                resolvedUploadURL = bodyFileURL
+            } else if let body {
                 let tmpURL = FileManager.default.temporaryDirectory
                     .appendingPathComponent("3012_up_\(UUID().uuidString).bin")
                 try body.write(to: tmpURL, options: .atomic)
                 tempUploadURL = tmpURL
+                resolvedUploadURL = tmpURL
+            } else {
+                resolvedUploadURL = nil
             }
             defer {
                 if let tempUploadURL {
@@ -1595,8 +1956,8 @@ public final class TheosBuildService: ObservableObject {
 
             do {
                 let (data, resp): (Data, URLResponse)
-                if let tempUploadURL {
-                    (data, resp) = try await session.upload(for: req, fromFile: tempUploadURL)
+                if let resolvedUploadURL {
+                    (data, resp) = try await session.upload(for: req, fromFile: resolvedUploadURL)
                 } else {
                     (data, resp) = try await session.data(for: req)
                 }
@@ -1642,7 +2003,376 @@ public final class TheosBuildService: ObservableObject {
         throw lastError
     }
 
-    // MARK: - Helpers
+    private func downloadTheosArtifactToFile(
+        baseURL: URL,
+        jobID: String,
+        fileName: String,
+        destinationURL: URL,
+        runner: CodeRunnerService
+    ) async throws -> Bool {
+        let encodedFile = fileName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileName
+        var rawBase = baseURL.absoluteString
+        while rawBase.hasSuffix("/") { rawBase.removeLast() }
+        guard let url = URL(string: "\(rawBase)/v1/builds/\(jobID)/files/\(encodedFile)") else {
+            return false
+        }
+
+        let maxAttempts = 4
+        var lastError: Error = URLError(.cannotConnectToHost)
+
+        for attempt in 1...maxAttempts {
+            try Task.checkCancellation()
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            req.timeoutInterval = 75
+            req.assumesHTTP3Capable = false
+            req.setValue(deviceID, forHTTPHeaderField: "X-Device-ID")
+            req.setValue("close", forHTTPHeaderField: "Connection")
+
+            let session = Self.makeEphemeralTheosSession(requestTimeout: 75, resourceTimeout: 180)
+            defer { session.finishTasksAndInvalidate() }
+
+            do {
+                let (downloadedTmp, resp) = try await session.download(for: req)
+                guard let http = resp as? HTTPURLResponse else {
+                    try? FileManager.default.removeItem(at: downloadedTmp)
+                    throw URLError(.badServerResponse)
+                }
+
+                if Self.isTransientGatewayStatus(http.statusCode) && attempt < maxAttempts {
+                    try? FileManager.default.removeItem(at: downloadedTmp)
+                    buildStatusText = "Đang thử tải lại \(fileName) (\(attempt + 1)/\(maxAttempts))..."
+                    try? await Task.sleep(nanoseconds: UInt64(attempt) * 650_000_000)
+                    continue
+                }
+
+                guard http.statusCode == 200 else {
+                    try? FileManager.default.removeItem(at: downloadedTmp)
+                    appendLog("\n[3012] Không tải được \(fileName) (HTTP \(http.statusCode)).\n", runner: runner)
+                    return false
+                }
+
+                var headData = Data()
+                if let fh = try? FileHandle(forReadingFrom: downloadedTmp) {
+                    headData = (try? fh.read(upToCount: 256)) ?? Data()
+                    try? fh.close()
+                }
+                if Self.looksLikeUnexpectedHTML(data: headData, response: http) {
+                    try? FileManager.default.removeItem(at: downloadedTmp)
+                    appendLog("\n[3012] Máy chủ trả về trang HTML thay vì file \(fileName).\n", runner: runner)
+                    return false
+                }
+
+                let fm = FileManager.default
+                if fm.fileExists(atPath: destinationURL.path) {
+                    try? fm.removeItem(at: destinationURL)
+                }
+                try fm.moveItem(at: downloadedTmp, to: destinationURL)
+                return true
+            } catch {
+                if error is CancellationError || Task.isCancelled {
+                    throw error
+                }
+                lastError = error
+                if Self.isTransientNetworkError(error) && attempt < maxAttempts {
+                    buildStatusText = "Đang thử tải lại \(fileName) (\(attempt + 1)/\(maxAttempts))..."
+                    try? await Task.sleep(nanoseconds: UInt64(attempt) * 650_000_000)
+                    continue
+                }
+                throw error
+            }
+        }
+        throw lastError
+    }
+
+    // MARK: - Helpers & Streaming CAS Scanner
+    nonisolated private static func formatByteCount(_ bytes: Int64) -> String {
+        if bytes <= 0 { return "0 KB" }
+        if bytes < 1024 { return "\(bytes) B" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    nonisolated private static func dataFromHex(_ hex: String) -> Data? {
+        guard hex.count % 2 == 0 else { return nil }
+        var out = Data(capacity: hex.count / 2)
+        var idx = hex.startIndex
+        while idx < hex.endIndex {
+            let next = hex.index(idx, offsetBy: 2)
+            guard let byte = UInt8(hex[idx..<next], radix: 16) else { return nil }
+            out.append(byte)
+            idx = next
+        }
+        return out
+    }
+
+    nonisolated private static func casIndexCacheURL(for workspaceRoot: URL) -> URL {
+        let canon = WorkspaceManager.canonicalPath(workspaceRoot)
+        let digest = SHA256.hash(data: Data(canon.utf8))
+        let hex = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return cachesDir.appendingPathComponent("3012_cas_index_v1_\(hex).json")
+    }
+
+    nonisolated private static func scanWorkspaceForCAS(workspaceRoot: URL) -> CASWorkspaceScan {
+        let fm = FileManager.default
+        let projectName = sanitizeRemoteSlug(workspaceRoot.lastPathComponent)
+        let excludedDirs: Set<String> = [
+            ".git", ".theos", "packages", ".build", "build",
+            "node_modules", "__MACOSX", ".swiftpm", "DerivedData", "__pycache__"
+        ]
+        let excludedDirSuffixes = [".dsym", ".xcarchive"]
+        let excludedFileExts: Set<String> = ["ipa", "tipa", "deb", "dmg", "iso"]
+        let canonicalRoot = WorkspaceManager.canonicalPath(workspaceRoot)
+        let rootPrefix = canonicalRoot == "/" ? "/" : canonicalRoot + "/"
+
+        let cacheURL = casIndexCacheURL(for: workspaceRoot)
+        var previousCache: [String: CASCachedFileRecord] = [:]
+        if let raw = try? Data(contentsOf: cacheURL),
+           let decoded = try? JSONDecoder().decode([String: CASCachedFileRecord].self, from: raw) {
+            previousCache = decoded
+        }
+
+        var nextCache: [String: CASCachedFileRecord] = [:]
+        var files: [CASManifestEntry] = []
+        var chunksByHash: [String: CASChunkLoc] = [:]
+        var orderedUniqueHashes: [String] = []
+        var seenUniqueHashes: Set<String> = []
+        var totalBytes: Int64 = 0
+        var cacheHits = 0
+        var truncatedReason: String? = nil
+
+        guard let enumerator = fm.enumerator(
+            at: workspaceRoot,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey],
+            options: []
+        ) else {
+            return CASWorkspaceScan(
+                projectName: projectName,
+                totalBytes: 0,
+                files: [],
+                chunksByHash: [:],
+                orderedUniqueHashes: [],
+                cacheHits: 0,
+                truncatedReason: "Không thể đọc thư mục dự án."
+            )
+        }
+
+        for case let url as URL in enumerator {
+            let name = url.lastPathComponent
+            let lowerName = name.lowercased()
+            if excludedDirs.contains(name)
+                || excludedDirSuffixes.contains(where: { lowerName.hasSuffix($0) })
+                || name.hasPrefix(".3012")
+                || name == ".DS_Store" {
+                enumerator.skipDescendants()
+                continue
+            }
+            let rv = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
+            let isDir = rv?.isDirectory ?? false
+            if rv?.isSymbolicLink == true {
+                if isDir { enumerator.skipDescendants() }
+                continue
+            }
+            if isDir { continue }
+
+            let ext = url.pathExtension.lowercased()
+            if excludedFileExts.contains(ext) || lowerName.hasSuffix("-theos.zip") {
+                continue
+            }
+
+            let canonicalItem = WorkspaceManager.canonicalPath(url)
+            guard canonicalItem.hasPrefix(rootPrefix) else { continue }
+            let rel = String(canonicalItem.dropFirst(rootPrefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !rel.isEmpty, !rel.contains(".."), rel.count <= 240 else { continue }
+            guard rel.split(separator: "/").count <= 12 else { continue }
+
+            if files.count >= maxCommunityProjectFiles {
+                truncatedReason = "Dự án vượt quá giới hạn \(maxCommunityProjectFiles) file."
+                break
+            }
+
+            let fileSize = Int64(rv?.fileSize ?? 0)
+            totalBytes += fileSize
+            if totalBytes > maxCommunityProjectBytes {
+                let maxMB = maxCommunityProjectBytes / (1024 * 1024)
+                truncatedReason = "Tổng dung lượng mã nguồn & tài nguyên vượt quá giới hạn \(maxMB) MB."
+                break
+            }
+
+            let mtimeMs: Int64
+            if let mdate = rv?.contentModificationDate {
+                mtimeMs = Int64((mdate.timeIntervalSince1970 * 1000.0).rounded())
+            } else {
+                mtimeMs = 0
+            }
+
+            let posixPerms = (try? fm.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int) ?? 0
+            let isExec: Bool = (posixPerms & 0o111) != 0
+
+            var chunkHashes: [String] = []
+            var chunkLocs: [CASChunkLoc] = []
+            var usedCache = false
+
+            if fileSize == 0 {
+                usedCache = true
+            } else if let cached = previousCache[rel],
+                      cached.size == fileSize,
+                      cached.mtimeMs == mtimeMs {
+                let expectedCount = Int((fileSize + Int64(casChunkSize) - 1) / Int64(casChunkSize))
+                if cached.chunks.count == expectedCount {
+                    var builtLocs: [CASChunkLoc] = []
+                    var allValid = true
+                    for (idx, hex) in cached.chunks.enumerated() {
+                        let low = hex.lowercased()
+                        guard low.count == 64, let raw = dataFromHex(low), raw.count == 32 else {
+                            allValid = false
+                            break
+                        }
+                        let offset = UInt64(idx) * UInt64(casChunkSize)
+                        let rem = fileSize - Int64(offset)
+                        let len = Int(min(Int64(casChunkSize), rem))
+                        builtLocs.append(CASChunkLoc(
+                            fileURL: url,
+                            offset: offset,
+                            length: len,
+                            sha256Hex: low,
+                            sha256Raw: raw
+                        ))
+                    }
+                    if allValid {
+                        chunkHashes = builtLocs.map(\.sha256Hex)
+                        chunkLocs = builtLocs
+                        usedCache = true
+                        cacheHits += 1
+                    }
+                }
+            }
+
+            if !usedCache && fileSize > 0 {
+                do {
+                    let fh = try FileHandle(forReadingFrom: url)
+                    defer { try? fh.close() }
+                    var offset: UInt64 = 0
+                    while offset < UInt64(fileSize) {
+                        let chunkStart = offset
+                        let chunkTarget = Int(min(Int64(casChunkSize), fileSize - Int64(chunkStart)))
+                        var hasher = SHA256()
+                        var chunkRead = 0
+                        while chunkRead < chunkTarget {
+                            let step = min(1_048_576, chunkTarget - chunkRead)
+                            let sliceData: Data? = try autoreleasepool {
+                                try fh.read(upToCount: step)
+                            }
+                            guard let slice = sliceData, !slice.isEmpty else { break }
+                            hasher.update(data: slice)
+                            chunkRead += slice.count
+                        }
+                        guard chunkRead > 0 else { break }
+                        let digest = Data(hasher.finalize())
+                        let hex = digest.map { String(format: "%02x", $0) }.joined()
+                        chunkHashes.append(hex)
+                        chunkLocs.append(CASChunkLoc(
+                            fileURL: url,
+                            offset: chunkStart,
+                            length: chunkRead,
+                            sha256Hex: hex,
+                            sha256Raw: digest
+                        ))
+                        offset += UInt64(chunkRead)
+                    }
+                } catch {
+                    continue
+                }
+            }
+
+            nextCache[rel] = CASCachedFileRecord(
+                size: fileSize,
+                mtimeMs: mtimeMs,
+                exec: isExec,
+                chunks: chunkHashes
+            )
+            files.append(CASManifestEntry(
+                path: rel,
+                size: fileSize,
+                chunks: chunkHashes,
+                exec: isExec
+            ))
+            for loc in chunkLocs {
+                if loc.sha256Hex != emptyFileSHA256 {
+                    if chunksByHash[loc.sha256Hex] == nil {
+                        chunksByHash[loc.sha256Hex] = loc
+                    }
+                    if !seenUniqueHashes.contains(loc.sha256Hex) {
+                        seenUniqueHashes.insert(loc.sha256Hex)
+                        orderedUniqueHashes.append(loc.sha256Hex)
+                    }
+                }
+            }
+        }
+
+        if truncatedReason == nil, let encoded = try? JSONEncoder().encode(nextCache) {
+            try? encoded.write(to: cacheURL, options: .atomic)
+        }
+
+        files.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        return CASWorkspaceScan(
+            projectName: projectName,
+            totalBytes: totalBytes,
+            files: files,
+            chunksByHash: chunksByHash,
+            orderedUniqueHashes: orderedUniqueHashes,
+            cacheHits: cacheHits,
+            truncatedReason: truncatedReason
+        )
+    }
+
+    nonisolated private static func writeCASBatchTempFile(batch: [CASChunkLoc]) -> URL? {
+        guard !batch.isEmpty else { return nil }
+        let fm = FileManager.default
+        let batchURL = fm.temporaryDirectory.appendingPathComponent("3012_cas_batch_\(UUID().uuidString).bin")
+        guard fm.createFile(atPath: batchURL.path, contents: nil) else { return nil }
+
+        do {
+            let outHandle = try FileHandle(forWritingTo: batchURL)
+            defer { try? outHandle.close() }
+
+            var header = Data("3012CAS1".utf8)
+            var beCount = UInt32(batch.count).bigEndian
+            withUnsafeBytes(of: &beCount) { header.append(contentsOf: $0) }
+            try outHandle.write(contentsOf: header)
+
+            for loc in batch {
+                var meta = Data()
+                meta.append(loc.sha256Raw)
+                var beLen = UInt32(loc.length).bigEndian
+                withUnsafeBytes(of: &beLen) { meta.append(contentsOf: $0) }
+                try outHandle.write(contentsOf: meta)
+
+                if loc.length > 0 {
+                    let inHandle = try FileHandle(forReadingFrom: loc.fileURL)
+                    defer { try? inHandle.close() }
+                    try inHandle.seek(toOffset: loc.offset)
+                    var left = loc.length
+                    while left > 0 {
+                        let step = min(524_288, left)
+                        let sliceOpt: Data? = try autoreleasepool {
+                            try inHandle.read(upToCount: step)
+                        }
+                        guard let slice = sliceOpt, !slice.isEmpty else {
+                            try? fm.removeItem(at: batchURL)
+                            return nil
+                        }
+                        try outHandle.write(contentsOf: slice)
+                        left -= slice.count
+                    }
+                }
+            }
+            return batchURL
+        } catch {
+            try? fm.removeItem(at: batchURL)
+            return nil
+        }
+    }
     private func appendLog(_ text: String, runner: CodeRunnerService?) {
         buildLog += text
         if buildLog.count > 120_000 {

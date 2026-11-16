@@ -65,6 +65,168 @@ jobs:
           CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Device-ID: someone-else-1234" "http://127.0.0.1:8787/v1/builds/$ID/files/$DEB")
           [ "$CODE" = "403" ]
 
+      - name: Test CAS Chunked Upload & Incremental .theos Rebuild
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, struct, time, urllib.error, urllib.request
+
+          BASE = "http://127.0.0.1:8787"
+          DEVICE = "ci-cas-device-12345678"
+
+          def post_json(path, obj, expected=(200, 202)):
+              data = json.dumps(obj).encode("utf-8")
+              req = urllib.request.Request(
+                  BASE + path,
+                  data=data,
+                  headers={
+                      "Content-Type": "application/json",
+                      "X-Device-ID": DEVICE,
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      assert r.status in expected, (r.status, path)
+                      return json.loads(r.read().decode("utf-8"))
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode("utf-8", errors="replace")
+                  raise AssertionError(f"POST {path} HTTP {e.code}: {body}")
+
+          def upload_chunks(items):
+              # items: list[(sha_hex, bytes)]
+              buf = bytearray(b"3012CAS1")
+              buf.extend(struct.pack("!I", len(items)))
+              for sha_hex, raw in items:
+                  buf.extend(bytes.fromhex(sha_hex))
+                  buf.extend(struct.pack("!I", len(raw)))
+                  buf.extend(raw)
+              req = urllib.request.Request(
+                  BASE + "/v1/cas/upload",
+                  data=bytes(buf),
+                  headers={
+                      "Content-Type": "application/octet-stream",
+                      "X-Device-ID": DEVICE,
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  assert r.status == 200
+                  return json.loads(r.read().decode("utf-8"))
+
+          def poll_job(job_id):
+              offset = 0
+              full_log = []
+              for _ in range(240):
+                  req = urllib.request.Request(
+                      f"{BASE}/v1/builds/{job_id}?since={offset}",
+                      headers={"X-Device-ID": DEVICE},
+                  )
+                  with urllib.request.urlopen(req, timeout=15) as r:
+                      st = json.loads(r.read().decode("utf-8"))
+                  if st.get("log"):
+                      print(st["log"], end="")
+                      full_log.append(st["log"])
+                  offset = st.get("logOffset", offset)
+                  if st["state"] not in ("queued", "running"):
+                      return st, "".join(full_log)
+                  time.sleep(0.5)
+              raise AssertionError("CAS build timeout")
+
+          makefile = (
+              "ARCHS = arm64\n"
+              "TARGET := iphone:clang:latest:15.0\n"
+              "include $(THEOS)/makefiles/common.mk\n"
+              "TWEAK_NAME = CasTest\n"
+              "CasTest_FILES = Tweak.x Helper.c\n"
+              "include $(THEOS_MAKE_PATH)/tweak.mk\n"
+          ).encode("utf-8")
+          control = (
+              "Package: com.dev.castest\n"
+              "Name: CasTest\n"
+              "Version: 1.0.0\n"
+              "Architecture: iphoneos-arm64\n"
+              "Description: CAS delta test tweak\n"
+              "Maintainer: CI\n"
+              "Author: CI\n"
+              "Section: Tweaks\n"
+          ).encode("utf-8")
+          plist = (
+              '<?xml version="1.0" encoding="UTF-8"?>\n'
+              '<plist version="1.0"><dict><key>Filter</key><dict><key>Bundles</key>'
+              '<array><string>com.apple.springboard</string></array></dict></dict></plist>\n'
+          ).encode("utf-8")
+          helper_c = b"int cas_helper_value(void) { return 42; }\n"
+          tweak_v1 = (
+              "#import <Foundation/Foundation.h>\n"
+              "extern int cas_helper_value(void);\n"
+              "%ctor { NSLog(@\"CAS_V1=%d\", cas_helper_value()); }\n"
+          ).encode("utf-8")
+          big_asset = b"CASASSET" * (256 * 1024)  # 2 MiB asset inside layout/
+
+          files_v1 = {
+              "Makefile": makefile,
+              "control": control,
+              "CasTest.plist": plist,
+              "Helper.c": helper_c,
+              "Tweak.x": tweak_v1,
+              "layout/Library/CasTest/asset.bin": big_asset,
+              "empty.txt": b"",
+          }
+
+          hashes = {}
+          for p, b in files_v1.items():
+              if b:
+                  hashes[p] = hashlib.sha256(b).hexdigest()
+
+          chk1 = post_json("/v1/cas/check", {"hashes": list(hashes.values())})
+          assert chk1["maxProjectMB"] >= 300, chk1
+          assert set(chk1["missing"]) == set(hashes.values()), chk1
+
+          by_sha = {sha: raw for p, raw in files_v1.items() if raw for sha in [hashes[p]]}
+          up1 = upload_chunks(list(by_sha.items()))
+          assert up1["stored"] == len(by_sha), up1
+
+          manifest1 = {
+              "projectName": "CasTestProj",
+              "scheme": "rootless",
+              "clean": False,
+              "files": [
+                  {"path": p, "size": len(b), "chunks": [hashes[p]] if b else [], "exec": False}
+                  for p, b in files_v1.items()
+              ],
+          }
+          job1 = post_json("/v1/builds/cas", manifest1)
+          st1, log1 = poll_job(job1["id"])
+          assert st1["state"] == "succeeded", (st1, log1)
+          assert "Helper.c" in log1 and "Tweak.x" in log1, log1
+          assert any(f["name"].endswith(".deb") for f in st1["files"]), st1["files"]
+
+          # Build 2: modify ONLY Tweak.x and verify Helper.c + 2 MiB asset stay cached!
+          tweak_v2 = tweak_v1.replace(b"CAS_V1", b"CAS_V2")
+          files_v2 = dict(files_v1)
+          files_v2["Tweak.x"] = tweak_v2
+          hashes2 = {p: hashlib.sha256(b).hexdigest() for p, b in files_v2.items() if b}
+
+          chk2 = post_json("/v1/cas/check", {"hashes": list(hashes2.values())})
+          assert chk2["missing"] == [hashes2["Tweak.x"]], chk2
+          upload_chunks([(hashes2["Tweak.x"], tweak_v2)])
+
+          manifest2 = {
+              "projectName": "CasTestProj",
+              "scheme": "rootless",
+              "clean": False,
+              "files": [
+                  {"path": p, "size": len(b), "chunks": [hashes2[p]] if b else [], "exec": False}
+                  for p, b in files_v2.items()
+              ],
+          }
+          job2 = post_json("/v1/builds/cas", manifest2)
+          st2, log2 = poll_job(job2["id"])
+          assert st2["state"] == "succeeded", (st2, log2)
+          assert "Compiling Tweak.x" in log2, log2
+          assert "Compiling Helper.c" not in log2, "Expected Helper.c object to be reused from .theos cache!\n" + log2
+          print("CAS incremental delta + .theos cache verified OK!")
+          PY
+
       - name: Verify /sync.mjs & Zero-Knowledge WebSocket Relay (/v1/sync)
         run: |
           set -euo pipefail

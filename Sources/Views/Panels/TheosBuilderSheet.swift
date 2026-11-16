@@ -212,6 +212,16 @@ public struct TheosBuilderSheet: View {
                                 .foregroundColor(health.hasPrefix("Online") ? .green : .orange)
                         }
 
+                        Text(preferences.tr(
+                            "Hỗ trợ dự án tới 300 MB: chia khối SHA-256 thông minh, lần build sau chỉ gửi file vừa sửa và giữ cache .theos (thường xong trong 1–3 giây).",
+                            "Supports projects up to 300 MB via smart SHA-256 delta chunks & persistent .theos cache (repeat builds typically finish in 1–3s)."
+                        ))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+
+                        Toggle(preferences.tr("Build sạch lại từ đầu (Xoá cache .theos lần tới)", "Clean Rebuild Next Time (Clear .theos Cache)"), isOn: $theosService.cleanBuildOnServer)
+                            .font(.system(size: 12))
+
                         Toggle(preferences.tr("Tôi đồng ý gửi tạm mã nguồn tới sandbox để biên dịch", "I consent to send temporary source code to sandbox for compilation"), isOn: $theosService.hasAcceptedPrivacyConsent)
                             .font(.system(size: 12.5))
                     } else if theosService.buildMode == .directVPSTerminal || theosService.buildMode == .privateSSHVPS {

@@ -33,7 +33,7 @@ from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "1.1.0"
+VERSION = "2.0.0"
 
 
 def _env_int(name: str, default: int) -> int:
@@ -50,18 +50,25 @@ CFG = {
     "concurrency": max(1, _env_int("BUILD_CONCURRENCY", 2)),
     "max_queue": _env_int("BUILD_MAX_QUEUE", 30),
     "max_upload": _env_int("BUILD_MAX_UPLOAD_MB", 20) * 1024 * 1024,
-    "timeout": _env_int("BUILD_TIMEOUT_SEC", 120),
+    "max_project_mb": max(20, _env_int("BUILD_MAX_PROJECT_MB", 300)),
+    "max_project_files": max(100, _env_int("BUILD_MAX_PROJECT_FILES", 4000)),
+    "cas_batch_bytes": max(1, _env_int("BUILD_CAS_BATCH_MB", 16)) * 1024 * 1024,
+    "cas_max_bytes": max(256, _env_int("BUILD_CAS_MAX_MB", 4096)) * 1024 * 1024,
+    "workspaces_max_bytes": max(256, _env_int("BUILD_WORKSPACES_MAX_MB", 4096)) * 1024 * 1024,
+    "workspace_ttl": max(300, _env_int("BUILD_WORKSPACE_TTL_SEC", 86400)),
+    "min_free_ram_mb": max(0, _env_int("BUILD_MIN_FREE_RAM_MB", 350)),
+    "timeout": _env_int("BUILD_TIMEOUT_SEC", 180),
     "memory": os.environ.get("BUILD_MEMORY", "1g"),
     "cpus": os.environ.get("BUILD_CPUS", "1.5"),
-    "rate_device": _env_int("BUILD_RATE_PER_DEVICE_HOUR", 20),
-    "rate_ip": _env_int("BUILD_RATE_PER_IP_HOUR", 40),
+    "rate_device": _env_int("BUILD_RATE_PER_DEVICE_HOUR", 60),
+    "rate_ip": _env_int("BUILD_RATE_PER_IP_HOUR", 120),
     "data_dir": os.environ.get("BUILD_DATA_DIR", "/var/lib/3012-build"),
     "artifact_ttl": _env_int("BUILD_ARTIFACT_TTL_SEC", 900),
     "runtime": os.environ.get("BUILD_RUNTIME", "").strip(),
     "disk_max_percent": _env_int("BUILD_DISK_MAX_PERCENT", 90),
     "trust_cf_header": os.environ.get("BUILD_TRUST_CF_HEADER", "1") == "1",
     "max_log": 512 * 1024,
-    "max_artifact_bytes": 100 * 1024 * 1024,
+    "max_artifact_bytes": 250 * 1024 * 1024,
     "max_sync_total": _env_int("SYNC_MAX_CLIENTS", 128),
     "max_sync_per_ip": _env_int("SYNC_MAX_PER_IP", 12),
     "max_sync_per_room": _env_int("SYNC_MAX_PER_ROOM", 4),
@@ -71,11 +78,17 @@ CFG = {
 JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 DEVICE_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 FILE_RE = re.compile(r"^[A-Za-z0-9._+~-]{1,160}$")
+SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 ROOM_RE = re.compile(r"^[a-f0-9]{64}$")
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{4,64}$")
 ALLOWED_EXT = (".deb", ".dylib")
 SCHEMES = {"rootless", "rootful", "roothide"}
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+CAS_MAGIC = b"3012CAS1"
+CAS_CHUNK_MAX = 8 * 1024 * 1024
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+BLOCKED_ROOT_DIRS = {".git", ".theos", "packages"}
 
 
 def log(msg: str) -> None:
@@ -102,16 +115,197 @@ def remove_queue_file(job_id: str) -> None:
         pass
 
 
+def stage_dir(job_id: str) -> str:
+    return os.path.join(CFG["data_dir"], "stages", job_id)
+
+
+def workspace_dir(ws_key: str) -> str:
+    return os.path.join(CFG["data_dir"], "workspaces", ws_key)
+
+
+def sanitize_slug(raw: str) -> str:
+    cleaned = SLUG_RE.sub("-", (raw or "").strip()).strip("-.")
+    return (cleaned[:48] or "project")
+
+
+def validate_rel_path(raw_path: str):
+    if not isinstance(raw_path, str) or "\x00" in raw_path or "\\" in raw_path:
+        return None
+    if not raw_path or len(raw_path) > 240 or raw_path.startswith("/") or raw_path.endswith("/"):
+        return None
+    parts = raw_path.split("/")
+    if len(parts) > 12:
+        return None
+    for idx, part in enumerate(parts):
+        if not part or part in (".", "..", ".git", ".theos"):
+            return None
+        if idx == 0 and part in BLOCKED_ROOT_DIRS:
+            return None
+    return "/".join(parts)
+
+
+def host_available_ram_mb() -> int:
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    kb = int(line.split()[1])
+                    return max(0, kb // 1024)
+    except (OSError, ValueError, IndexError):
+        pass
+    return 4096
+
+
+def dir_size_bytes(path: str) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path, followlinks=False):
+        for fname in files:
+            fpath = os.path.join(root, fname)
+            try:
+                if not os.path.islink(fpath):
+                    total += os.path.getsize(fpath)
+            except OSError:
+                pass
+    return total
+
+
+class CASStore:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.last_used = {}
+
+    def root(self) -> str:
+        return os.path.join(CFG["data_dir"], "cas")
+
+    def tmp_dir(self) -> str:
+        return os.path.join(self.root(), "tmp")
+
+    def blob_path(self, sha: str) -> str:
+        return os.path.join(self.root(), sha[:2], sha)
+
+    def has_blob(self, sha: str) -> bool:
+        if sha == EMPTY_SHA256:
+            return True
+        if not SHA256_RE.match(sha):
+            return False
+        path = self.blob_path(sha)
+        if os.path.isfile(path) and not os.path.islink(path):
+            with self.lock:
+                self.last_used[sha] = time.time()
+            return True
+        return False
+
+    def missing_hashes(self, hashes: list) -> list:
+        missing = []
+        seen = set()
+        for sha in hashes:
+            if not isinstance(sha, str):
+                continue
+            low = sha.strip().lower()
+            if not SHA256_RE.match(low) or low in seen or low == EMPTY_SHA256:
+                continue
+            seen.add(low)
+            if not self.has_blob(low):
+                missing.append(low)
+        return missing
+
+    def commit_temp_blob(self, sha: str, tmp_path: str) -> None:
+        final_path = self.blob_path(sha)
+        os.makedirs(os.path.dirname(final_path), exist_ok=True)
+        if os.path.exists(final_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        else:
+            try:
+                os.chmod(tmp_path, 0o444)
+            except OSError:
+                pass
+            os.replace(tmp_path, final_path)
+        with self.lock:
+            self.last_used[sha] = time.time()
+
+    def prune(self, protected_hashes=None, target_bytes=None) -> int:
+        cas_root = self.root()
+        if not os.path.isdir(cas_root):
+            return 0
+        limit = CFG["cas_max_bytes"] if target_bytes is None else max(0, target_bytes)
+        protected = protected_hashes or set()
+        entries = []
+        total = 0
+        with self.lock:
+            lu_snapshot = dict(self.last_used)
+        for prefix in os.listdir(cas_root):
+            if len(prefix) != 2:
+                continue
+            pdir = os.path.join(cas_root, prefix)
+            if not os.path.isdir(pdir):
+                continue
+            for name in os.listdir(pdir):
+                if not SHA256_RE.match(name):
+                    continue
+                fpath = os.path.join(pdir, name)
+                try:
+                    st = os.stat(fpath, follow_symlinks=False)
+                except OSError:
+                    continue
+                total += st.st_size
+                last_seen = lu_snapshot.get(name, st.st_mtime)
+                entries.append((last_seen, st.st_size, name, fpath))
+        if total <= limit:
+            return 0
+        entries.sort(key=lambda item: item[0])
+        removed = 0
+        for _seen, size, sha, fpath in entries:
+            if total <= limit:
+                break
+            if sha in protected:
+                continue
+            try:
+                os.chmod(fpath, 0o644)
+            except OSError:
+                pass
+            try:
+                os.unlink(fpath)
+                total -= size
+                removed += 1
+                with self.lock:
+                    self.last_used.pop(sha, None)
+            except OSError:
+                pass
+        return removed
+
+
+CAS_STORE = CASStore()
+
+
 # --------------------------------------------------------------------------- Jobs
 
 
 class Job:
-    def __init__(self, job_id: str, device: str, ip: str, scheme: str, payload_path: str):
+    def __init__(
+        self,
+        job_id: str,
+        device: str,
+        ip: str,
+        scheme: str,
+        payload_path: str = "",
+        manifest=None,
+        clean_build: bool = False,
+        project_slug: str = "project",
+    ):
         self.id = job_id
         self.device = device
         self.ip = ip
         self.scheme = scheme
         self.payload_path = payload_path
+        self.manifest = manifest
+        self.clean_build = clean_build
+        self.project_slug = sanitize_slug(project_slug)
+        self.workspace_key = hashlib.sha256(
+            f"3012-ws-v2:{self.device}:{self.project_slug}:{self.scheme}".encode()
+        ).hexdigest()[:24]
         self.state = "queued"  # queued | running | succeeded | failed | cancelled
         self.log = bytearray()
         self.log_truncated = False
@@ -170,6 +364,8 @@ class BuildQueue:
         self.jobs = {}
         self.pending = deque()
         self.running = set()
+        self.active_ws_keys = set()
+        self.ws_locks = {}
         self.cond = threading.Condition()
         self.rate = defaultdict(deque)
 
@@ -185,15 +381,55 @@ class BuildQueue:
         window.append(now)
         return True
 
-    def submit(self, job_id: str, device: str, ip: str, scheme: str, payload_path: str):
+    def allow_upload_batch(self, ip: str) -> bool:
         with self.cond:
+            batch_limit = max(240, CFG["rate_ip"] * 8) if CFG["rate_ip"] > 0 else 0
+            return self._allow("cas:" + ip, batch_limit)
+
+    def workspace_lock(self, ws_key: str) -> threading.Lock:
+        with self.cond:
+            lk = self.ws_locks.get(ws_key)
+            if lk is None:
+                lk = threading.Lock()
+                self.ws_locks[ws_key] = lk
+            return lk
+
+    def submit(
+        self,
+        job_id: str,
+        device: str,
+        ip: str,
+        scheme: str,
+        payload_path: str = "",
+        manifest=None,
+        clean_build: bool = False,
+        project_slug: str = "project",
+    ):
+        with self.cond:
+            # Anti-spam: cancel any older queued (not yet started) job from the same device
+            replaced = [j for j in list(self.pending) if j.device == device]
+            for old in replaced:
+                self.pending.remove(old)
+                old.cancel_requested = True
+                old.state = "cancelled"
+                old.finished = time.time()
+                remove_queue_file(old.id)
             if len(self.pending) >= CFG["max_queue"]:
                 return None, ("queue_full", "Máy chủ đang quá tải. Vui lòng thử lại sau hoặc dùng phương thức build khác.")
             if not self._allow("d:" + device, CFG["rate_device"]):
                 return None, ("rate_limited", f"Thiết bị đã đạt giới hạn {CFG['rate_device']} lần build/giờ.")
             if not self._allow("i:" + ip, CFG["rate_ip"]):
                 return None, ("rate_limited", f"Mạng của bạn đã đạt giới hạn {CFG['rate_ip']} lần build/giờ.")
-            job = Job(job_id, device, ip, scheme, payload_path)
+            job = Job(
+                job_id,
+                device,
+                ip,
+                scheme,
+                payload_path=payload_path,
+                manifest=manifest,
+                clean_build=clean_build,
+                project_slug=project_slug,
+            )
             self.jobs[job.id] = job
             self.pending.append(job)
             self.cond.notify()
@@ -212,11 +448,42 @@ class BuildQueue:
                 self.cond.wait()
             job = self.pending.popleft()
             self.running.add(job.id)
+            if job.manifest is not None:
+                self.active_ws_keys.add(job.workspace_key)
             return job
 
     def done(self, job: Job) -> None:
         with self.cond:
             self.running.discard(job.id)
+            if job.manifest is not None:
+                still_queued = any(
+                    j.manifest is not None and j.workspace_key == job.workspace_key
+                    for j in self.pending
+                )
+                still_running = any(
+                    self.jobs.get(jid) and self.jobs[jid].manifest is not None and self.jobs[jid].workspace_key == job.workspace_key
+                    for jid in self.running
+                )
+                if not still_queued and not still_running:
+                    self.active_ws_keys.discard(job.workspace_key)
+
+    def running_count(self) -> int:
+        with self.cond:
+            return len(self.running)
+
+    def protected_state(self):
+        with self.cond:
+            active_ws = set(self.active_ws_keys)
+            for j in self.pending:
+                if j.manifest is not None:
+                    active_ws.add(j.workspace_key)
+            protected_blobs = set()
+            for j in list(self.pending) + [self.jobs[jid] for jid in self.running if jid in self.jobs]:
+                if j.manifest:
+                    for f in j.manifest.get("files", ()):
+                        for sha in f.get("chunks", ()):
+                            protected_blobs.add(sha)
+            return active_ws, protected_blobs
 
     def cancel(self, job: Job) -> None:
         should_kill = False
@@ -252,6 +519,40 @@ class BuildQueue:
 
 
 QUEUE = BuildQueue()
+
+
+def prune_storage(force: bool = False) -> None:
+    active_ws, protected_blobs = QUEUE.protected_state()
+    ws_root_base = os.path.join(CFG["data_dir"], "workspaces")
+    now = time.time()
+    if os.path.isdir(ws_root_base):
+        entries = []
+        total_ws = 0
+        for name in os.listdir(ws_root_base):
+            wpath = os.path.join(ws_root_base, name)
+            if not os.path.isdir(wpath):
+                continue
+            marker = os.path.join(wpath, ".last_used")
+            try:
+                mtime = os.path.getmtime(marker if os.path.exists(marker) else wpath)
+            except OSError:
+                mtime = now
+            sz = dir_size_bytes(wpath)
+            total_ws += sz
+            entries.append((mtime, sz, name, wpath))
+        entries.sort(key=lambda item: item[0])
+        limit_ws = CFG["workspaces_max_bytes"] // 2 if force else CFG["workspaces_max_bytes"]
+        for mtime, sz, name, wpath in entries:
+            if name in active_ws:
+                continue
+            is_expired = (now - mtime) > CFG["workspace_ttl"]
+            if not is_expired and total_ws <= limit_ws:
+                continue
+            shutil.rmtree(wpath, ignore_errors=True)
+            total_ws = max(0, total_ws - sz)
+
+    cas_target = CFG["cas_max_bytes"] // 2 if force else CFG["cas_max_bytes"]
+    CAS_STORE.prune(protected_hashes=protected_blobs, target_bytes=cas_target)
 
 
 # --------------------------------------------------------------------------- Zero-Knowledge WebSocket Sync Relay
@@ -447,25 +748,213 @@ def _ws_read_message(handler, client: SyncClient):
 # --------------------------------------------------------------------------- Worker
 
 
-def docker_command(job: Job):
+def safe_src_join(src_root: str, rel_path: str) -> str:
+    base = os.path.abspath(src_root)
+    joined = os.path.abspath(os.path.join(base, *rel_path.split("/")))
+    if not joined.startswith(base + os.sep):
+        raise ValueError("Path escapes workspace src root")
+    return joined
+
+
+def _container_ids():
+    euid = getattr(os, "getuid", lambda: 1000)()
+    egid = getattr(os, "getgid", lambda: 1000)()
+    if euid == 0:
+        return 1000, 1000, True
+    return euid, egid, False
+
+
+def _chown_tree(path: str, uid: int, gid: int) -> None:
+    chown_fn = getattr(os, "chown", None)
+    if chown_fn is None:
+        return
+    try:
+        chown_fn(path, uid, gid)
+    except OSError:
+        return
+    for root, dirs, files in os.walk(path, followlinks=False):
+        for d in dirs:
+            try:
+                chown_fn(os.path.join(root, d), uid, gid)
+            except OSError:
+                pass
+        for f in files:
+            try:
+                chown_fn(os.path.join(root, f), uid, gid)
+            except OSError:
+                pass
+
+
+def prepare_incremental_workspace(job: Job):
+    ws_root = os.path.abspath(workspace_dir(job.workspace_key))
+    src_root = os.path.join(ws_root, "src")
+    out_dir = os.path.join(ws_root, "out")
+    home_dir = os.path.join(ws_root, "home")
+    stg_root = os.path.abspath(stage_dir(job.id))
+    os.makedirs(ws_root, exist_ok=True)
+    os.makedirs(src_root, exist_ok=True)
+    shutil.rmtree(out_dir, ignore_errors=True)
+    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(home_dir, exist_ok=True)
+    os.makedirs(stg_root, exist_ok=True)
+
+    # Touch LRU marker
+    marker = os.path.join(ws_root, ".last_used")
+    with open(marker, "wb"):
+        pass
+    try:
+        os.utime(marker, None)
+    except OSError:
+        pass
+
+    manifest_file = os.path.join(ws_root, ".3012-manifest.json")
+    prev_files = {}
+    try:
+        with open(manifest_file, "r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                prev_files = loaded
+    except (OSError, json.JSONDecodeError):
+        prev_files = {}
+
+    entries = job.manifest.get("files", [])
+    new_paths = {f["path"] for f in entries}
+
+    # Remove files deleted since last build and clean empty parent dirs
+    for old_rel in list(prev_files.keys()):
+        if old_rel not in new_paths:
+            try:
+                old_abs = safe_src_join(src_root, old_rel)
+                if os.path.isdir(old_abs) and not os.path.islink(old_abs):
+                    shutil.rmtree(old_abs, ignore_errors=True)
+                elif os.path.lexists(old_abs):
+                    os.unlink(old_abs)
+                cur = os.path.dirname(old_abs)
+                src_abs = os.path.abspath(src_root)
+                while cur != src_abs and cur.startswith(src_abs + os.sep):
+                    try:
+                        os.rmdir(cur)
+                        cur = os.path.dirname(cur)
+                    except OSError:
+                        break
+            except (ValueError, OSError):
+                pass
+
+    new_meta_map = {}
+    updated_count = 0
+    kept_count = 0
+    sync_tmp = os.path.join(ws_root, ".sync_tmp")
+
+    for entry in entries:
+        rel = entry["path"]
+        size = entry["size"]
+        chunks = entry["chunks"]
+        is_exec = bool(entry.get("exec", False))
+        meta = {"size": size, "chunks": chunks, "exec": is_exec}
+        new_meta_map[rel] = meta
+
+        dst = safe_src_join(src_root, rel)
+        prev_meta = prev_files.get(rel)
+        if (
+            prev_meta == meta
+            and os.path.isfile(dst)
+            and not os.path.islink(dst)
+            and os.path.getsize(dst) == size
+        ):
+            kept_count += 1
+            continue
+
+        parent = os.path.dirname(dst)
+        # Ensure no regular file/symlink blocks parent directory creation
+        rel_parts = rel.split("/")[:-1]
+        walk_dir = src_root
+        for part in rel_parts:
+            walk_dir = os.path.join(walk_dir, part)
+            if os.path.lexists(walk_dir) and not os.path.isdir(walk_dir):
+                os.unlink(walk_dir)
+        os.makedirs(parent, exist_ok=True)
+        if os.path.isdir(dst) and not os.path.islink(dst):
+            shutil.rmtree(dst, ignore_errors=True)
+
+        with open(sync_tmp, "wb") as out_fh:
+            if size > 0 and chunks:
+                for sha in chunks:
+                    bpath = CAS_STORE.blob_path(sha)
+                    with open(bpath, "rb") as in_fh:
+                        shutil.copyfileobj(in_fh, out_fh, length=65536)
+        try:
+            os.chmod(sync_tmp, 0o755 if is_exec else 0o644)
+        except OSError:
+            pass
+        os.replace(sync_tmp, dst)
+        updated_count += 1
+
+    tmp_manifest = manifest_file + ".tmp"
+    with open(tmp_manifest, "w", encoding="utf-8") as fh:
+        json.dump(new_meta_map, fh, separators=(",", ":"))
+    os.replace(tmp_manifest, manifest_file)
+
+    uid, gid, need_chown = _container_ids()
+    if need_chown:
+        _chown_tree(ws_root, uid, gid)
+
+    passwd_file = None
+    if uid != 1000:
+        passwd_file = os.path.join(stg_root, "passwd")
+        with open(passwd_file, "w", encoding="utf-8") as fh:
+            fh.write(
+                "root:x:0:0:root:/root:/bin/bash\n"
+                f"builder:x:{uid}:{gid}:builder:/work/home:/bin/bash\n"
+                "nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n"
+            )
+        try:
+            os.chmod(passwd_file, 0o644)
+        except OSError:
+            pass
+
+    return ws_root, stg_root, uid, gid, passwd_file, updated_count, len(entries)
+
+
+def docker_command(job: Job, ws_root=None, uid: int = 1000, gid: int = 1000, passwd_file=None, make_jobs: int = 2):
     cmd = [
         "docker", "run", "--rm", "-i",
         "--name", job.container_name,
         "--hostname", "builder",
         "--network", "none",
         "--read-only",
-        "--tmpfs", "/work:rw,exec,nosuid,nodev,size=768m,uid=1000,gid=1000,mode=0700",
-        "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=256m,uid=1000,gid=1000,mode=1777",
-        "--user", "1000:1000",
+    ]
+    if ws_root is not None:
+        cmd += [
+            "-v", f"{ws_root}:/work:rw",
+            "--tmpfs", f"/tmp:rw,exec,nosuid,nodev,size=256m,uid={uid},gid={gid},mode=1777",
+            "--user", f"{uid}:{gid}",
+            "-e", "BUILD_MODE=incremental",
+            "-e", "CLEAN_BUILD=" + ("1" if job.clean_build else "0"),
+        ]
+        if passwd_file:
+            cmd += ["-v", f"{passwd_file}:/etc/passwd:ro"]
+    else:
+        cmd += [
+            "--tmpfs", "/work:rw,exec,nosuid,nodev,size=768m,uid=1000,gid=1000,mode=0700",
+            "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=256m,uid=1000,gid=1000,mode=1777",
+            "--user", "1000:1000",
+            "-e", "BUILD_MODE=zip",
+        ]
+    cmd += [
         "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges",
         "--pids-limit", "256",
         "--memory", CFG["memory"],
         "--memory-swap", CFG["memory"],
         "--cpus", CFG["cpus"],
+        "--cpu-shares", "256",
+        "--oom-score-adj", "500",
         "--ulimit", "nofile=1024:1024",
         "--ulimit", "fsize=268435456:268435456",
         "--log-driver", "none",
+        "-e", "USER=builder",
+        "-e", "LOGNAME=builder",
+        "-e", f"MAKE_JOBS={make_jobs}",
         "-e", "PACKAGE_SCHEME=" + job.scheme,
     ]
     if CFG["runtime"]:
@@ -474,120 +963,198 @@ def docker_command(job: Job):
     return cmd
 
 
-def run_job(job: Job) -> None:
-    job.state = "running"
-    job.started = time.time()
-    job.append_log(f"[3012] Bắt đầu build (scheme: {job.scheme}, giới hạn {CFG['timeout']}s, RAM {CFG['memory']}).\n".encode())
-
-    proc = subprocess.Popen(
-        docker_command(job),
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-    def feed():
-        try:
-            with open(job.payload_path, "rb") as src:
-                while True:
-                    chunk = src.read(65536)
-                    if not chunk:
-                        break
-                    proc.stdin.write(chunk)
-        except (BrokenPipeError, OSError):
-            pass
-        finally:
-            try:
-                proc.stdin.close()
-            except OSError:
-                pass
-            remove_queue_file(job.id)
-
-    def pump_log():
-        while True:
-            chunk = proc.stderr.read(8192)
-            if not chunk:
-                break
-            job.append_log(chunk)
-
-    out = bytearray()
-
-    def pump_out():
-        while True:
-            chunk = proc.stdout.read(65536)
-            if not chunk:
-                break
-            if len(out) < CFG["max_artifact_bytes"]:
-                out.extend(chunk)
-
-    threads = [threading.Thread(target=t, daemon=True) for t in (feed, pump_log, pump_out)]
-    for t in threads:
-        t.start()
-
-    timed_out = False
-    try:
-        proc.wait(timeout=CFG["timeout"])
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        subprocess.run(["docker", "kill", job.container_name], capture_output=True, timeout=20)
-        proc.wait(timeout=30)
-    for t in threads:
-        t.join(timeout=10)
-
-    remove_queue_file(job.id)
-    job.exit_code = proc.returncode
-    files = extract_artifacts(job, bytes(out))
-    job.files = files
-
-    if job.cancel_requested:
-        job.state = "cancelled"
-        job.append_log("\n[3012] Build đã bị huỷ.\n".encode())
-    elif timed_out:
-        job.state = "failed"
-        job.error = "timeout"
-        job.append_log(f"\n[3012] Quá thời gian {CFG['timeout']} giây — build đã bị dừng.\n".encode())
-    elif proc.returncode == 0 and files:
-        job.state = "succeeded"
-        job.append_log(("\n[3012] Build thành công: " + ", ".join(f["name"] for f in files) + "\n").encode())
-    else:
-        job.state = "failed"
-        job.error = "build_failed" if proc.returncode not in (125, 126, 127) else "runner_error"
-        if proc.returncode == 137:
-            job.append_log(f"\n[3012] Build bị dừng do vượt giới hạn RAM ({CFG['memory']}).\n".encode())
-        job.append_log(f"\n[3012] Build thất bại (exit code {proc.returncode}).\n".encode())
-    job.finished = time.time()
-    log(
-        f"job={job.id[:8]} device={short_hash(job.device)} state={job.state} "
-        f"exit={job.exit_code} secs={job.finished - job.started:.1f}"
-    )
-
-
-def extract_artifacts(job: Job, data: bytes):
-    if not data:
-        return []
+def extract_artifacts_stream(job: Job, stream):
     target = artifact_dir(job.id)
     os.makedirs(target, exist_ok=True)
     files = []
+    total_written = 0
     try:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
+        with tarfile.open(fileobj=stream, mode="r|") as tar:
             for member in tar:
                 if not member.isfile():
                     continue
                 name = os.path.basename(member.name)
                 if not FILE_RE.match(name) or not name.endswith(ALLOWED_EXT):
                     continue
-                if member.size > CFG["max_artifact_bytes"]:
+                if member.size < 0 or member.size > CFG["max_artifact_bytes"] or total_written + member.size > CFG["max_artifact_bytes"]:
                     continue
                 src = tar.extractfile(member)
                 if src is None:
                     continue
                 path = os.path.join(target, name)
+                written = 0
+                oversize = False
                 with open(path, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
-                files.append({"name": name, "size": member.size})
-    except tarfile.TarError:
-        job.append_log("[3012] Không đọc được kết quả build.\n".encode())
+                    while True:
+                        chunk = src.read(65536)
+                        if not chunk:
+                            break
+                        written += len(chunk)
+                        if written > CFG["max_artifact_bytes"] or total_written + written > CFG["max_artifact_bytes"]:
+                            oversize = True
+                            break
+                        dst.write(chunk)
+                if oversize:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+                    continue
+                total_written += written
+                files.append({"name": name, "size": written})
+    except (tarfile.TarError, EOFError, OSError):
+        pass
     return files
+
+
+def run_job(job: Job) -> None:
+    job.state = "running"
+    job.started = time.time()
+
+    # Host RAM admission guard to prevent OOM when running concurrent builds
+    waited = 0
+    while (
+        not job.cancel_requested
+        and waited < 20
+        and CFG["min_free_ram_mb"] > 0
+        and QUEUE.running_count() > 1
+        and host_available_ram_mb() < CFG["min_free_ram_mb"]
+    ):
+        if waited == 0:
+            job.append_log(b"[3012] May chu dang ban - cho RAM trong de chong qua tai...\n")
+        time.sleep(2)
+        waited += 1
+
+    if job.cancel_requested:
+        job.state = "cancelled"
+        job.finished = time.time()
+        remove_queue_file(job.id)
+        return
+
+    avail_ram = host_available_ram_mb()
+    make_jobs = 1 if avail_ram < 450 else 2
+
+    is_cas = job.manifest is not None
+    ws_lock = QUEUE.workspace_lock(job.workspace_key) if is_cas else None
+    stg_root = None
+
+    try:
+        if ws_lock is not None:
+            ws_lock.acquire()
+            ws_root, stg_root, uid, gid, passwd_file, updated_cnt, total_cnt = prepare_incremental_workspace(job)
+            job.append_log(
+                f"[3012] Bắt đầu CAS delta build ({job.project_slug} • {job.scheme} • cập nhật {updated_cnt}/{total_cnt} file, giới hạn {CFG['timeout']}s).\n".encode()
+            )
+            dcmd = docker_command(
+                job,
+                ws_root=ws_root,
+                uid=uid,
+                gid=gid,
+                passwd_file=passwd_file,
+                make_jobs=make_jobs,
+            )
+        else:
+            job.append_log(
+                f"[3012] Bắt đầu build (scheme: {job.scheme}, giới hạn {CFG['timeout']}s, RAM {CFG['memory']}).\n".encode()
+            )
+            dcmd = docker_command(job, make_jobs=make_jobs)
+
+        proc = subprocess.Popen(
+            dcmd,
+            stdin=subprocess.PIPE if not is_cas else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        def feed():
+            try:
+                with open(job.payload_path, "rb") as src:
+                    while True:
+                        chunk = src.read(65536)
+                        if not chunk:
+                            break
+                        proc.stdin.write(chunk)
+            except (BrokenPipeError, OSError):
+                pass
+            finally:
+                try:
+                    if proc.stdin:
+                        proc.stdin.close()
+                except OSError:
+                    pass
+                remove_queue_file(job.id)
+
+        def pump_log():
+            try:
+                while True:
+                    chunk = proc.stderr.read(8192)
+                    if not chunk:
+                        break
+                    job.append_log(chunk)
+            except OSError:
+                pass
+
+        extracted_files = []
+
+        def pump_out():
+            nonlocal extracted_files
+            try:
+                extracted_files = extract_artifacts_stream(job, proc.stdout)
+                while proc.stdout.read(65536):
+                    pass
+            except OSError:
+                pass
+
+        threads = [
+            threading.Thread(target=pump_log, daemon=True),
+            threading.Thread(target=pump_out, daemon=True),
+        ]
+        if not is_cas:
+            threads.append(threading.Thread(target=feed, daemon=True))
+        for t in threads:
+            t.start()
+
+        timed_out = False
+        try:
+            proc.wait(timeout=CFG["timeout"])
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            subprocess.run(["docker", "kill", job.container_name], capture_output=True, timeout=20)
+            proc.wait(timeout=30)
+        for t in threads:
+            t.join(timeout=10)
+
+        remove_queue_file(job.id)
+        job.exit_code = proc.returncode
+        files = extracted_files
+        job.files = files
+
+        if job.cancel_requested:
+            job.state = "cancelled"
+            job.append_log("\n[3012] Build đã bị huỷ.\n".encode())
+        elif timed_out:
+            job.state = "failed"
+            job.error = "timeout"
+            job.append_log(f"\n[3012] Quá thời gian {CFG['timeout']} giây — build đã bị dừng.\n".encode())
+        elif proc.returncode == 0 and files:
+            job.state = "succeeded"
+            job.append_log(("\n[3012] Build thành công: " + ", ".join(f["name"] for f in files) + "\n").encode())
+        else:
+            job.state = "failed"
+            job.error = "build_failed" if proc.returncode not in (125, 126, 127) else "runner_error"
+            if proc.returncode == 137:
+                job.append_log(f"\n[3012] Build bị dừng do vượt giới hạn RAM ({CFG['memory']}).\n".encode())
+            job.append_log(f"\n[3012] Build thất bại (exit code {proc.returncode}).\n".encode())
+    finally:
+        if ws_lock is not None:
+            ws_lock.release()
+        if stg_root:
+            shutil.rmtree(stg_root, ignore_errors=True)
+        job.finished = time.time()
+        log(
+            f"job={job.id[:8]} device={short_hash(job.device)} mode={'cas' if is_cas else 'zip'} "
+            f"state={job.state} exit={job.exit_code} secs={(job.finished - job.started):.1f}"
+        )
 
 
 def worker_loop() -> None:
@@ -616,6 +1183,7 @@ def janitor_loop() -> None:
         time.sleep(60)
         try:
             QUEUE.cleanup()
+            prune_storage(force=False)
         except Exception as exc:
             log(f"janitor error: {exc!r}")
 
@@ -1377,7 +1945,7 @@ class Handler(BaseHTTPRequestHandler):
       <div class="stat"><span>Sync Rooms</span><b>{sync_stats["syncRooms"]}</b></div>
       <div class="stat"><span>Clients</span><b>{sync_stats["syncClients"]}</b></div>
     </div>
-    <p>Endpoints: <code>/v1/health</code> • <code>POST /v1/builds</code> • <code>WS /v1/sync</code> • <code>GET /sync.mjs</code></p>
+    <p>Endpoints: <code>/v1/health</code> • <code>POST /v1/builds/cas</code> • <code>POST /v1/builds</code> • <code>WS /v1/sync</code></p>
   </div>
 </body>
 </html>"""
@@ -1386,10 +1954,13 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "version": VERSION,
                 "syncRelay": True,
+                "casDelta": True,
                 **build_stats,
                 **sync_stats,
                 "limits": {
                     "maxUploadMB": CFG["max_upload"] // (1024 * 1024),
+                    "maxProjectMB": CFG["max_project_mb"],
+                    "casBatchMB": CFG["cas_batch_bytes"] // (1024 * 1024),
                     "timeoutSec": CFG["timeout"],
                     "perDeviceHour": CFG["rate_device"],
                 },
@@ -1400,10 +1971,13 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "version": VERSION,
                 "syncRelay": True,
+                "casDelta": True,
                 **build_stats,
                 **sync_stats,
                 "limits": {
                     "maxUploadMB": CFG["max_upload"] // (1024 * 1024),
+                    "maxProjectMB": CFG["max_project_mb"],
+                    "casBatchMB": CFG["cas_batch_bytes"] // (1024 * 1024),
                     "timeoutSec": CFG["timeout"],
                     "perDeviceHour": CFG["rate_device"],
                 },
@@ -1452,9 +2026,289 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return self.error(404, "not_found", "Endpoint không tồn tại.")
 
+    def read_limited_body(self, max_bytes: int):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if length <= 0:
+            self.close_connection = True
+            self.error(411, "length_required", "Thiếu Content-Length.")
+            return None
+        if length > max_bytes:
+            self.close_connection = True
+            self.error(413, "too_large", f"Payload vượt quá giới hạn {max(1, max_bytes // (1024 * 1024))} MB.")
+            return None
+        buf = bytearray()
+        remaining = length
+        while remaining > 0:
+            chunk = self.rfile.read(min(65536, remaining))
+            if not chunk:
+                break
+            buf.extend(chunk)
+            remaining -= len(chunk)
+        if remaining != 0:
+            self.close_connection = True
+            self.error(400, "bad_stream", "Dữ liệu tải lên bị ngắt quãng.")
+            return None
+        return bytes(buf)
+
+    def _read_exact_from_payload(self, n: int, state: dict):
+        if n < 0 or n > state["remaining"]:
+            return None
+        buf = bytearray()
+        left = n
+        while left > 0:
+            chunk = self.rfile.read(min(65536, left))
+            if not chunk:
+                return None
+            buf.extend(chunk)
+            left -= len(chunk)
+            state["remaining"] -= len(chunk)
+        return bytes(buf)
+
+    def handle_cas_check(self, device: str):
+        raw = self.read_limited_body(2 * 1024 * 1024)
+        if raw is None:
+            return None
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return self.error(400, "bad_json", "JSON không hợp lệ.")
+        hashes = payload.get("hashes") if isinstance(payload, dict) else None
+        if not isinstance(hashes, list) or len(hashes) > 20000:
+            return self.error(400, "bad_hashes", "Danh sách hashes không hợp lệ (tối đa 20000).")
+        missing = CAS_STORE.missing_hashes(hashes)
+        return self.send_json(
+            200,
+            {
+                "ok": True,
+                "missing": missing,
+                "chunkMaxBytes": CAS_CHUNK_MAX,
+                "batchMaxBytes": CFG["cas_batch_bytes"],
+                "maxProjectMB": CFG["max_project_mb"],
+            },
+        )
+
+    def handle_cas_upload(self, device: str):
+        if not QUEUE.allow_upload_batch(self.client_ip()):
+            self.close_connection = True
+            return self.error(429, "rate_limited", "Tốc độ upload chunk tạm thời vượt giới hạn. Vui lòng thử lại sau.")
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        max_body = CFG["cas_batch_bytes"] + 262144
+        if length <= 12:
+            self.close_connection = True
+            return self.error(400, "bad_stream", "Payload CAS quá ngắn.")
+        if length > max_body:
+            self.close_connection = True
+            return self.error(413, "too_large", f"Batch vượt quá giới hạn {CFG['cas_batch_bytes'] // (1024 * 1024)} MB.")
+        if disk_usage_percent() >= CFG["disk_max_percent"]:
+            prune_storage(force=True)
+            if disk_usage_percent() >= CFG["disk_max_percent"]:
+                self.close_connection = True
+                return self.error(503, "disk_full", "Máy chủ tạm ngừng nhận dữ liệu (ổ đĩa gần đầy).")
+
+        os.makedirs(CAS_STORE.tmp_dir(), exist_ok=True)
+        state = {"remaining": length}
+        header = self._read_exact_from_payload(12, state)
+        if header is None or header[:8] != CAS_MAGIC:
+            self.close_connection = True
+            return self.error(400, "bad_magic", "Sai định dạng luồng CAS.")
+        (count,) = struct.unpack("!I", header[8:12])
+        if count < 1 or count > 2500:
+            self.close_connection = True
+            return self.error(400, "bad_count", "Số lượng chunk trong batch không hợp lệ.")
+
+        total_bytes = 0
+        for _ in range(count):
+            meta = self._read_exact_from_payload(36, state)
+            if meta is None:
+                self.close_connection = True
+                return self.error(400, "bad_stream", "Thiếu header chunk trong luồng CAS.")
+            digest_raw = meta[:32]
+            (blob_len,) = struct.unpack("!I", meta[32:36])
+            if blob_len > CAS_CHUNK_MAX or blob_len > state["remaining"]:
+                self.close_connection = True
+                return self.error(400, "bad_chunk_size", "Kích thước chunk vượt giới hạn.")
+            sha_hex = digest_raw.hex()
+            tmp_path = os.path.join(CAS_STORE.tmp_dir(), f"{uuid.uuid4().hex}.part")
+            hasher = hashlib.sha256()
+            left = blob_len
+            aborted = False
+            try:
+                with open(tmp_path, "wb") as dst:
+                    while left > 0:
+                        part = self.rfile.read(min(65536, left))
+                        if not part:
+                            aborted = True
+                            break
+                        state["remaining"] -= len(part)
+                        hasher.update(part)
+                        dst.write(part)
+                        left -= len(part)
+                if aborted or hasher.digest() != digest_raw:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    self.close_connection = True
+                    return self.error(400, "bad_hash" if not aborted else "bad_stream", "Mã băm SHA-256 của chunk không khớp.")
+                if sha_hex != EMPTY_SHA256:
+                    CAS_STORE.commit_temp_blob(sha_hex, tmp_path)
+                else:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                total_bytes += blob_len
+            except OSError:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                self.close_connection = True
+                return self.error(500, "io_error", "Không thể ghi chunk lên ổ đĩa máy chủ.")
+
+        if state["remaining"] != 0:
+            self.close_connection = True
+            return self.error(400, "bad_stream", "Dữ liệu thừa cuối luồng CAS.")
+
+        CAS_STORE.prune()
+        return self.send_json(200, {"ok": True, "stored": count, "bytes": total_bytes})
+
+    def handle_cas_build(self, device: str):
+        raw = self.read_limited_body(4 * 1024 * 1024)
+        if raw is None:
+            return None
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return self.error(400, "bad_json", "Manifest JSON không hợp lệ.")
+        if not isinstance(payload, dict):
+            return self.error(400, "bad_manifest", "Manifest phải là JSON object.")
+
+        scheme = str(payload.get("scheme") or self.headers.get("X-Package-Scheme", "rootless")).strip().lower()
+        if scheme not in SCHEMES:
+            return self.error(400, "bad_scheme", "X-Package-Scheme phải là rootless, rootful hoặc roothide.")
+
+        clean_hdr = self.headers.get("X-Clean-Build", "").strip() == "1"
+        clean_build = bool(payload.get("clean", clean_hdr))
+        project_slug = sanitize_slug(str(payload.get("projectName") or "project"))
+        files_raw = payload.get("files")
+        if not isinstance(files_raw, list) or not files_raw or len(files_raw) > CFG["max_project_files"]:
+            return self.error(400, "bad_files", f"Dự án phải có từ 1 đến {CFG['max_project_files']} file.")
+
+        max_proj_bytes = CFG["max_project_mb"] * 1024 * 1024
+        seen_paths = set()
+        normalized_files = []
+        total_size = 0
+        referenced_hashes = []
+
+        for item in files_raw:
+            if not isinstance(item, dict):
+                return self.error(400, "bad_manifest", "Mục file không hợp lệ.")
+            rel = validate_rel_path(item.get("path"))
+            if not rel or rel in seen_paths:
+                return self.error(400, "bad_path", "Đường dẫn file không hợp lệ hoặc bị trùng.")
+            seen_paths.add(rel)
+
+            fsize = item.get("size")
+            if not isinstance(fsize, int) or isinstance(fsize, bool) or fsize < 0 or fsize > max_proj_bytes:
+                return self.error(400, "bad_size", f"Kích thước file {rel} không hợp lệ.")
+            chunks_raw = item.get("chunks")
+            if not isinstance(chunks_raw, list) or len(chunks_raw) > 64:
+                return self.error(400, "bad_chunks", f"Danh sách chunks của {rel} không hợp lệ.")
+
+            if fsize == 0:
+                if chunks_raw and not (len(chunks_raw) == 1 and str(chunks_raw[0]).lower() == EMPTY_SHA256):
+                    return self.error(400, "bad_chunks", f"File rỗng {rel} không khớp chunks.")
+                norm_chunks = []
+            else:
+                if not chunks_raw:
+                    return self.error(400, "bad_chunks", f"File {rel} thiếu chunk hash.")
+                norm_chunks = []
+                for c in chunks_raw:
+                    if not isinstance(c, str):
+                        return self.error(400, "bad_chunks", f"Hash chunk không hợp lệ trong {rel}.")
+                    low = c.strip().lower()
+                    if not SHA256_RE.match(low):
+                        return self.error(400, "bad_chunks", f"Hash chunk không hợp lệ trong {rel}.")
+                    norm_chunks.append(low)
+                    if low != EMPTY_SHA256:
+                        referenced_hashes.append(low)
+
+            total_size += fsize
+            if total_size > max_proj_bytes:
+                self.close_connection = True
+                return self.error(413, "too_large", f"Tổng dung lượng dự án vượt quá {CFG['max_project_mb']} MB.")
+
+            normalized_files.append(
+                {
+                    "path": rel,
+                    "size": fsize,
+                    "chunks": norm_chunks,
+                    "exec": bool(item.get("exec", False)),
+                }
+            )
+
+        missing = CAS_STORE.missing_hashes(referenced_hashes)
+        if missing:
+            return self.send_json(
+                409,
+                {
+                    "error": "missing_blobs",
+                    "missing": missing,
+                    "message": f"Thiếu {len(missing)} khối dữ liệu trên máy chủ, cần tải lên bổ sung.",
+                },
+            )
+
+        # Verify assembled blob sizes match declared file sizes
+        for entry in normalized_files:
+            if entry["size"] > 0:
+                actual = 0
+                for sha in entry["chunks"]:
+                    if sha == EMPTY_SHA256:
+                        continue
+                    try:
+                        actual += os.path.getsize(CAS_STORE.blob_path(sha))
+                    except OSError:
+                        return self.send_json(
+                            409,
+                            {"error": "missing_blobs", "missing": [sha], "message": "Khối dữ liệu vừa bị dọn, hãy tải lại."},
+                        )
+                if actual != entry["size"]:
+                    return self.error(400, "size_mismatch", f"Kích thước thực tế của {entry['path']} không khớp manifest.")
+
+        if disk_usage_percent() >= CFG["disk_max_percent"]:
+            prune_storage(force=True)
+            if disk_usage_percent() >= CFG["disk_max_percent"]:
+                self.close_connection = True
+                return self.error(503, "disk_full", "Máy chủ tạm ngừng nhận build (ổ đĩa gần đầy).")
+
+        job_id = uuid.uuid4().hex
+        manifest_obj = {"projectName": project_slug, "files": normalized_files}
+        job, err = QUEUE.submit(
+            job_id,
+            device,
+            self.client_ip(),
+            scheme,
+            payload_path="",
+            manifest=manifest_obj,
+            clean_build=clean_build,
+            project_slug=project_slug,
+        )
+        if err:
+            code, message = err
+            return self.error(503 if code == "queue_full" else 429, code, message)
+        log(f"job={job.id[:8]} device={short_hash(device)} queued_cas files={len(normalized_files)} size={total_size}")
+        return self.send_json(202, self.job_view(job, 0))
+
     def do_POST(self):
         parts = [p for p in urlparse(self.path).path.split("/") if p]
-        if parts != ["v1", "builds"]:
+        if parts not in (["v1", "builds"], ["v1", "builds", "cas"], ["v1", "cas", "check"], ["v1", "cas", "upload"]):
             self.close_connection = True
             return self.error(404, "not_found", "Endpoint không tồn tại.")
 
@@ -1462,6 +2316,14 @@ class Handler(BaseHTTPRequestHandler):
         if not DEVICE_RE.match(device):
             self.close_connection = True
             return self.error(400, "bad_device", "Thiếu hoặc sai X-Device-ID.")
+
+        if parts == ["v1", "cas", "check"]:
+            return self.handle_cas_check(device)
+        if parts == ["v1", "cas", "upload"]:
+            return self.handle_cas_upload(device)
+        if parts == ["v1", "builds", "cas"]:
+            return self.handle_cas_build(device)
+
         scheme = self.headers.get("X-Package-Scheme", "rootless").strip().lower()
         if scheme not in SCHEMES:
             self.close_connection = True
@@ -1477,8 +2339,10 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             return self.error(413, "too_large", f"Project vượt quá {CFG['max_upload'] // (1024 * 1024)} MB.")
         if disk_usage_percent() >= CFG["disk_max_percent"]:
-            self.close_connection = True
-            return self.error(503, "disk_full", "Máy chủ tạm ngừng nhận build (ổ đĩa gần đầy).")
+            prune_storage(force=True)
+            if disk_usage_percent() >= CFG["disk_max_percent"]:
+                self.close_connection = True
+                return self.error(503, "disk_full", "Máy chủ tạm ngừng nhận build (ổ đĩa gần đầy).")
 
         job_id = uuid.uuid4().hex
         qpath = queue_file(job_id)
@@ -1526,15 +2390,24 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    os.makedirs(os.path.join(CFG["data_dir"], "artifacts"), exist_ok=True)
-    os.makedirs(os.path.join(CFG["data_dir"], "queue"), exist_ok=True)
+    for sub in ("artifacts", "queue", "cas", os.path.join("cas", "tmp"), "workspaces", "stages"):
+        os.makedirs(os.path.join(CFG["data_dir"], sub), exist_ok=True)
     for entry in os.listdir(os.path.join(CFG["data_dir"], "artifacts")):
         shutil.rmtree(artifact_dir(entry), ignore_errors=True)
+    for entry in os.listdir(os.path.join(CFG["data_dir"], "stages")):
+        shutil.rmtree(stage_dir(entry), ignore_errors=True)
+    for entry in os.listdir(os.path.join(CFG["data_dir"], "cas", "tmp")):
+        try:
+            os.unlink(os.path.join(CFG["data_dir"], "cas", "tmp", entry))
+        except OSError:
+            pass
     for entry in os.listdir(os.path.join(CFG["data_dir"], "queue")):
         try:
             os.unlink(os.path.join(CFG["data_dir"], "queue", entry))
         except OSError:
             pass
+
+    prune_storage(force=False)
 
     try:
         stray = subprocess.run(["docker", "ps", "-q", "--filter", "name=b3012-"], capture_output=True, text=True, timeout=5)
