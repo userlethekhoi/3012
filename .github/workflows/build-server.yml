@@ -225,6 +225,50 @@ jobs:
           assert "Compiling Tweak.x" in log2, log2
           assert "Compiling Helper.c" not in log2, "Expected Helper.c object to be reused from .theos cache!\n" + log2
           print("CAS incremental delta + .theos cache verified OK!")
+
+          # Build 3: Broken macOS Makefile (hardcoded /Users/0211/theos, CRLF, missing TARGET, missing control)
+          broken_makefile = (
+              "export THEOS=/Users/0211/theos\r\n"
+              "ARCHS = arm64\r\n"
+              "\r\n"
+              "DEBUG = 0\r\n"
+              "FINALPACKAGE = 1\r\n"
+              "FOR_RELEASE = 1\r\n"
+              "\r\n"
+              "include $(THEOS)/makefiles/common.mk\r\n"
+              "\r\n"
+              "TWEAK_NAME = Alert\r\n"
+              "$(TWEAK_NAME)_FRAMEWORKS = UIKit\r\n"
+              "$(TWEAK_NAME)_CCFLAGS = -std=c++11 -fno-rtti -fno-exceptions -DNDEBUG\r\n"
+              "$(TWEAK_NAME)_CFLAGS = -fobjc-arc\r\n"
+              "$(TWEAK_NAME)_FILES = Alert.mm\r\n"
+              "\r\n"
+              "include $(THEOS_MAKE_PATH)/tweak.mk\r\n"
+          ).encode("utf-8")
+          alert_mm = (
+              "#import <UIKit/UIKit.h>\n"
+              "__attribute__((constructor)) static void AlertInit(void) {\n"
+              "    Class cls = [UIAlertController class];\n"
+              "    (void)cls;\n"
+              "}\n"
+          ).encode("utf-8")
+          files_v3 = {"Makefile": broken_makefile, "Alert.mm": alert_mm}
+          hashes3 = {p: hashlib.sha256(b).hexdigest() for p, b in files_v3.items()}
+          chk3 = post_json("/v1/cas/check", {"hashes": list(hashes3.values())})
+          if chk3["missing"]:
+              up3 = upload_chunks([(hashes3[p], files_v3[p]) for p in files_v3 if hashes3[p] in set(chk3["missing"])])
+              assert up3["stored"] >= 1, up3
+          job3 = post_json("/v1/builds/cas", {
+              "projectName": "AlertBrokenMakefile",
+              "scheme": "rootless",
+              "clean": False,
+              "files": [{"path": p, "size": len(b), "chunks": [hashes3[p]], "exec": False} for p, b in files_v3.items()],
+          })
+          st3, log3 = poll_job(job3["id"])
+          assert st3["state"] == "succeeded", (st3, log3)
+          names3 = [f["name"] for f in st3["files"]]
+          assert any(n.endswith(".deb") for n in names3) and "Alert.dylib" in names3, (names3, log3)
+          print("Broken macOS Makefile auto-heal verified OK:", names3)
           PY
 
       - name: Verify /sync.mjs & Zero-Knowledge WebSocket Relay (/v1/sync)

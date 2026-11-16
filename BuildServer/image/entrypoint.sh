@@ -43,6 +43,81 @@ if [ "${BUILD_MODE:-zip}" != "incremental" ] || [ "${CLEAN_BUILD:-0}" = "1" ]; t
     rm -rf .theos
 fi
 
+# Locate active Makefile and normalize non-destructively (preserving mtime unless broken)
+mf_file=""
+if [ -f GNUmakefile ]; then
+    mf_file="GNUmakefile"
+elif [ -f Makefile ]; then
+    mf_file="Makefile"
+else
+    mf_file=$(find . -maxdepth 1 -type f \( -iname Makefile -o -iname GNUmakefile \) | head -n 1)
+fi
+
+strip_cr_if_needed() {
+    local f="$1"
+    if [ -n "$f" ] && [ -f "$f" ] && grep -q $'\r' "$f" 2>/dev/null; then
+        sed -i 's/\r$//' "$f"
+    fi
+}
+
+strip_cr_if_needed "$mf_file"
+while IFS= read -r -d '' mkf; do
+    strip_cr_if_needed "$mkf"
+done < <(find . -maxdepth 2 -type f -name '*.mk' -print0 2>/dev/null)
+for cf in control layout/DEBIAN/control layout/DEBIAN/preinst layout/DEBIAN/postinst layout/DEBIAN/prerm layout/DEBIAN/postrm; do
+    strip_cr_if_needed "$cf"
+done
+for cf in control layout/DEBIAN/control; do
+    if [ -f "$cf" ] && [ -s "$cf" ] && [ "$(tail -c 1 "$cf" | wc -l)" -eq 0 ]; then
+        printf '\n' >> "$cf"
+    fi
+done
+
+if [ -n "$mf_file" ] && [ -f "$mf_file" ]; then
+    if grep -qE '^[^#]*(include[[:space:]].*(/Users/[^/[:space:]]+/theos|/var/theos|~/theos)|^[[:space:]]*override[[:space:]]+THEOS[[:space:]:+?]*=)' "$mf_file" 2>/dev/null; then
+        sed -i -E 's#(/Users/[^/[:space:]]+/theos|/var/theos|~/theos)#$(THEOS)#g; s/^([[:space:]]*)override([[:space:]]+THEOS)/\1\2/' "$mf_file"
+    fi
+fi
+
+scheme="${PACKAGE_SCHEME:-rootless}"
+min_ios="15.0"
+if [ "$scheme" = "rootful" ]; then
+    min_ios="14.0"
+fi
+
+if [ -n "$mf_file" ] && [ -f "$mf_file" ]; then
+    if ! grep -v '^[[:space:]]*#' "$mf_file" | grep -qE '^[[:space:]]*(export[[:space:]]+|override[[:space:]]+)?TARGET[[:space:]:+?]*='; then
+        export TARGET="iphone:clang:latest:${min_ios}"
+        say "Makefile chưa khai báo TARGET — tự động dùng TARGET=$TARGET"
+    fi
+fi
+
+auto_control=0
+if [ ! -f control ] && [ ! -f layout/DEBIAN/control ]; then
+    tweak_name=""
+    if [ -n "$mf_file" ] && [ -f "$mf_file" ]; then
+        tweak_name=$(grep -E '^[[:space:]]*(TWEAK_NAME|LIBRARY_NAME|APPLICATION_NAME|TOOL_NAME)[[:space:]:+?]*=' "$mf_file" 2>/dev/null | head -n 1 | cut -d= -f2- | sed 's/#.*//' | awk '{print $1}' || true)
+    fi
+    tweak_name="${tweak_name:-Tweak3012}"
+    safe_display=$(printf '%s' "$tweak_name" | tr -cd 'A-Za-z0-9._+-')
+    safe_display="${safe_display:-Tweak3012}"
+    pkg_slug=$(printf '%s' "$safe_display" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9.-' | sed 's/^[^a-z0-9]*//; s/[^a-z0-9]*$//')
+    pkg_slug="${pkg_slug:-tweak3012}"
+    cat > control <<EOF
+Package: com.app3012.auto.${pkg_slug}
+Name: ${safe_display}
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Built with 3012 Build Server
+Maintainer: 3012
+Author: 3012
+Section: Tweaks
+Depends: mobilesubstrate
+EOF
+    auto_control=1
+    say "Dự án chưa có file control — tự động tạo cấu hình đóng gói mặc định (${safe_display})."
+fi
+
 proj_rel="${project_dir#/work/src}"
 proj_rel="${proj_rel#/}"
 [ -z "$proj_rel" ] && proj_rel="."
@@ -56,41 +131,53 @@ case "$jobs_n" in
     *) jobs_n=2 ;;
 esac
 
-args=("-j${jobs_n}" package FINALPACKAGE=1)
-case "${PACKAGE_SCHEME:-rootless}" in
+args=("-j${jobs_n}" package FINALPACKAGE=1 "THEOS=$THEOS")
+case "$scheme" in
     rootless) args+=(THEOS_PACKAGE_SCHEME=rootless) ;;
     roothide) args+=(THEOS_PACKAGE_SCHEME=roothide) ;;
     *) ;;
 esac
 
-if [ "${BUILD_MODE:-zip}" = "incremental" ] && [ "${CLEAN_BUILD:-0}" != "1" ]; then
-    rm -f /tmp/make.log
-    make "${args[@]}" 2>&1 | tee /tmp/make.log >&2
-    code=${PIPESTATUS[0]}
-    if [ "$code" -ne 0 ] && grep -qE "No rule to make target|missing separator" /tmp/make.log 2>/dev/null && grep -q "\.theos/" /tmp/make.log 2>/dev/null; then
+rm -f /tmp/make.log
+make "${args[@]}" 2>&1 | tee /tmp/make.log >&2
+code=${PIPESTATUS[0]}
+
+if [ "$code" -ne 0 ] && [ "${BUILD_MODE:-zip}" = "incremental" ] && [ "${CLEAN_BUILD:-0}" != "1" ]; then
+    if grep -qE "No rule to make target|missing separator" /tmp/make.log 2>/dev/null && grep -q "\.theos/" /tmp/make.log 2>/dev/null; then
         say "Phát hiện cache .theos lệch đường dẫn header cũ — tự động làm mới cache và build lại..."
         rm -rf .theos packages
-        make "${args[@]}"
-        code=$?
+        rm -f /tmp/make.log
+        make "${args[@]}" 2>&1 | tee /tmp/make.log >&2
+        code=${PIPESTATUS[0]}
     fi
-    rm -f /tmp/make.log
-else
-    make "${args[@]}"
+fi
+
+if [ "$code" -ne 0 ] && grep -qiE "You do not have an SDK|SDK .* does not exist|Could not find .*SDK|no .*\.sdk found" /tmp/make.log 2>/dev/null; then
+    say "SDK khai báo trong Makefile không có trên máy chủ — tự động chuyển sang iOS SDK mới nhất..."
+    rm -rf .theos packages
+    make "${args[@]}" "TARGET=iphone:clang:latest:${min_ios}" SDKVERSION=latest
     code=$?
+fi
+
+rm -f /tmp/make.log
+if [ "$auto_control" = "1" ]; then
+    rm -f control
 fi
 
 if [ -d packages ]; then
     find packages -maxdepth 1 -type f -name '*.deb' -exec cp {} /work/out/ \;
 fi
 if [ -d .theos/obj ]; then
-    for objdir in .theos/obj .theos/obj/rootless .theos/obj/roothide .theos/obj/arm64 .theos/obj/arm64e; do
+    for objdir in .theos/obj .theos/obj/rootless .theos/obj/roothide; do
         if [ -d "$objdir" ]; then
             find "$objdir" -maxdepth 1 -type f -name '*.dylib' -exec cp -f {} /work/out/ \;
         fi
     done
-    for dbgdir in .theos/obj/debug .theos/obj/rootless/debug .theos/obj/roothide/debug; do
-        if [ -d "$dbgdir" ]; then
-            find "$dbgdir" -maxdepth 1 -type f -name '*.dylib' -exec cp -n {} /work/out/ \;
+    for fallbackdir in .theos/obj/debug .theos/obj/rootless/debug .theos/obj/roothide/debug \
+                       .theos/obj/arm64 .theos/obj/arm64e .theos/obj/rootless/arm64 \
+                       .theos/obj/rootless/arm64e .theos/obj/roothide/arm64 .theos/obj/roothide/arm64e; do
+        if [ -d "$fallbackdir" ]; then
+            find "$fallbackdir" -maxdepth 1 -type f -name '*.dylib' -exec cp -n {} /work/out/ \;
         fi
     done
 fi
