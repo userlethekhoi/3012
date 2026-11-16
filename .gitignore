@@ -20,3 +20,8 @@ VendorPackages/
 __pycache__/
 *.pyc
 *.pyo
+
+# Internal Planning & AI Docs (Local Only)
+/task_plan.md
+/BLUEPRINT.md
+/AGENTS.md
