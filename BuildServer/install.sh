@@ -85,6 +85,17 @@ fi
 say "5/6 Cấu hình và khởi động lại dịch vụ systemd..."
 if [ ! -f "$ENV_FILE" ]; then
     install -m 644 "$INSTALL_DIR/src/BuildServer/config/3012-build.env.example" "$ENV_FILE"
+else
+    sed -i -E \
+        -e 's/^BUILD_RATE_PER_DEVICE_HOUR=(20|60)[[:space:]]*$/BUILD_RATE_PER_DEVICE_HOUR=0/' \
+        -e 's/^BUILD_RATE_PER_IP_HOUR=(40|120)[[:space:]]*$/BUILD_RATE_PER_IP_HOUR=0/' \
+        "$ENV_FILE"
+    while IFS='=' read -r k v; do
+        [[ "$k" =~ ^[A-Z0-9_]+$ ]] || continue
+        if ! grep -qE "^${k}=" "$ENV_FILE" 2>/dev/null; then
+            printf '%s=%s\n' "$k" "$v" >> "$ENV_FILE"
+        fi
+    done < "$INSTALL_DIR/src/BuildServer/config/3012-build.env.example"
 fi
 BUILD_PORT=$(grep -E '^BUILD_PORT=' "$ENV_FILE" | tail -n 1 | cut -d= -f2 | tr -dc '0-9' || true)
 BUILD_PORT="${BUILD_PORT:-8787}"

@@ -60,8 +60,10 @@ CFG = {
     "timeout": _env_int("BUILD_TIMEOUT_SEC", 180),
     "memory": os.environ.get("BUILD_MEMORY", "1g"),
     "cpus": os.environ.get("BUILD_CPUS", "1.5"),
-    "rate_device": _env_int("BUILD_RATE_PER_DEVICE_HOUR", 60),
-    "rate_ip": _env_int("BUILD_RATE_PER_IP_HOUR", 120),
+    "burst_device": _env_int("BUILD_BURST_PER_DEVICE_MIN", 15),
+    "burst_ip": _env_int("BUILD_BURST_PER_IP_MIN", 45),
+    "rate_device": _env_int("BUILD_RATE_PER_DEVICE_HOUR", 0),
+    "rate_ip": _env_int("BUILD_RATE_PER_IP_HOUR", 0),
     "data_dir": os.environ.get("BUILD_DATA_DIR", "/var/lib/3012-build"),
     "artifact_ttl": _env_int("BUILD_ARTIFACT_TTL_SEC", 900),
     "runtime": os.environ.get("BUILD_RUNTIME", "").strip(),
@@ -369,22 +371,67 @@ class BuildQueue:
         self.cond = threading.Condition()
         self.rate = defaultdict(deque)
 
-    def _allow(self, key: str, limit: int) -> bool:
+    def _allow_window(self, key: str, limit: int, window_sec: float):
         if limit <= 0:
-            return True
+            return True, 0
         now = time.time()
         window = self.rate[key]
-        while window and now - window[0] > 3600:
+        while window and now - window[0] > window_sec:
             window.popleft()
         if len(window) >= limit:
-            return False
+            wait_sec = max(1, int(window_sec - (now - window[0])) + 1)
+            return False, wait_sec
         window.append(now)
-        return True
+        return True, 0
+
+    def _check_rate_limits(self, device: str, ip: str):
+        now = time.time()
+        checks = [
+            (
+                "bd:" + device,
+                CFG["burst_device"],
+                60.0,
+                lambda w: f"Bạn bấm build quá nhanh ({CFG['burst_device']} lần/phút) — vui lòng chờ {w} giây rồi thử lại.",
+            ),
+            (
+                "bi:" + ip,
+                CFG["burst_ip"],
+                60.0,
+                lambda w: f"Mạng của bạn gửi quá nhiều lệnh trong 1 phút — vui lòng chờ {w} giây rồi thử lại.",
+            ),
+            (
+                "d:" + device,
+                CFG["rate_device"],
+                3600.0,
+                lambda w: f"Thiết bị đã đạt giới hạn {CFG['rate_device']} lần build/giờ (chờ khoảng {max(1, (w + 59) // 60)} phút).",
+            ),
+            (
+                "i:" + ip,
+                CFG["rate_ip"],
+                3600.0,
+                lambda w: f"Mạng của bạn đã đạt giới hạn {CFG['rate_ip']} lần build/giờ (chờ khoảng {max(1, (w + 59) // 60)} phút).",
+            ),
+        ]
+        active_windows = []
+        for key, limit, win_sec, msg_fn in checks:
+            if limit <= 0:
+                continue
+            window = self.rate[key]
+            while window and now - window[0] > win_sec:
+                window.popleft()
+            if len(window) >= limit:
+                wait_sec = max(1, int(win_sec - (now - window[0])) + 1)
+                return msg_fn(wait_sec)
+            active_windows.append(window)
+        for window in active_windows:
+            window.append(now)
+        return None
 
     def allow_upload_batch(self, ip: str) -> bool:
         with self.cond:
-            batch_limit = max(240, CFG["rate_ip"] * 8) if CFG["rate_ip"] > 0 else 0
-            return self._allow("cas:" + ip, batch_limit)
+            per_min_limit = max(90, CFG["burst_ip"] * 4) if CFG["burst_ip"] > 0 else 180
+            ok, _ = self._allow_window("cas:" + ip, per_min_limit, 60.0)
+            return ok
 
     def workspace_lock(self, ws_key: str) -> threading.Lock:
         with self.cond:
@@ -406,20 +453,19 @@ class BuildQueue:
         project_slug: str = "project",
     ):
         with self.cond:
-            # Anti-spam: cancel any older queued (not yet started) job from the same device
             replaced = [j for j in list(self.pending) if j.device == device]
+            if len(self.pending) - len(replaced) >= CFG["max_queue"]:
+                return None, ("queue_full", "Máy chủ đang quá tải. Vui lòng thử lại sau hoặc dùng phương thức build khác.")
+            rate_msg = self._check_rate_limits(device, ip)
+            if rate_msg:
+                return None, ("rate_limited", rate_msg)
+            # Anti-spam: cancel any older queued (not yet started) job from the same device
             for old in replaced:
                 self.pending.remove(old)
                 old.cancel_requested = True
                 old.state = "cancelled"
                 old.finished = time.time()
                 remove_queue_file(old.id)
-            if len(self.pending) >= CFG["max_queue"]:
-                return None, ("queue_full", "Máy chủ đang quá tải. Vui lòng thử lại sau hoặc dùng phương thức build khác.")
-            if not self._allow("d:" + device, CFG["rate_device"]):
-                return None, ("rate_limited", f"Thiết bị đã đạt giới hạn {CFG['rate_device']} lần build/giờ.")
-            if not self._allow("i:" + ip, CFG["rate_ip"]):
-                return None, ("rate_limited", f"Mạng của bạn đã đạt giới hạn {CFG['rate_ip']} lần build/giờ.")
             job = Job(
                 job_id,
                 device,
@@ -446,7 +492,19 @@ class BuildQueue:
         with self.cond:
             while not self.pending:
                 self.cond.wait()
-            job = self.pending.popleft()
+            running_devices = {
+                self.jobs[jid].device for jid in self.running if jid in self.jobs
+            }
+            chosen_idx = 0
+            for idx, candidate in enumerate(self.pending):
+                if candidate.device not in running_devices:
+                    chosen_idx = idx
+                    break
+            if chosen_idx == 0:
+                job = self.pending.popleft()
+            else:
+                job = self.pending[chosen_idx]
+                del self.pending[chosen_idx]
             self.running.add(job.id)
             if job.manifest is not None:
                 self.active_ws_keys.add(job.workspace_key)
@@ -1962,6 +2020,7 @@ class Handler(BaseHTTPRequestHandler):
                     "maxProjectMB": CFG["max_project_mb"],
                     "casBatchMB": CFG["cas_batch_bytes"] // (1024 * 1024),
                     "timeoutSec": CFG["timeout"],
+                    "perDeviceBurstMin": CFG["burst_device"],
                     "perDeviceHour": CFG["rate_device"],
                 },
             }
@@ -1979,6 +2038,7 @@ class Handler(BaseHTTPRequestHandler):
                     "maxProjectMB": CFG["max_project_mb"],
                     "casBatchMB": CFG["cas_batch_bytes"] // (1024 * 1024),
                     "timeoutSec": CFG["timeout"],
+                    "perDeviceBurstMin": CFG["burst_device"],
                     "perDeviceHour": CFG["rate_device"],
                 },
             }
